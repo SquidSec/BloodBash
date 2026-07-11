@@ -20,14 +20,14 @@ class MetasploitModule < Msf::Auxiliary
         privileged Azure roles), and other vulnerabilities. Results are displayed and
         can be reported to the Metasploit database.
 
-        BloodBash is created and managed by SquidSec (https://squidhacker.com/).
+        BloodBash is created and managed by SquidSec (https://squidoffense.com/).
         Requires BloodBash v1.3.1+ and Python dependencies (NetworkX, Rich, tqdm, PyYAML)
         installed on the system (or a SquidSec-published standalone binary).
       },
       'License'        => MSF_LICENSE,
       'Author'         => ['☣️ Mr. The Plague ☣️', 'DotNetRussell', 'SquidSec'],
       'References'     => [
-        ['URL', 'https://squidhacker.com/'],
+        ['URL', 'https://squidoffense.com/'],
         ['URL', 'https://github.com/DotNetRussell/BloodBash'],
         ['URL', 'https://github.com/ly4k/BloodHound'],
         ['URL', 'https://github.com/BloodHoundAD/AzureHound'],

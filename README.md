@@ -1,21 +1,30 @@
 # BloodBash
 
 <p align="center">
+  <a href="https://squidoffense.com/">
+    <img src="assets/squidsec-logo.png" alt="SquidSec logo" width="180">
+  </a>
+</p>
+
+<p align="center">
   <strong>A SquidSec Open Source Project</strong><br>
-  <a href="https://squidhacker.com/">squidhacker.com</a> ·
+  <a href="https://squidoffense.com/">SquidOffense.com</a> ·
   <a href="https://github.com/DotNetRussell/BloodBash">GitHub</a>
 </p>
 
-[![Run Unit Tests](https://github.com/DotNetRussell/BloodBash/actions/workflows/run-tests.yml/badge.svg)](https://github.com/DotNetRussell/BloodBash/actions/workflows/run-tests.yml)
-[![Build and Release Binaries](https://github.com/DotNetRussell/BloodBash/actions/workflows/release-binaries.yml/badge.svg)](https://github.com/DotNetRussell/BloodBash/actions/workflows/release-binaries.yml)
-[![Latest release](https://img.shields.io/github/v/release/DotNetRussell/BloodBash?label=latest%20build)](https://github.com/DotNetRussell/BloodBash/releases/latest)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+<p align="center">
+  <a href="https://github.com/DotNetRussell/BloodBash/actions/workflows/run-tests.yml"><img src="https://github.com/DotNetRussell/BloodBash/actions/workflows/run-tests.yml/badge.svg" alt="Run Unit Tests"></a>
+  <a href="https://github.com/DotNetRussell/BloodBash/actions/workflows/release-binaries.yml"><img src="https://github.com/DotNetRussell/BloodBash/actions/workflows/release-binaries.yml/badge.svg" alt="Build and Release Binaries"></a>
+  <a href="https://github.com/DotNetRussell/BloodBash/releases/latest"><img src="https://img.shields.io/github/v/release/DotNetRussell/BloodBash?label=latest%20build" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
+</p>
 
-**BloodBash** is an open source offline SharpHound **and** AzureHound JSON analyzer, created and managed by **[SquidSec](https://squidhacker.com/)**. It builds a graph, surfaces AD/Entra attack paths and misconfigs, and prints prioritized findings — no Neo4j or BloodHound UI required.
+**BloodBash** is an open source offline SharpHound **and** AzureHound JSON analyzer, created and managed by **[SquidSec](https://squidoffense.com/)**. It builds a graph, surfaces AD/Entra attack paths and misconfigs, and prints prioritized findings — no Neo4j or BloodHound UI required.
 
 | | |
 |--|--|
-| **Organization** | [SquidSec](https://squidhacker.com/) |
+| **Organization** | [SquidSec](https://squidoffense.com/) |
+| **Website** | [https://squidoffense.com/](https://squidoffense.com/) |
 | **App version** | **v1.3.1** |
 | **Latest binary** | [![GitHub release](https://img.shields.io/github/v/release/DotNetRussell/BloodBash)](https://github.com/DotNetRussell/BloodBash/releases/latest) |
 | **License** | [MIT](LICENSE) |
@@ -27,10 +36,10 @@ Merges to `main` automatically build **Linux** and **Windows** binaries and publ
 
 ## About SquidSec
 
-BloodBash is built and maintained by **SquidSec** for the security community — red teamers, pentesters, and defenders who need fast offline AD/Entra analysis without standing up BloodHound infrastructure.
+BloodBash is built and maintained by **[SquidSec](https://squidoffense.com/)** for the security community — red teamers, pentesters, and defenders who need fast offline AD/Entra analysis without standing up BloodHound infrastructure.
 
-- Site: [https://squidhacker.com/](https://squidhacker.com/)
-- Project: [https://github.com/DotNetRussell/BloodBash](https://github.com/DotNetRussell/BloodBash)
+- **Website:** [https://squidoffense.com/](https://squidoffense.com/)
+- **Project:** [https://github.com/DotNetRussell/BloodBash](https://github.com/DotNetRussell/BloodBash)
 
 ---
 
@@ -190,4 +199,4 @@ CI (on every push to `main`) runs tests, builds Linux + Windows one-file binarie
 
 MIT — for **authorized** security testing and red teaming only.
 
-**BloodBash** is an open source project created and managed by **[SquidSec](https://squidhacker.com/)**.
+**BloodBash** is an open source project created and managed by **[SquidSec](https://squidoffense.com/)**.
