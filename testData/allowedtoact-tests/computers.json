@@ -1,0 +1,28 @@
+{
+  "meta": {"version": 6, "type": "computers"},
+  "data": [
+    {
+      "ObjectIdentifier": "S-1-5-21-1-2-3-1001",
+      "Properties": {
+        "name": "TARGET-PC$@LAB.LOCAL",
+        "domain": "lab.local",
+        "type": "Computer"
+      },
+      "AllowedToAct": [
+        {
+          "ObjectIdentifier": "S-1-5-21-1-2-3-1002",
+          "ObjectType": "Computer"
+        }
+      ]
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1-2-3-1002",
+      "Properties": {
+        "name": "ATTACKER-PC$@LAB.LOCAL",
+        "domain": "lab.local",
+        "type": "Computer"
+      },
+      "AllowedToAct": []
+    }
+  ]
+}
