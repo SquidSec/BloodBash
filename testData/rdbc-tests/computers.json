@@ -1,26 +1,41 @@
 {
-    "meta": {
-      "version": 6,
-      "type": "computers"
-    },
-    "data": [
-      {
-        "ObjectIdentifier": "CN=TARGET-COMPUTER,OU=Computers,DC=lab,DC=local",
-        "Properties": {
-          "name": "TARGET-COMPUTER$",
-          "type": "Computer",
-          "objectid": "CN=TARGET-COMPUTER,...",
-          "msds-allowedtodelegateto": ["CN=ATTACKER,OU=Computers,DC=lab,DC=local"]
-        }
+  "meta": {
+    "version": 6,
+    "type": "computers"
+  },
+  "data": [
+    {
+      "ObjectIdentifier": "S-1-5-21-1-2-3-2001",
+      "Properties": {
+        "name": "TARGET-COMPUTER$",
+        "type": "Computer",
+        "domain": "lab.local"
       },
-      {
-        "ObjectIdentifier": "CN=SAFE-COMPUTER,OU=Computers,DC=lab,DC=local",
-        "Properties": {
-          "name": "SAFE-COMPUTER$",
-          "type": "Computer",
-          "objectid": "CN=SAFE-COMPUTER,...",
-          "msds-allowedtodelegateto": []
+      "AllowedToAct": [
+        {
+          "ObjectIdentifier": "S-1-5-21-1-2-3-2002",
+          "ObjectType": "Computer"
         }
-      }
-    ]
-  }
+      ]
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1-2-3-2002",
+      "Properties": {
+        "name": "ATTACKER-COMPUTER$",
+        "type": "Computer",
+        "domain": "lab.local"
+      },
+      "AllowedToAct": []
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1-2-3-2003",
+      "Properties": {
+        "name": "SAFE-COMPUTER$",
+        "type": "Computer",
+        "domain": "lab.local",
+        "msds-allowedtodelegateto": ["CN=SOMEHOST,OU=Computers,DC=lab,DC=local"]
+      },
+      "AllowedToAct": []
+    }
+  ]
+}
