@@ -82,6 +82,27 @@ class TestBloodBash(unittest.TestCase):
         # Partial GetChangesAll-only is not full DCSync
         self.assertIn("PARTIAL@LAB.LOCAL", clean)
         self.assertIn("Partial replication rights", clean)
+
+    def test_dcsync_domain_type_case_insensitive(self):
+        """Domain nodes with type 'domain' (lowercase) must still be scanned."""
+        G = nx.MultiDiGraph()
+        G.add_node(
+            "D1",
+            name="TEST.LOCAL",
+            type="domain",
+            props={"domain": "test.local"},
+            is_azure=False,
+        )
+        G.add_node("U1", name="attacker@test.local", type="User", props={}, is_azure=False)
+        G.add_edge("U1", "D1", label="GetChanges")
+        G.add_edge("U1", "D1", label="GetChangesAll")
+        bloodbash_globals['global_findings'] = []
+        output = self._capture_output(bloodbash_globals['print_dcsync_rights'], G)
+        clean = self._strip_ansi(output)
+        self.assertNotIn("No domain objects found", clean)
+        self.assertIn("DCSync possible", clean)
+        self.assertIn("attacker@test.local", clean)
+
     def test_rbcd(self):
         try:
             G = self._load_and_build_graph("rdbc-tests")
@@ -140,8 +161,9 @@ class TestBloodBash(unittest.TestCase):
         except FileNotFoundError as e:
             self.skipTest(str(e))
         output = self._capture_output(bloodbash_globals['print_shortest_paths'], G)
-        self.assertIn("DC1$", output)
-        self.assertIn("USER2@LAB.LOCAL", output)
+        # High-value targets are privileged groups (not bare "DC1$" hostnames)
+        self.assertIn("Domain Admins", output)
+        self.assertIn("LOWPRIV@LAB.LOCAL", output)
     def test_dangerous_permissions(self):
         try:
             G = self._load_and_build_graph("dangerous-permissions-tests")
@@ -429,7 +451,7 @@ class TestBloodBash(unittest.TestCase):
     def test_case_sensitivity_types_and_labels(self):
         G = nx.MultiDiGraph()
         G.add_node("U", name="User", type="USER")
-        G.add_node("C", name="DC1$", type="computer")
+        G.add_node("C", name="DC1$", type="computer", props={"highvalue": True})
         G.add_node("G", name="Group", type="GROUP")
         G.add_edge("U", "C", label="ADMinto")
         targets = bloodbash_globals['get_high_value_targets'](G)
@@ -437,9 +459,22 @@ class TestBloodBash(unittest.TestCase):
         path = ["U", "C"]
         formatted = bloodbash_globals['format_path'](G, path)
         self.assertIn("ADMinto", formatted)
+
+    def test_high_value_no_bare_dc_substring(self):
+        """Bare 'dc' must not match hostnames like CDC-FILESERVER or DC1$."""
+        G = nx.MultiDiGraph()
+        G.add_node("1", name="CDC-FILESERVER", type="Computer", props={}, is_azure=False)
+        G.add_node("2", name="DC1$", type="Computer", props={}, is_azure=False)
+        G.add_node("3", name="DOMAIN ADMINS", type="Group", props={}, is_azure=False)
+        G.add_node("4", name="WS01", type="Computer", props={"highvalue": True}, is_azure=False)
+        names = {t[1] for t in bloodbash_globals['get_high_value_targets'](G)}
+        self.assertIn("DOMAIN ADMINS", names)
+        self.assertIn("WS01", names)
+        self.assertNotIn("CDC-FILESERVER", names)
+        self.assertNotIn("DC1$", names)
     def test_performance_fast_mode_and_limits(self):
         G = nx.MultiDiGraph()
-        G.add_node("T", name="DC1$", type="Computer")
+        G.add_node("T", name="DOMAIN ADMINS", type="Group")
         for i in range(100):
             G.add_node(f"N{i}", name=f"Node{i}", type="User" if i % 2 == 0 else "Computer")
             if i > 0:
@@ -459,6 +494,27 @@ class TestBloodBash(unittest.TestCase):
         self.assertIn("KerbUser", kerb_output)
         self.assertIn("AsRepUser", asrep_output)
         self.assertNotIn("AsRepUser", kerb_output)
+    def test_orphan_ace_principal_creates_placeholder(self):
+        """ACEs whose PrincipalSID is not in collector objects still become edges."""
+        nodes = {
+            "S-1-5-21-1-1000": {
+                "ObjectIdentifier": "S-1-5-21-1-1000",
+                "ObjectType": "User",
+                "Properties": {"name": "admin", "domain": "x.local"},
+                "Aces": [
+                    {"PrincipalSID": "S-1-5-32-544", "RightName": "GenericAll"},
+                ],
+            }
+        }
+        G, _ = bloodbash_globals["build_graph"](nodes)
+        self.assertIn("S-1-5-32-544", G.nodes)
+        edges = list(G.edges(data=True))
+        self.assertTrue(
+            any(u == "S-1-5-32-544" and v == "S-1-5-21-1-1000" and d.get("label") == "GenericAll"
+                for u, v, d in edges),
+            f"expected GenericAll edge from orphan SID, got {edges}",
+        )
+
     def test_bugs_placeholder_nodes_and_missing_data(self):
         nodes = {
             "rel1": {"start": "UserA", "end": "GroupB", "label": "MemberOf"},
@@ -540,7 +596,7 @@ class TestBloodBash(unittest.TestCase):
     def test_no_results_shortest_paths(self):
         G = nx.MultiDiGraph()
         G.add_node("User", name="User", type="User")
-        G.add_node("Target", name="DC1$", type="Computer")
+        G.add_node("Target", name="DOMAIN ADMINS", type="Group")
         output = self._capture_output(bloodbash_globals['print_shortest_paths'], G)
         self.assertIn("No paths found", output)
     def test_no_results_dangerous_permissions(self):
@@ -579,7 +635,7 @@ class TestBloodBash(unittest.TestCase):
         G = nx.MultiDiGraph()
         G.add_node("U", name="User", type="User")
         G.add_node("G", name="Group", type="Group")
-        G.add_node("T", name="DC1$", type="Computer")
+        G.add_node("T", name="DOMAIN ADMINS", type="Group")
         G.add_edge("U", "G", label="MemberOf")
         G.add_edge("G", "T", label="GenericAll")
         output = self._capture_output(bloodbash_globals['print_dangerous_permissions'], G, indirect=True)
@@ -632,7 +688,7 @@ class TestBloodBash(unittest.TestCase):
             G.add_node(f"N{i}", name=f"Node{i}", type="User" if i % 2 == 0 else "Computer")
             if i > 0:
                 G.add_edge(f"N{i-1}", f"N{i}", label="MemberOf")
-        G.add_node("Target", name="DC1$", type="Computer")
+        G.add_node("Target", name="DOMAIN ADMINS", type="Group")
         output = self._capture_output(bloodbash_globals['print_shortest_paths'], G, fast=True, max_paths=5)
         self.assertIn("Fast mode enabled", output)
         self.assertNotIn("Length:", output)
@@ -703,7 +759,30 @@ class TestBloodBash(unittest.TestCase):
         output = self._capture_output(bloodbash_globals['print_laps_status'], G)
         self.assertIn("LAPS enabled", output)
         self.assertIn("LAPS not enabled", output)
+        # Password attrs (any case) and SharpHound haslaps=true count as enabled
+        self.assertIn("Comp1", output)
+        self.assertIn("Comp3", output)  # ms-Mcs-AdmPwd case variant
+        self.assertIn("Comp5", output)  # haslaps: true (CE)
         self.assertTrue(any("LAPS" in f[2] for f in bloodbash_globals['global_findings']))
+        # Comp3 must not be reported as missing LAPS when password attr is present
+        self.assertFalse(
+            any("Comp3" in f[2] for f in bloodbash_globals['global_findings']),
+            "Comp3 has ms-Mcs-AdmPwd and should not be a LAPS-missing finding",
+        )
+
+    def test_laps_haslaps_flag(self):
+        """SharpHound CE haslaps boolean is the primary LAPS signal."""
+        G = nx.MultiDiGraph()
+        G.add_node("c1", name="HASLAPS-PC", type="Computer", props={"haslaps": True}, is_azure=False)
+        G.add_node("c2", name="NOLAPS-PC", type="Computer", props={"haslaps": False}, is_azure=False)
+        bloodbash_globals['global_findings'] = []
+        output = self._capture_output(bloodbash_globals['print_laps_status'], G)
+        self.assertIn("LAPS enabled", output)
+        self.assertIn("HASLAPS-PC", output)
+        self.assertIn("NOLAPS-PC", output)
+        self.assertTrue(any("NOLAPS-PC" in f[2] for f in bloodbash_globals['global_findings']))
+        self.assertFalse(any("HASLAPS-PC" in f[2] for f in bloodbash_globals['global_findings']))
+
     def test_no_results_laps_status(self):
         G = nx.MultiDiGraph()
         output = self._capture_output(bloodbash_globals['print_laps_status'], G)

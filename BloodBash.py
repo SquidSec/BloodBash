@@ -330,6 +330,7 @@ def load_json_dir(directory, debug=False):
     console.print(f"[green]✓ Loaded {len(nodes)} objects from {len(files)} files[/green]")
     return nodes
 
+
 def build_graph(nodes, db_path=None, debug=False):
     G = nx.MultiDiGraph()
     name_to_oid = {}
@@ -372,8 +373,18 @@ def build_graph(nodes, db_path=None, debug=False):
                     rels = [rels] if rels else []
                 for rel in rels:
                     target = rel.get('ObjectIdentifier') if isinstance(rel, dict) else rel
-                    if not target or target not in nodes:
+                    if not target:
                         continue
+                    if target not in G.nodes:
+                        G.add_node(
+                            target,
+                            name=str(target),
+                            type='Unknown',
+                            props={},
+                            is_azure=False,
+                        )
+                        if target not in nodes:
+                            name_to_oid[str(target).upper().split('@')[0]] = target
                     if key.lower() == 'allowedtoact':
                         # principal (listed) → AllowedToAct → resource (this node)
                         G.add_edge(target, oid, label=key)
@@ -400,7 +411,17 @@ def build_graph(nodes, db_path=None, debug=False):
                         )
                     else:
                         member_id = rel
-                    if member_id and member_id in nodes:
+                    if member_id:
+                        if member_id not in G.nodes:
+                            G.add_node(
+                                member_id,
+                                name=str(member_id),
+                                type='Unknown',
+                                props={},
+                                is_azure=False,
+                            )
+                            if member_id not in nodes:
+                                name_to_oid[str(member_id).upper().split('@')[0]] = member_id
                         G.add_edge(member_id, oid, label='MemberOf')
             # SharpHound CE nested session collections:
             # {Results: [{UserSID, ComputerSID}], Collected, FailureReason}
@@ -426,7 +447,17 @@ def build_graph(nodes, db_path=None, debug=False):
                         or entry.get('ObjectIdentifier')
                         or entry.get('objectid')
                     )
-                    if user_sid and user_sid in nodes:
+                    if user_sid:
+                        if user_sid not in G.nodes:
+                            G.add_node(
+                                user_sid,
+                                name=str(user_sid),
+                                type='Unknown',
+                                props={},
+                                is_azure=False,
+                            )
+                            if user_sid not in nodes:
+                                name_to_oid[str(user_sid).upper().split('@')[0]] = user_sid
                         G.add_edge(oid, user_sid, label='HasSession')
             # SharpHound CE LocalGroups: list of local groups with Results members.
             # Map well-known RIDs to BloodHound-style edges (principal → right → computer).
@@ -465,13 +496,33 @@ def build_graph(nodes, db_path=None, debug=False):
                             )
                         else:
                             mid = member
-                        if mid and mid in nodes:
+                        if mid:
+                            if mid not in G.nodes:
+                                G.add_node(
+                                    mid,
+                                    name=str(mid),
+                                    type='Unknown',
+                                    props={},
+                                    is_azure=False,
+                                )
+                                if mid not in nodes:
+                                    name_to_oid[str(mid).upper().split('@')[0]] = mid
                             G.add_edge(mid, oid, label=label)
             aces = node.get('Aces', [])
             for ace in aces:
                 principal = ace.get('PrincipalSID') or ace.get('PrincipalObjectIdentifier')
                 right = ace.get('RightName')
-                if principal and right and principal in nodes:
+                if principal and right:
+                    if principal not in G.nodes:
+                        G.add_node(
+                            principal,
+                            name=str(principal),
+                            type='Unknown',
+                            props={},
+                            is_azure=False,
+                        )
+                        if principal not in nodes:
+                            name_to_oid[str(principal).upper().split('@')[0]] = principal
                     G.add_edge(principal, oid, label=right)
             # Azure relationships (case-insensitive, expanded)
             azure_rels = ['MemberOf', 'HasRole', 'Owns', 'CanRead', 'CanWrite', 'CanDelete', 'Execute', 'AddMembers', 'ResetPassword', 'AddSecret', 'AddCertificate', 'AddOwner', 'GetChanges', 'GetChangesAll', 'GenericAll', 'GenericWrite', 'WriteDacl', 'WriteOwner']
@@ -486,9 +537,20 @@ def build_graph(nodes, db_path=None, debug=False):
                 if not isinstance(rels, list):
                     rels = [rels] if rels else []
                 for rel in rels:
-                    target = rel.get('ObjectIdentifier') or rel.get('id') if isinstance(rel, dict) else rel
-                    if target and target in nodes:
-                        G.add_edge(oid, target, label=key)
+                    target = (rel.get('ObjectIdentifier') or rel.get('id')) if isinstance(rel, dict) else rel
+                    if not target:
+                        continue
+                    if target not in G.nodes:
+                        G.add_node(
+                            target,
+                            name=str(target),
+                            type='Unknown',
+                            props={},
+                            is_azure=False,
+                        )
+                        if target not in nodes:
+                            name_to_oid[str(target).upper().split('@')[0]] = target
+                    G.add_edge(oid, target, label=key)
             # Handle Azure 'Relationships' property if present
             if is_azure:
                 rels_prop = None
@@ -656,10 +718,11 @@ def get_bool_prop_ci(props, keys, default=False):
                 return bool(props[p_key])
     return default
 def get_high_value_targets(G, domain_filter=None):
+    # Prefer full group/role phrases; avoid bare "dc" which matches CDC-FILESERVER etc.
     ad_keywords = [
         'domain admins', 'enterprise admins', 'schema admins', 'administrators',
         'krbtgt', 'domain controllers', 'dnsadmins', 'enterprise key admins',
-        'certificate template', 'enterprise ca', 'root ca', 'ntauth','dc'
+        'certificate template', 'enterprise ca', 'root ca', 'ntauth store', 'ntauth',
     ]
     azure_keywords = [
         'global admin', 'user admin', 'application admin', 'exchange admin', 'sharepoint admin',
@@ -672,6 +735,11 @@ def get_high_value_targets(G, domain_filter=None):
         name = d['name'].lower()
         typ = d['type'].lower()
         is_azure = d.get('is_azure', False)
+        props = d.get('props') or {}
+        # Explicit SharpHound highvalue flag
+        if get_bool_prop_ci(props, ['highvalue', 'HighValue']):
+            targets.append((n, d['name'], d['type']))
+            continue
         keywords = azure_keywords if is_azure else ad_keywords
         if any(k in name for k in keywords) or ('ca' in typ and not is_azure) or ('role' in typ and is_azure):
             targets.append((n, d['name'], d['type']))
@@ -973,6 +1041,26 @@ def print_constrained_delegation(G, domain_filter=None):
     else:
         console.print("[green]No Constrained Delegation found[/green]")
 
+def _has_laps_enabled(props):
+    """SharpHound CE uses haslaps; password attrs are rarely collected and vary in case."""
+    if not isinstance(props, dict):
+        return False
+    if get_bool_prop_ci(props, ['haslaps', 'HasLAPS']):
+        return True
+    # Legacy / rare: non-empty LAPS password attribute (case-insensitive key match)
+    password_keys = {
+        'ms-mcs-admpwd',
+        'msmcsadmpwd',
+        'ms-mcs-admpwdexpirationtime',
+        'msmcsadmpwdexpirationtime',
+    }
+    for p_key, p_val in props.items():
+        if p_val is None or p_val is False or p_val == '':
+            continue
+        if p_key.lower() in password_keys or 'admpwd' in p_key.lower():
+            return True
+    return False
+
 def print_laps_status(G, domain_filter=None):
     console.rule("[bold magenta]LAPS (Local Administrator Password Solution) Status (AD)[/bold magenta]")
     computers = [d for _, d in G.nodes(data=True) if d['type'].lower() == 'computer' and (not domain_filter or d.get('props', {}).get('domain') == domain_filter) and not d.get('is_azure', False)]
@@ -983,8 +1071,7 @@ def print_laps_status(G, domain_filter=None):
     found_disabled = False
     for d in computers:
         props = d.get('props') or {}
-        laps_password = props.get('ms-mcs-admpwd') or props.get('msMcsAdmPwd')
-        if laps_password:
+        if _has_laps_enabled(props):
             found_enabled = True
             console.print(f"[green]LAPS enabled[/green]: [bold cyan]{d['name']}[/bold cyan]")
         else:
@@ -1286,7 +1373,7 @@ def print_dcsync_rights(G, domain_filter=None):
     found = False
     domain_oids = [
         n for n, d in G.nodes(data=True)
-        if d['type'] == 'Domain'
+        if d.get('type', '').lower() == 'domain'
         and (not domain_filter or d.get('props', {}).get('domain') == domain_filter)
         and not d.get('is_azure', False)
     ]
@@ -2131,16 +2218,28 @@ def main():
             console.print("[red]No objects loaded. Exiting.[/red]")
             sys.exit(1)
         G, name_to_oid = build_graph(nodes, args.db if args.db else None, debug=DEBUG)
+    selected_checks = any([
+        args.shortest_paths, args.dangerous_permissions, args.adcs, args.gpo_abuse,
+        args.dcsync, args.rbcd, args.sessions, args.kerberoastable, args.as_rep_roastable,
+        args.sid_history, args.unconstrained_delegation, args.password_descriptions,
+        args.password_never_expires, args.password_not_required, args.shadow_credentials,
+        args.gpo_parsing, args.constrained_delegation, args.laps,
+        args.azure_privileged_roles, args.azure_app_secrets, args.azure_mfa_bypass,
+        args.azure_guest_access, args.azure_sp_abuse, args.owned, args.path_from,
+        args.path_to, args.inspect, args.export_bh, args.dot, args.deep_analysis,
+        args.gpo_content_dir,
+    ])
+    run_all = args.all or not selected_checks
+
     if args.all:
         mode_str = "Full analysis (AD + Azure) (--all)"
-    elif any([args.shortest_paths, args.dangerous_permissions, args.adcs, args.gpo_abuse, args.dcsync, args.rbcd, args.sessions, args.kerberoastable, args.as_rep_roastable, args.sid_history, args.unconstrained_delegation, args.password_descriptions, args.password_never_expires, args.password_not_required, args.shadow_credentials, args.gpo_parsing, args.constrained_delegation, args.laps, args.azure_privileged_roles, args.azure_app_secrets, args.azure_mfa_bypass, args.azure_guest_access, args.azure_sp_abuse, args.owned, args.path_from, args.path_to, args.inspect, args.export_bh, args.dot]):
+    elif selected_checks:
         mode_str = "Selected checks (including AD and Azure features)"
     else:
         mode_str = "Default (verbose summary + common checks)"
     if DEBUG:
         mode_str += " [DEBUG]"
     print_intro_banner(mode_str)
-    run_all = args.all or not any([args.shortest_paths, args.dangerous_permissions, args.adcs, args.gpo_abuse, args.dcsync, args.rbcd, args.sessions, args.kerberoastable, args.as_rep_roastable, args.sid_history, args.unconstrained_delegation, args.password_descriptions, args.password_never_expires, args.password_not_required, args.shadow_credentials, args.gpo_parsing, args.constrained_delegation, args.laps, args.azure_privileged_roles, args.azure_app_secrets, args.azure_mfa_bypass, args.azure_guest_access, args.azure_sp_abuse, args.owned, args.path_from, args.path_to, args.inspect, args.export_bh, args.dot])
     if args.verbose or run_all:
         print_verbose_summary(G, args.domain)
     if args.shortest_paths or run_all:
@@ -2189,18 +2288,23 @@ def main():
         print_azure_guest_access(G, args.domain)
     if args.azure_sp_abuse or run_all:
         print_azure_service_principal_abuse(G, args.domain)
-    if args.owned or run_all:
+    if args.owned:
         print_paths_to_owned(G, args.owned, args.domain)
-    if (args.path_from or args.path_to) or run_all:
+    if args.path_from and args.path_to:
         print_arbitrary_paths(G, args.path_from, args.path_to, args.domain)
     if args.inspect:
         for ident in [x.strip() for x in args.inspect.split(',') if x.strip()]:
             inspect_node(G, ident, args.domain)
-    if args.gpo_content_dir or run_all:
+    if args.gpo_content_dir:
         print_gpo_content_analysis(G, args.gpo_content_dir, args.domain)
-    print_trust_abuse(G, args.domain)
-    print_group_analysis(G, args.domain, deep_analysis=args.deep_analysis)
-    print_stats_dashboard(G, args.domain)
+    # Trust / group nesting / stats only on --all or default full run (run_all),
+    # not when the user selected a narrow check set.
+    if run_all:
+        print_trust_abuse(G, args.domain)
+        print_group_analysis(G, args.domain, deep_analysis=args.deep_analysis)
+        print_stats_dashboard(G, args.domain)
+    elif args.deep_analysis:
+        print_group_analysis(G, args.domain, deep_analysis=True)
     if args.export:
         export_results(G, format_type=args.export, domain_filter=args.domain)
     if args.export_bh:

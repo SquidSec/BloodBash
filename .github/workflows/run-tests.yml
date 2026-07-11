@@ -3,26 +3,27 @@ name: Run Unit Tests
 on:
   push:
     branches:
-      - '*'  # Runs on pushes to any branch; adjust to 'main' or specific branches if needed
-  pull_request:  # Optional: Also run on pull requests for extra checks
+      - '*'
+  pull_request:
 
 jobs:
   test:
-    runs-on: ubuntu-latest  # Use a Linux environment
+    runs-on: ubuntu-latest
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4  # Check out your repository
+      uses: actions/checkout@v4
 
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
-        python-version: '3.9'  # Use Python 3.9; adjust if needed (e.g., '3.10' or '3.11')
+        python-version: '3.9'
 
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements-dev.txt
+        pip install pytest
 
     - name: Verify dependencies import
       run: |
@@ -30,4 +31,4 @@ jobs:
 
     - name: Run tests
       run: |
-        python test_bloodbash.py -v
+        python -m pytest test_bloodbash.py test_members_ingest.py -q
