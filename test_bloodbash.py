@@ -494,6 +494,27 @@ class TestBloodBash(unittest.TestCase):
         self.assertIn("KerbUser", kerb_output)
         self.assertIn("AsRepUser", asrep_output)
         self.assertNotIn("AsRepUser", kerb_output)
+    def test_orphan_ace_principal_creates_placeholder(self):
+        """ACEs whose PrincipalSID is not in collector objects still become edges."""
+        nodes = {
+            "S-1-5-21-1-1000": {
+                "ObjectIdentifier": "S-1-5-21-1-1000",
+                "ObjectType": "User",
+                "Properties": {"name": "admin", "domain": "x.local"},
+                "Aces": [
+                    {"PrincipalSID": "S-1-5-32-544", "RightName": "GenericAll"},
+                ],
+            }
+        }
+        G, _ = bloodbash_globals["build_graph"](nodes)
+        self.assertIn("S-1-5-32-544", G.nodes)
+        edges = list(G.edges(data=True))
+        self.assertTrue(
+            any(u == "S-1-5-32-544" and v == "S-1-5-21-1-1000" and d.get("label") == "GenericAll"
+                for u, v, d in edges),
+            f"expected GenericAll edge from orphan SID, got {edges}",
+        )
+
     def test_bugs_placeholder_nodes_and_missing_data(self):
         nodes = {
             "rel1": {"start": "UserA", "end": "GroupB", "label": "MemberOf"},
