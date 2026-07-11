@@ -323,6 +323,9 @@ def build_graph(nodes, db_path=None, debug=False):
             elif 'source' in node and 'target' in node and ('type' in node or 'label' in node):
                 relationship_edges.append((node['source'], node['target'], node.get('type') or node.get('label')))
             # AD relationships (case-insensitive for Azure too)
+            # AllowedToAct is inverted vs other list fields: SharpHound puts the
+            # *resource* (computer) as the object and lists principals who may act
+            # on it. BloodHound path direction is principal → AllowedToAct → resource.
             ad_rels = ['MemberOf', 'AdminTo', 'HasSession', 'AllowedToAct', 'HasSIDHistory']
             for key in ad_rels:
                 rels = None
@@ -336,7 +339,12 @@ def build_graph(nodes, db_path=None, debug=False):
                     rels = [rels] if rels else []
                 for rel in rels:
                     target = rel.get('ObjectIdentifier') if isinstance(rel, dict) else rel
-                    if target and target in nodes:
+                    if not target or target not in nodes:
+                        continue
+                    if key.lower() == 'allowedtoact':
+                        # principal (listed) → AllowedToAct → resource (this node)
+                        G.add_edge(target, oid, label=key)
+                    else:
                         G.add_edge(oid, target, label=key)
             # SharpHound CE stores group membership on groups as Members
             # (not MemberOf on users). Emit member → MemberOf → group edges.
