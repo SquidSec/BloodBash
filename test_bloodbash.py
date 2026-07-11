@@ -480,7 +480,7 @@ class TestBloodBash(unittest.TestCase):
             if i > 0:
                 G.add_edge(f"N{i-1}", f"N{i}", label="MemberOf")
         output = self._capture_output(bloodbash_globals['print_shortest_paths'], G, fast=True, max_paths=5)
-        self.assertIn("Fast mode enabled", output)
+        self.assertIn("Fast mode", output)
         self.assertNotIn("Length:", output)
         output = self._capture_output(bloodbash_globals['print_shortest_paths'], G, max_paths=5)
         path_count = output.count("Length:")
@@ -592,7 +592,7 @@ class TestBloodBash(unittest.TestCase):
         G = nx.MultiDiGraph()
         G.add_node("Dummy", name="Dummy", type="User")
         output = self._capture_output(bloodbash_globals['print_adcs_vulnerabilities'], G)
-        self.assertIn("No obvious ESC1–ESC8 misconfigurations detected", output)
+        self.assertIn("No obvious ESC1–ESC14 misconfigurations detected", output)
     def test_no_results_shortest_paths(self):
         G = nx.MultiDiGraph()
         G.add_node("User", name="User", type="User")
@@ -690,7 +690,7 @@ class TestBloodBash(unittest.TestCase):
                 G.add_edge(f"N{i-1}", f"N{i}", label="MemberOf")
         G.add_node("Target", name="DOMAIN ADMINS", type="Group")
         output = self._capture_output(bloodbash_globals['print_shortest_paths'], G, fast=True, max_paths=5)
-        self.assertIn("Fast mode enabled", output)
+        self.assertIn("Fast mode", output)
         self.assertNotIn("Length:", output)
         output = self._capture_output(bloodbash_globals['print_shortest_paths'], G, max_paths=5)
         path_count = output.count("Length:")
@@ -783,6 +783,62 @@ class TestBloodBash(unittest.TestCase):
         self.assertTrue(any("NOLAPS-PC" in f[2] for f in bloodbash_globals['global_findings']))
         self.assertFalse(any("HASLAPS-PC" in f[2] for f in bloodbash_globals['global_findings']))
 
+
+    def test_domain_trusts_ingest(self):
+        """SharpHound domain Trusts[] become TrustedDomain edges."""
+        nodes = bloodbash_globals['load_json_dir']('SampleSharphoundADData')
+        # Only need domains if sample present
+        if not nodes:
+            self.skipTest('no sample data')
+        G, _ = bloodbash_globals['build_graph'](nodes)
+        trust_edges = [
+            (u, v, d.get('label'))
+            for u, v, d in G.edges(data=True)
+            if str(d.get('label', '')).startswith('TrustedDomain')
+        ]
+        self.assertGreater(len(trust_edges), 0, 'expected TrustedDomain edges from sample')
+        bloodbash_globals['global_findings'] = []
+        out = self._capture_output(bloodbash_globals['print_trust_abuse'], G)
+        self.assertIn('Domain trust', out)
+        self.assertTrue(any(f[1] == 'Trust Abuse' for f in bloodbash_globals['global_findings']))
+
+    def test_esc9_no_security_extension(self):
+        G = nx.MultiDiGraph()
+        G.add_node(
+            'T',
+            name='ESC9TEMPLATE@LAB.LOCAL',
+            type='Certificate Template',
+            props={
+                'enrollmentflag': 'AUTO_ENROLLMENT, NO_SECURITY_EXTENSION',
+                'authenticationenabled': True,
+                'enrolleesuppliessubject': False,
+                'requiresmanagerapproval': False,
+                'ekus': ['1.3.6.1.5.5.7.3.2'],
+            },
+            is_azure=False,
+        )
+        G.add_node('U', name='LowPriv@LAB.LOCAL', type='User', props={}, is_azure=False)
+        G.add_edge('U', 'T', label='Enroll')
+        bloodbash_globals['global_findings'] = []
+        out = self._capture_output(bloodbash_globals['print_adcs_vulnerabilities'], G)
+        self.assertIn('ESC9', out)
+        self.assertTrue(any('ESC9' in f[2] for f in bloodbash_globals['global_findings']))
+
+    def test_shadow_creds_skips_domain_admins(self):
+        G = nx.MultiDiGraph()
+        G.add_node('DA', name='DOMAIN ADMINS@LAB.LOCAL', type='Group', props={}, is_azure=False)
+        G.add_node('U', name='victim@LAB.LOCAL', type='User', props={}, is_azure=False)
+        G.add_node('A', name='attacker@LAB.LOCAL', type='User', props={}, is_azure=False)
+        G.add_edge('DA', 'U', label='GenericAll')
+        G.add_edge('A', 'U', label='AddKeyCredentialLink')
+        bloodbash_globals['global_findings'] = []
+        out = self._capture_output(bloodbash_globals['print_shadow_credentials'], G)
+        clean = self._strip_ansi(out)
+        self.assertIn('AddKeyCredentialLink', clean)
+        self.assertIn('attacker@LAB.LOCAL', clean)
+        # Domain Admins GenericAll should be filtered
+        self.assertFalse(any('DOMAIN ADMINS' in f[2] and 'GenericAll' in f[2] for f in bloodbash_globals['global_findings']))
+
     def test_no_results_laps_status(self):
         G = nx.MultiDiGraph()
         output = self._capture_output(bloodbash_globals['print_laps_status'], G)
@@ -813,7 +869,7 @@ class TestBloodBash(unittest.TestCase):
         G.add_node("Foreign", name="ForeignDA@OTHER.CORP", type="Group")
         G.add_edge("U", "Foreign", label="ForeignAdmin")
         output = self._capture_output(bloodbash_globals['print_trust_abuse'], G)
-        self.assertIn("Trust abuse possible", output)
+        self.assertIn("Domain trust", output)
         self.assertIn("ForeignAdmin", output)
     def test_inspect_node(self):
         G = nx.MultiDiGraph()
@@ -988,7 +1044,7 @@ class TestBloodBash(unittest.TestCase):
     def test_azure_trust_abuse(self):
         G = self._load_and_build_graph(AZURE_TEST_DIR)
         output = self._capture_output(bloodbash_globals['print_trust_abuse'], G)
-        self._assert_output_contains(output, "Trust abuse possible", "Cross-Tenant")
+        self._assert_output_contains(output, "Domain trust", "Cross-Tenant")
     def test_azure_group_analysis(self):
         G = self._load_and_build_graph(AZURE_TEST_DIR)
         output = self._capture_output(bloodbash_globals['print_group_analysis'], G)
