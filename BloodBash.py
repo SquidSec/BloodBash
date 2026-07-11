@@ -485,8 +485,15 @@ def save_graph_to_db(G, db_path):
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS nodes (oid TEXT PRIMARY KEY, name TEXT, type TEXT, props TEXT, is_azure INTEGER)''')
     c.execute('''CREATE TABLE IF NOT EXISTS edges (start_oid TEXT, end_oid TEXT, label TEXT)''')
+    # Replace full snapshot: nodes upsert, edges must be cleared or they accumulate
+    # on every re-save (no unique constraint on edges).
+    c.execute('DELETE FROM edges')
+    c.execute('DELETE FROM nodes')
     for n, d in G.nodes(data=True):
-        c.execute("INSERT OR REPLACE INTO nodes VALUES (?, ?, ?, ?, ?)", (n, d['name'], d['type'], json.dumps(d['props']), int(d.get('is_azure', False))))
+        c.execute(
+            "INSERT INTO nodes VALUES (?, ?, ?, ?, ?)",
+            (n, d['name'], d['type'], json.dumps(d['props']), int(d.get('is_azure', False))),
+        )
     for u, v, d in G.edges(data=True):
         c.execute("INSERT INTO edges VALUES (?, ?, ?)", (u, v, d['label']))
     conn.commit()
