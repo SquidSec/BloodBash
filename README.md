@@ -52,21 +52,23 @@ Sample data lives in `SampleSharphoundADData/` and `SampleAzurehoundData/`.
 
 | Area | Checks |
 |------|--------|
-| **AD privilege** | DCSync, dangerous ACLs, GPO abuse, RBCD, constrained/unconstrained delegation, SID history |
-| **AD credentials** | Kerberoastable, AS-REP roastable, shadow credentials, password in description, PasswordNeverExpires / PasswordNotRequired |
-| **ADCS** | ESC1–ESC8 style template/CA misconfigurations |
-| **Azure / Entra** | Privileged roles, app secrets/certs, MFA gaps, guest access, service principal abuse |
-| **Paths** | Shortest paths to high-value targets, owned principals (`--owned`), custom `--path-from` / `--path-to` |
-| **Other** | LAPS status, GPO XML (`--gpo-content-dir`), trust/cross-tenant edges, group nesting |
+| **AD privilege** | DCSync (GetChanges+GetChangesAll), dangerous ACLs on high-value objects, GPO abuse, RBCD, constrained/unconstrained delegation (DCs noted but not scored), SID history |
+| **AD credentials** | Kerberoastable, AS-REP roastable, shadow credentials (`AddKeyCredentialLink` + non-default ACL paths), password in description, PasswordNeverExpires / PasswordNotRequired |
+| **ADCS** | ESC1–ESC7 (+ ESC8/ESC9/ESC13 when collector props exist). ESC10–12 need registry/HTTP role data often absent from SharpHound |
+| **Azure / Entra** | Privileged roles, app/SP credential *control* paths, explicit MFA disable, guest users, SP abuse rights |
+| **Paths** | Shortest paths to high-value targets (limited set in `--fast`), owned principals (`--owned`), custom `--path-from` / `--path-to` |
+| **Other** | LAPS via `haslaps`, GPO XML (`--gpo-content-dir`), domain `Trusts[]` edges, group nesting |
 
 Findings are scored and summarized in a **Prioritized Findings** table. Abuse panels suggest tools/commands per category.
+
+This is an **offline heuristic analyzer**, not a full BloodHound CE replacement. Prefer validating against BloodHound CE on the same zip for path parity.
 
 ## Useful flags
 
 | Flag | Purpose |
 |------|---------|
 | `--all` | Run every analysis module |
-| `--fast` | Skip heavy pathfinding |
+| `--fast` | Limit pathfinding to top DA/EA-style targets (not a full skip) |
 | `--domain X` | Filter to one AD domain or Azure `tenantId` |
 | `--owned a,b` | Paths involving owned principals |
 | `--path-from` / `--path-to` | Arbitrary shortest paths |
@@ -86,7 +88,7 @@ Run `python3 BloodBash.py --help` for the full list.
 
 ## SharpHound CE notes
 
-Ingest understands modern collector output: group `Members`, `AllowedToAct` (RBCD), Sessions / LocalGroups, CE property name aliases, and safe zip extraction. DCSync requires **GetChanges + GetChangesAll**; ADCS labels follow SpecterOps ESC1–ESC8 definitions.
+Ingest understands modern collector output: group `Members`, `AllowedToAct` (RBCD), Sessions / LocalGroups, domain `Trusts[]`, SID history, CE property name aliases, and safe zip extraction. DCSync requires **GetChanges + GetChangesAll**. ADCS labels follow SpecterOps ESC1–ESC8 (+ ESC9/ESC13 candidates when flags exist).
 
 ## Metasploit module
 

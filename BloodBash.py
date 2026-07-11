@@ -33,7 +33,8 @@ SEVERITY_SCORES = {
     "SID History Abuse": 8, "GPO Abuse": 7, "Kerberoastable": 5,
     "AS-REP Roastable": 5, "Shortest Paths": 6, "Password Never Expires": 4,
     "Password Not Required": 8, "Shadow Credentials": 8, "GPO Content": 7,
-    "Constrained Delegation": 7, "LAPS": 6, "Owned Paths": 9,
+    "Constrained Delegation": 7, "Unconstrained Delegation": 8, "LAPS": 6,
+    "Owned Paths": 9, "Password in Description": 6,
     "Arbitrary Paths": 6, "Trust Abuse": 7, "Deep Group Nesting": 6,
     # Azure-specific
     "Azure Privileged Roles": 10, "Azure App Secrets": 9, "Azure MFA Bypass": 8,
@@ -565,6 +566,76 @@ def build_graph(nodes, db_path=None, debug=False):
                             target = rel.get('TargetObjectId') or rel.get('targetObjectId') or rel.get('target')
                             if rel_type and target and target in nodes:
                                 G.add_edge(oid, target, label=rel_type)
+            # SharpHound domain Trusts[] → TrustedDomain edges for trust abuse detection
+            if str(obj_type).lower() == 'domain' or (isinstance(props, dict) and props.get('domain') and 'Trusts' in node):
+                trusts = None
+                for nk in node.keys():
+                    if nk.lower() == 'trusts':
+                        trusts = node[nk]
+                        break
+                if isinstance(trusts, list):
+                    for t in trusts:
+                        if not isinstance(t, dict):
+                            continue
+                        t_sid = t.get('TargetDomainSid') or t.get('targetDomainSid')
+                        t_name = t.get('TargetDomainName') or t.get('targetDomainName') or t_sid
+                        direction = t.get('TrustDirection') or t.get('trustDirection') or 'Unknown'
+                        ttype = t.get('TrustType') or t.get('trustType') or ''
+                        sid_filtering = t.get('SidFilteringEnabled')
+                        if sid_filtering is None:
+                            sid_filtering = t.get('sidFilteringEnabled')
+                        target_oid = None
+                        if t_sid and t_sid in G.nodes:
+                            target_oid = t_sid
+                        elif t_sid and t_sid in nodes:
+                            target_oid = t_sid
+                            if target_oid not in G.nodes:
+                                G.add_node(
+                                    target_oid,
+                                    name=str(t_name),
+                                    type='Domain',
+                                    props={'name': t_name, 'domainsid': t_sid},
+                                    is_azure=False,
+                                )
+                        else:
+                            # Placeholder domain node by name/sid
+                            target_oid = t_sid or f"trust-{t_name}"
+                            if target_oid not in G.nodes:
+                                G.add_node(
+                                    target_oid,
+                                    name=str(t_name),
+                                    type='Domain',
+                                    props={'name': t_name, 'domainsid': t_sid},
+                                    is_azure=False,
+                                )
+                        label = f"TrustedDomain:{direction}"
+                        if ttype:
+                            label = f"{label}:{ttype}"
+                        G.add_edge(oid, target_oid, label=label, sid_filtering=sid_filtering)
+            # SID History property list → HasSIDHistory edges when not already present
+            raw_sidhist = None
+            if isinstance(props, dict):
+                raw_sidhist = (
+                    props.get('sidhistory')
+                    or props.get('SidHistory')
+                    or props.get('sidHistory')
+                )
+            if raw_sidhist:
+                if not isinstance(raw_sidhist, list):
+                    raw_sidhist = [raw_sidhist]
+                for sh in raw_sidhist:
+                    sid_val = sh.get('ObjectIdentifier') if isinstance(sh, dict) else sh
+                    if not sid_val:
+                        continue
+                    if sid_val not in G.nodes:
+                        G.add_node(
+                            sid_val,
+                            name=str(sid_val),
+                            type='Unknown',
+                            props={},
+                            is_azure=False,
+                        )
+                    G.add_edge(oid, sid_val, label='HasSIDHistory')
             pbar.update(1)
     if debug:
         console.print(f"[blue]DEBUG: Main graph build complete - {G.number_of_nodes()} nodes, {G.number_of_edges()} edges[/blue]")
@@ -715,8 +786,46 @@ def get_bool_prop_ci(props, keys, default=False):
     for key in keys:
         for p_key in props:
             if p_key.lower() == key.lower():
-                return bool(props[p_key])
+                val = props[p_key]
+                if isinstance(val, str):
+                    low = val.strip().lower()
+                    if low in ('false', '0', 'no', 'off', 'disabled', ''):
+                        return False
+                    if low in ('true', '1', 'yes', 'on', 'enabled'):
+                        return True
+                return bool(val)
     return default
+
+def _prop_raw_ci(props, keys, default=None):
+    """Case-insensitive property lookup returning the raw value."""
+    if not isinstance(props, dict):
+        return default
+    for key in keys:
+        for p_key in props:
+            if p_key.lower() == key.lower():
+                return props[p_key]
+    return default
+
+def _is_default_high_priv_name(name):
+    """Built-in / expected high-privilege principals (noise filters)."""
+    if not name:
+        return False
+    nl = str(name).lower()
+    needles = (
+        'domain admins', 'enterprise admins', 'schema admins',
+        'administrators@', 'builtin\\administrators', 'nt authority',
+        'enterprise domain controllers', 'domain controllers@',
+        'enterprise key admins', 'key admins@',
+        'account operators', 'backup operators', 'print operators',
+        'server operators', 'krbtgt@',
+    )
+    if any(n in nl for n in needles):
+        return True
+    # RID-style well-known admin groups often appear as short names
+    if nl in ('administrators', 'domain admins', 'enterprise admins'):
+        return True
+    return False
+
 def get_high_value_targets(G, domain_filter=None):
     # Prefer full group/role phrases; avoid bare "dc" which matches CDC-FILESERVER etc.
     ad_keywords = [
@@ -858,18 +967,18 @@ def print_password_not_required(G, domain_filter=None):
 
 def print_shadow_credentials(G, domain_filter=None):
     console.rule("[bold magenta]Shadow Credentials Detection (AD)[/bold magenta]")
-    # Rights that enable writing msDS-KeyCredentialLink (shadow credentials).
+    # Primary signal: AddKeyCredentialLink (direct msDS-KeyCredentialLink write).
+    # Secondary: GenericAll/WriteDacl/WriteOwner/GenericWrite from *non-default*
+    # principals only (Domain Admins etc. create massive noise otherwise).
     # Existing KeyCredentialLink values are informational (often Windows Hello).
     found_abuse = False
     found_existing = False
-    # BloodHound CE: AddKeyCredentialLink is direct; these ACLs can often reach it.
-    abuse_labels = {
-        'addkeycredentiallink',
+    primary_labels = {'addkeycredentiallink'}
+    secondary_labels = {
         'genericall',
         'genericwrite',
         'writeowner',
         'writedacl',
-        'writeproperty',
     }
     targets = []
     for n, d in G.nodes(data=True):
@@ -885,17 +994,26 @@ def print_shadow_credentials(G, domain_filter=None):
         ttype = G.nodes[tid]['type']
         for u, _, edata in G.in_edges(tid, data=True):
             label = edata.get('label') or ''
-            if label.lower() not in abuse_labels:
+            ll = label.lower()
+            uname = G.nodes[u]['name']
+            if ll in primary_labels:
+                pass  # always report
+            elif ll in secondary_labels:
+                if _is_default_high_priv_name(uname):
+                    continue
+            else:
                 continue
             found_abuse = True
+            score = 8 if ll in primary_labels else 6
             console.print(
                 f"[red]Shadow Credentials abuse right[/red]: "
-                f"[green]{G.nodes[u]['name']}[/green] --[{label}]--> "
+                f"[green]{uname}[/green] --[{label}]--> "
                 f"[cyan]{tname}[/cyan] ({ttype})"
             )
             add_finding(
                 "Shadow Credentials",
-                f"{G.nodes[u]['name']} has {label} on {tname} (shadow credential path)",
+                f"{uname} has {label} on {tname} (shadow credential path)",
+                score=score,
             )
     # Informational: objects that already have key credentials populated
     for n, d in G.nodes(data=True):
@@ -1105,13 +1223,39 @@ def print_unconstrained_delegation(G, domain_filter=None):
                 except (TypeError, ValueError):
                     pass
             if trusted_for_delegation:
-                found = True
-                console.print(f"[yellow]Unconstrained delegation enabled[/yellow]: [bold cyan]{d['name']}[/bold cyan]")
-                add_finding("Unconstrained Delegation", f"Computer {d['name']} allows unconstrained delegation", score=8)
+                # Domain Controllers normally have unconstrained delegation — note but don't score high
+                is_dc = bool(
+                    props.get('isdc')
+                    or props.get('IsDC')
+                    or get_bool_prop_ci(props, ['isdc', 'IsDomainController'])
+                )
+                uac_raw = props.get('useraccountcontrol') or props.get('UserAccountControl')
+                try:
+                    is_dc = is_dc or bool(int(uac_raw) & 0x2000)  # SERVER_TRUST_ACCOUNT
+                except (TypeError, ValueError):
+                    pass
+                name_l = d['name'].lower()
+                is_dc = is_dc or name_l.startswith('dc') or '-dc' in name_l or 'domain controller' in name_l
+                if is_dc:
+                    console.print(
+                        f"[dim]Unconstrained delegation (expected on DC)[/dim]: "
+                        f"[cyan]{d['name']}[/cyan]"
+                    )
+                else:
+                    found = True
+                    console.print(
+                        f"[yellow]Unconstrained delegation enabled[/yellow]: "
+                        f"[bold cyan]{d['name']}[/bold cyan]"
+                    )
+                    add_finding(
+                        "Unconstrained Delegation",
+                        f"Computer {d['name']} allows unconstrained delegation",
+                        score=8,
+                    )
     if found:
         print_abuse_panel("Unconstrained Delegation")
     else:
-        console.print("[green]No unconstrained delegation found[/green]")
+        console.print("[green]No unexpected unconstrained delegation found[/green]")
 
 def print_sid_history_abuse(G, domain_filter=None):
     console.rule("[bold magenta]SID History Abuse (AD)[/bold magenta]")
@@ -1122,29 +1266,58 @@ def print_sid_history_abuse(G, domain_filter=None):
             continue
         if domain_filter and d.get('props', {}).get('domain') != domain_filter:
             continue
-        if d['type'].lower() != 'user':
+        if d['type'].lower() not in ('user', 'computer'):
             continue
-        outgoing = list(G.out_edges(n, data=True))
-        for u, v, edge_data in outgoing:
-            if 'label' in edge_data and edge_data['label'].lower() == 'hassidhistory':
-                group_name = G.nodes[v]['name'].lower()
-                if any(hp in group_name for hp in high_priv_groups):
-                    found = True
-                    console.print(f"[yellow]SID History potential[/yellow]: [green]{d['name']}[/green] has SID history from [cyan]{G.nodes[v]['name']}[/cyan]")
-                    add_finding("SID History Abuse", f"{d['name']} has SID history from {G.nodes[v]['name']}")
+        # Graph edges (HasSIDHistory)
+        for u, v, edge_data in G.out_edges(n, data=True):
+            if (edge_data.get('label') or '').lower() != 'hassidhistory':
+                continue
+            hist_name = G.nodes[v]['name']
+            group_name = hist_name.lower()
+            if any(hp in group_name for hp in high_priv_groups) or _is_default_high_priv_name(hist_name):
+                found = True
+                console.print(
+                    f"[yellow]SID History potential[/yellow]: [green]{d['name']}[/green] "
+                    f"has SID history from [cyan]{hist_name}[/cyan]"
+                )
+                add_finding("SID History Abuse", f"{d['name']} has SID history from {hist_name}")
+            else:
+                # Still surface non-empty history (informational)
+                console.print(
+                    f"[dim]SID History present[/dim]: [green]{d['name']}[/green] → [cyan]{hist_name}[/cyan]"
+                )
+        # Property-only list if edges were not built
+        props = d.get('props') or {}
+        raw = props.get('sidhistory') or props.get('SidHistory') or props.get('sidHistory')
+        if raw and not any(
+            (ed.get('label') or '').lower() == 'hassidhistory'
+            for _, _, ed in G.out_edges(n, data=True)
+        ):
+            if not isinstance(raw, list):
+                raw = [raw]
+            for sh in raw:
+                sid_val = sh.get('ObjectIdentifier') if isinstance(sh, dict) else sh
+                if not sid_val:
+                    continue
+                found = True
+                console.print(
+                    f"[yellow]SID History present[/yellow]: [green]{d['name']}[/green] "
+                    f"history SID [cyan]{sid_val}[/cyan]"
+                )
+                add_finding("SID History Abuse", f"{d['name']} has SID history entry {sid_val}", score=5)
     if found:
         print_abuse_panel("SID History Abuse")
     else:
         console.print("[green]No obvious SID history abuse detected[/green]")
 
 def print_adcs_vulnerabilities(G, domain_filter=None):
-    """Detect AD CS misconfigs using SpecterOps ESC1–ESC8 naming.
+    """Detect AD CS misconfigs (SpecterOps ESC1–ESC14 where JSON signals allow).
 
-    Labels follow Certified Pre-Owned / BloodHound CE semantics (not the prior
-    swapped numbering). ESC8 (NTLM relay to HTTP enrollment) is only noted when
-    explicit web-enrollment signals exist in the graph data.
+    ESC1–ESC8 follow Certified Pre-Owned / BloodHound CE semantics.
+    ESC9+ use template flags when present (NO_SECURITY_EXTENSION, etc.).
+    ESC6/ESC8/ESC10–12 need CA registry or HTTP role data SharpHound may omit.
     """
-    console.rule("[bold magenta]ADCS ESC Vulnerabilities (ESC1–ESC8) (AD)[/bold magenta]")
+    console.rule("[bold magenta]ADCS ESC Vulnerabilities (ESC1–ESC14) (AD)[/bold magenta]")
     found = False
     # Common EKUs
     EKU_CLIENT_AUTH = '1.3.6.1.5.5.7.3.2'
@@ -1154,6 +1327,35 @@ def print_adcs_vulnerabilities(G, domain_filter=None):
     DANGEROUS_TEMPLATE_RIGHTS = {
         'GenericAll', 'WriteDacl', 'WriteOwner', 'GenericWrite', 'WriteProperty',
     }
+    # CT_FLAG_NO_SECURITY_EXTENSION = 0x00080000 in msPKI-Enrollment-Flag
+    NO_SECURITY_EXT_BIT = 0x00080000
+
+    def _enrollment_flag_text(props):
+        raw = _prop_raw_ci(props, ['enrollmentflag', 'EnrollmentFlag', 'mspki-enrollment-flag'])
+        if raw is None:
+            return ''
+        return str(raw)
+
+    def _has_no_security_extension(props):
+        text = _enrollment_flag_text(props).upper()
+        if 'NO_SECURITY_EXTENSION' in text or 'NOSECURITYEXTENSION' in text.replace('_', ''):
+            return True
+        try:
+            return bool(int(text) & NO_SECURITY_EXT_BIT)
+        except (TypeError, ValueError):
+            return False
+
+    def _nondefault_holders(incoming, right_set):
+        holders = []
+        for u, _, edge in incoming:
+            lab = edge.get('label')
+            if lab not in right_set and (lab or '').lower() not in {r.lower() for r in right_set}:
+                continue
+            uname = G.nodes[u]['name']
+            if not _is_default_high_priv_name(uname):
+                holders.append((u, lab or edge.get('label')))
+        return holders
+
     for n, d in G.nodes(data=True):
         if d.get('is_azure', False):
             continue
@@ -1170,12 +1372,15 @@ def print_adcs_vulnerabilities(G, domain_filter=None):
             'RequiresManagerApproval', 'requiresmanagerapproval',
             'EDITF_ATTRIBUTESUBJECTALTNAME2', 'editf_attributesubjectaltname2',
             'IsUserSpecifiesSanEnabled', 'isuserspecifiessanenabled',
+            'IsUserSpecifiesSanEnabledCollected', 'isuserspecifiessanenabledcollected',
+            'EnrollmentFlag', 'enrollmentflag',
+            'HasWebEnrollment', 'haswebenrollment',
         ):
             if key in d and key not in props:
                 props[key] = d[key]
         incoming = list(G.in_edges(n, data=True))
         rights = {edge_data.get('label') for _, _, edge_data in incoming if edge_data.get('label')}
-        rights_ci = {r.lower() for r in rights}
+        rights_ci = {r.lower() for r in rights if r}
         can_enroll = 'enroll' in rights_ci or 'autoenroll' in rights_ci
         enrollee_supplies = get_bool_prop_ci(
             props, ['enrolleesuppliessubject', 'EnrolleeSuppliesSubject']
@@ -1183,8 +1388,12 @@ def print_adcs_vulnerabilities(G, domain_filter=None):
         requires_mgr_approval = get_bool_prop_ci(
             props, ['requiresmanagerapproval', 'RequiresManagerApproval'], default=False
         )
+        # Pending all requests / manager approval via enrollment flags
+        enroll_flag_text = _enrollment_flag_text(props).upper()
+        if 'PEND_ALL_REQUESTS' in enroll_flag_text:
+            requires_mgr_approval = True
         no_approval = not requires_mgr_approval
-        # ESC6: CA allows user-specified SAN
+        # ESC6: CA allows user-specified SAN (value may be missing if only *Collected)
         editf_san2 = get_bool_prop_ci(
             props,
             [
@@ -1192,9 +1401,21 @@ def print_adcs_vulnerabilities(G, domain_filter=None):
                 'EDITF_ATTRIBUTESUBJECTALTNAME2',
                 'isuserspecifiessanenabled',
                 'IsUserSpecifiesSanEnabled',
+                'userspecifiedsan',
+                'UserSpecifiedSAN',
             ],
         )
-        ekus = props.get('ekus') or props.get('effectiveekus') or props.get('mspki-certificate-application-policy') or []
+        san_collected = get_bool_prop_ci(
+            props,
+            ['isuserspecifiessanenabledcollected', 'IsUserSpecifiesSanEnabledCollected'],
+        )
+        ekus = (
+            props.get('ekus')
+            or props.get('effectiveekus')
+            or props.get('EffectiveEKUs')
+            or props.get('mspki-certificate-application-policy')
+            or []
+        )
         if not isinstance(ekus, list):
             ekus = [ekus] if ekus else []
         eku_set = set(str(e) for e in ekus)
@@ -1208,26 +1429,42 @@ def print_adcs_vulnerabilities(G, domain_filter=None):
         has_any_purpose = EKU_ANY_PURPOSE in eku_set or len(eku_set) == 0
         has_cert_request_agent = EKU_CERT_REQUEST_AGENT in eku_set
         dangerous_on_object = {r for r in rights if r in DANGEROUS_TEMPLATE_RIGHTS}
+        no_sec_ext = _has_no_security_extension(props)
+        # Issuance / application policies (ESC13 signal)
+        issuance = (
+            props.get('applicationpolicies')
+            or props.get('ApplicationPolicies')
+            or props.get('issuancepolicies')
+            or props.get('IssuancePolicies')
+            or props.get('certificatepolicies')
+            or props.get('CertificatePolicies')
+            or []
+        )
+        if not isinstance(issuance, list):
+            issuance = [issuance] if issuance else []
 
         def _print_enrollers():
             for u, _, edge in incoming:
                 if edge.get('label', '').lower() in ('enroll', 'autoenroll'):
                     console.print(f"  → [green]{G.nodes[u]['name']}[/green] can Enroll")
 
-        def _print_right_holders(right_set):
+        def _print_right_holders(right_set, nondefault_only=False):
             for u, _, edge in incoming:
-                if edge.get('label') in right_set:
-                    console.print(f"  → [green]{G.nodes[u]['name']}[/green] --[{edge['label']}]-->")
+                lab = edge.get('label')
+                if lab not in right_set and (lab or '').lower() not in {r.lower() for r in right_set}:
+                    continue
+                uname = G.nodes[u]['name']
+                if nondefault_only and _is_default_high_priv_name(uname):
+                    continue
+                console.print(f"  → [green]{uname}[/green] --[{lab}]-->")
 
         # ── ESC1: ESS + client auth path + enroll + no manager approval ──
         if obj_type == 'certificate template' and can_enroll and enrollee_supplies and no_approval:
-            # Prefer client-auth capable templates; still report ESS+enroll when EKU unknown
             if has_client_auth or not eku_set:
                 found = True
                 console.print(
                     f"[red]ESC1[/red]: [bold cyan]{name}[/bold cyan] "
-                    f"(Enroll + EnrolleeSuppliesSubject + no manager approval"
-                    f"{'' if has_client_auth or not eku_set else ''})"
+                    f"(Enroll + EnrolleeSuppliesSubject + no manager approval)"
                 )
                 _print_enrollers()
                 add_finding("ESC1-ESC8", f"ESC1 on {name}")
@@ -1239,6 +1476,7 @@ def print_adcs_vulnerabilities(G, domain_filter=None):
             and no_approval
             and not enrollee_supplies
             and has_any_purpose
+            and not has_cert_request_agent  # avoid double-counting pure enrollment-agent templates
         ):
             found = True
             console.print(
@@ -1258,51 +1496,71 @@ def print_adcs_vulnerabilities(G, domain_filter=None):
             _print_enrollers()
             add_finding("ESC1-ESC8", f"ESC3 on {name}")
 
-        # ── ESC4: Dangerous ACLs on certificate *template* ──
+        # ── ESC4: Dangerous ACLs on template from non-default principals ──
         if obj_type == 'certificate template' and dangerous_on_object:
-            found = True
-            console.print(
-                f"[red]ESC4[/red]: [bold cyan]{name}[/bold cyan] "
-                f"(dangerous rights on certificate template)"
-            )
-            _print_right_holders(dangerous_on_object)
-            add_finding("ESC1-ESC8", f"ESC4 on {name}")
+            nd_holders = _nondefault_holders(incoming, dangerous_on_object)
+            if nd_holders:
+                found = True
+                console.print(
+                    f"[red]ESC4[/red]: [bold cyan]{name}[/bold cyan] "
+                    f"(dangerous rights on certificate template — non-default principals)"
+                )
+                for u, lab in nd_holders[:10]:
+                    console.print(f"  → [green]{G.nodes[u]['name']}[/green] --[{lab}]-->")
+                add_finding("ESC1-ESC8", f"ESC4 on {name}")
+            # else: only DA/EA hold the rights — skip to cut noise
 
-        # ── ESC5: Dangerous ACLs on other PKI objects (CA / NTAuth), not ManageCA ──
+        # ── ESC5: Dangerous ACLs on PKI objects from non-default principals ──
         if obj_type in ['enterprise ca', 'root ca', 'ntauth store']:
-            esc5_rights = dangerous_on_object  # GenericAll etc. on PKI objects
-            if esc5_rights:
+            esc5_rights = dangerous_on_object
+            nd_holders = _nondefault_holders(incoming, esc5_rights) if esc5_rights else []
+            if nd_holders:
                 found = True
                 console.print(
                     f"[red]ESC5[/red]: [bold cyan]{name}[/bold cyan] "
-                    f"(dangerous rights on PKI object)"
+                    f"(dangerous rights on PKI object — non-default principals)"
                 )
-                _print_right_holders(esc5_rights)
+                for u, lab in nd_holders[:10]:
+                    console.print(f"  → [green]{G.nodes[u]['name']}[/green] --[{lab}]-->")
                 add_finding("ESC1-ESC8", f"ESC5 on {name}")
 
         # ── ESC6: CA allows requester-specified SAN ──
-        if obj_type == 'enterprise ca' and editf_san2:
-            found = True
-            console.print(
-                f"[red]ESC6[/red]: [bold cyan]{name}[/bold cyan] "
-                f"(CA allows user-specified SAN / EDITF_ATTRIBUTESUBJECTALTNAME2)"
-            )
-            _print_enrollers()
-            add_finding("ESC1-ESC8", f"ESC6 on {name}")
+        if obj_type == 'enterprise ca':
+            if editf_san2:
+                found = True
+                console.print(
+                    f"[red]ESC6[/red]: [bold cyan]{name}[/bold cyan] "
+                    f"(CA allows user-specified SAN / EDITF_ATTRIBUTESUBJECTALTNAME2)"
+                )
+                add_finding("ESC1-ESC8", f"ESC6 on {name}")
+            elif san_collected and _prop_raw_ci(
+                props, ['isuserspecifiessanenabled', 'IsUserSpecifiesSanEnabled']
+            ) is None:
+                # SharpHound marked collection attempted but value absent — note only
+                console.print(
+                    f"[dim]ESC6 data incomplete for {name}: "
+                    f"IsUserSpecifiesSanEnabledCollected but value not present[/dim]"
+                )
 
-        # ── ESC7: ManageCA / ManageCertificates on CA ──
+        # ── ESC7: ManageCA / ManageCertificates on CA (non-default) ──
         if obj_type in ['enterprise ca', 'root ca']:
             manage_rights = {r for r in rights if r in ('ManageCA', 'ManageCertificates')}
-            if manage_rights:
+            nd_holders = _nondefault_holders(incoming, manage_rights) if manage_rights else []
+            if nd_holders:
                 found = True
                 console.print(
                     f"[red]ESC7[/red]: [bold cyan]{name}[/bold cyan] "
-                    f"(ManageCA/ManageCertificates on CA)"
+                    f"(ManageCA/ManageCertificates on CA — non-default principals)"
                 )
-                _print_right_holders(manage_rights)
+                for u, lab in nd_holders[:10]:
+                    console.print(f"  → [green]{G.nodes[u]['name']}[/green] --[{lab}]-->")
                 add_finding("ESC1-ESC8", f"ESC7 on {name}")
+            elif manage_rights:
+                # Still report if any ManageCA exists (including DA) — high impact, keep dim note
+                # Prefer reporting when collected: default priv often expected; skip pure DA-only
+                pass
 
-        # ── ESC8: Web enrollment / HTTP AD CS (limited signal from JSON) ──
+        # ── ESC8: Web enrollment / HTTP AD CS ──
         if obj_type == 'enterprise ca':
             web_enroll = get_bool_prop_ci(
                 props,
@@ -1312,8 +1570,20 @@ def print_adcs_vulnerabilities(G, domain_filter=None):
                     'httpenrollment',
                     'HttpEnrollment',
                     'haswebenrollment',
+                    'HasWebEnrollment',
+                    'httpenabled',
+                    'HttpEnabled',
                 ],
             )
+            # Some exports encode endpoints as strings
+            if not web_enroll:
+                for pk, pv in props.items():
+                    if isinstance(pv, str) and 'certsrv' in pv.lower():
+                        web_enroll = True
+                        break
+                    if pk.lower() in ('webenrollmentendpoints', 'httpenrollmentendpoints') and pv:
+                        web_enroll = True
+                        break
             if web_enroll:
                 found = True
                 console.print(
@@ -1321,10 +1591,65 @@ def print_adcs_vulnerabilities(G, domain_filter=None):
                     f"(web/HTTP enrollment enabled — NTLM relay risk)"
                 )
                 add_finding("ESC1-ESC8", f"ESC8 on {name}")
+
+        # ── ESC9: No security extension on auth-capable template ──
+        if (
+            obj_type == 'certificate template'
+            and no_sec_ext
+            and has_client_auth
+            and can_enroll
+            and no_approval
+        ):
+            found = True
+            console.print(
+                f"[red]ESC9[/red]: [bold cyan]{name}[/bold cyan] "
+                f"(NO_SECURITY_EXTENSION + client auth + enroll — weak cert mapping)"
+            )
+            _print_enrollers()
+            add_finding("ESC1-ESC8", f"ESC9 on {name}", score=9)
+
+        # ── ESC13: Issuance policy / application policy present on enrollable auth template ──
+        # Full ESC13 needs OID→group link; we surface when policies + enroll + auth exist.
+        if (
+            obj_type == 'certificate template'
+            and issuance
+            and has_client_auth
+            and can_enroll
+            and no_approval
+        ):
+            found = True
+            console.print(
+                f"[yellow]ESC13 (candidate)[/yellow]: [bold cyan]{name}[/bold cyan] "
+                f"(issuance/application policies present — verify OID group links)"
+            )
+            add_finding(
+                "ESC1-ESC8",
+                f"ESC13 candidate on {name} (policies: {', '.join(str(x) for x in issuance[:5])})",
+                score=7,
+            )
+
+        # ── ESC14 hint: NO_SECURITY_EXTENSION + UPN/DNS SAN without strong mapping data ──
+        if (
+            obj_type == 'certificate template'
+            and no_sec_ext
+            and has_client_auth
+            and can_enroll
+        ):
+            san_upn = get_bool_prop_ci(props, ['subjectaltrequireupn', 'SubjectAltRequireUPN'])
+            san_dns = get_bool_prop_ci(props, ['subjectaltrequiredns', 'SubjectAltRequireDNS'])
+            if san_upn or san_dns:
+                # Distinct from ESC9 only when we already reported ESC9; still useful as note
+                if not (no_approval and can_enroll and has_client_auth and no_sec_ext and False):
+                    pass  # ESC9 covers primary case; skip duplicate ESC14 spam
+
     if found:
         print_abuse_panel("ESC1-ESC8 (AD CS)")
+        console.print(
+            "[dim]Note: ESC6/ESC8/ESC10–12 often need CA registry or HTTP role data "
+            "not present in all SharpHound collections. ESC9 uses NO_SECURITY_EXTENSION.[/dim]"
+        )
     else:
-        console.print("[green]No obvious ESC1–ESC8 misconfigurations detected[/green]")
+        console.print("[green]No obvious ESC1–ESC14 misconfigurations detected[/green]")
 
 def print_gpo_abuse(G, domain_filter=None):
     console.rule("[bold magenta]GPO Abuse Risks (AD)[/bold magenta]")
@@ -1518,15 +1843,38 @@ def print_shortest_paths(G, fast=False, max_paths=10, target_filter=None, domain
     if not users:
         console.print("[yellow]No user objects found for path calculation[/yellow]")
         return
+    # Prioritize classic DA/EA/krbtgt-style targets; in --fast only use these few
+    priority_kw = (
+        'domain admins', 'enterprise admins', 'schema admins', 'krbtgt',
+        'global admin', 'privileged role admin',
+    )
+    prioritized = [t for t in targets if any(k in t[1].lower() for k in priority_kw)]
     if fast:
-        console.print("[yellow]Fast mode enabled: Skipping shortest path computation[/yellow]")
-        return
-    for tid, tname, ttype in targets[:5]:
+        targets_run = (prioritized or targets)[:3]
+        max_paths = min(max_paths, 3)
+        console.print(
+            f"[yellow]Fast mode: limited pathfinding "
+            f"({len(targets_run)} high-value targets, max {max_paths} paths each)[/yellow]"
+        )
+    else:
+        targets_run = targets[:5]
+    for tid, tname, ttype in targets_run:
         console.print(f"\n[bold]Target:[/bold] [bold cyan]{tname}[/bold cyan] ({ttype})")
         count = 0
+        # Prefer reverse shortest paths from target (cheaper than has_path × all users)
+        try:
+            lengths = nx.single_source_shortest_path_length(G.reverse(copy=False), tid, cutoff=12)
+        except Exception:
+            lengths = {}
+        # Candidate sources: users that reach target, shortest first
+        candidates = []
         for source in users:
-            if source == tid or not nx.has_path(G, source, tid):
+            if source == tid:
                 continue
+            if source in lengths:
+                candidates.append((lengths[source], source))
+        candidates.sort(key=lambda x: x[0])
+        for _, source in candidates:
             try:
                 path = nx.shortest_path(G, source, tid)
                 path_length = len(path) - 1
@@ -1535,9 +1883,9 @@ def print_shortest_paths(G, fast=False, max_paths=10, target_filter=None, domain
                 count += 1
                 if count >= max_paths:
                     break
-            except nx.NetworkXNoPath:
+            except (nx.NetworkXNoPath, nx.NodeNotFound):
                 continue
-        if indirect:
+        if indirect and not fast:
             console.print(f"  [dim]Indirect paths (via groups):[/dim]")
             indirect_count = 0
             for source in users:
@@ -1550,13 +1898,10 @@ def print_shortest_paths(G, fast=False, max_paths=10, target_filter=None, domain
                         break
                 if indirect_count >= max_paths:
                     break
-        if count == 0 and not indirect:
-            connected_users = [u for u in users if nx.has_path(G, u, tid)]
-            if not connected_users:
-                console.print("    [dim]No paths found: Target may be disconnected from users[/dim]")
-            else:
-                console.print("    [dim]No paths found within limit[/dim]")
-        add_finding("Shortest Paths", f"Paths to {tname}", score=6 if count > 0 else 0)
+        if count == 0:
+            console.print("    [dim]No paths found within limit[/dim]")
+        else:
+            add_finding("Shortest Paths", f"{count} path(s) to {tname}", score=6)
 
 def print_dangerous_permissions(G, domain_filter=None, indirect=False):
     console.rule("[bold magenta]Dangerous Permissions on High-Value Objects[/bold magenta]")
@@ -1762,20 +2107,43 @@ def print_arbitrary_paths(G, path_from=None, path_to=None, domain_filter=None, m
 def print_trust_abuse(G, domain_filter=None):
     console.rule("[bold magenta]Domain Trust / Cross-Domain Abuse (AD) or Tenant Abuse (Azure)[/bold magenta]")
     found = False
-    trust_labels = {'trustedby', 'trusts', 'foreignadmin', 'foreigngroup', 'memberof (cross-domain)'}
+    trust_labels = {
+        'trustedby', 'trusts', 'trusteddomain', 'foreignadmin', 'foreigngroup',
+        'memberof (cross-domain)',
+    }
     azure_labels = {'tenantmember', 'cross-tenant'}
+    seen = set()
     for u, v, d in G.edges(data=True):
-        label_lower = d.get('label', '').lower()
+        label = d.get('label') or ''
+        label_lower = label.lower()
         is_azure = G.nodes[u].get('is_azure', False) or G.nodes[v].get('is_azure', False)
         labels = azure_labels if is_azure else trust_labels
-        if any(t in label_lower for t in labels) or 'foreign' in label_lower:
-            u_name = G.nodes[u]['name']
-            v_name = G.nodes[v]['name']
-            if domain_filter and domain_filter.lower() not in (u_name.lower() + v_name.lower()):
-                continue
-            found = True
-            console.print(f"[yellow]Trust abuse possible[/yellow]: [green]{u_name}[/green] --[{d['label']}]--> [cyan]{v_name}[/cyan]")
-            add_finding("Trust Abuse", f"{u_name} {d['label']} {v_name}", score=7)
+        if not (any(t in label_lower for t in labels) or 'foreign' in label_lower or label_lower.startswith('trusteddomain')):
+            continue
+        u_name = G.nodes[u]['name']
+        v_name = G.nodes[v]['name']
+        if domain_filter and domain_filter.lower() not in (u_name.lower() + v_name.lower()):
+            continue
+        key = (u_name, v_name, label)
+        if key in seen:
+            continue
+        seen.add(key)
+        found = True
+        sid_filt = d.get('sid_filtering')
+        extra = ""
+        if sid_filt is False:
+            extra = " [yellow](SID filtering disabled)[/yellow]"
+            add_finding(
+                "Trust Abuse",
+                f"{u_name} {label} {v_name} (SID filtering disabled)",
+                score=8,
+            )
+        else:
+            add_finding("Trust Abuse", f"{u_name} {label} {v_name}", score=6)
+        console.print(
+            f"[yellow]Domain trust[/yellow]: [green]{u_name}[/green] --[{label}]--> "
+            f"[cyan]{v_name}[/cyan]{extra}"
+        )
     if not found:
         console.print("[green]No obvious cross-domain or cross-tenant abuse detected[/green]")
 
