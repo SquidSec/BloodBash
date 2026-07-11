@@ -12,24 +12,27 @@ class MetasploitModule < Msf::Auxiliary
 
   def initialize(info = {})
     super(update_info(info,
-      'Name'           => 'BloodBash SharpHound & AzureHound Offline Analyzer',
+      'Name'           => 'SquidSec BloodBash — SharpHound & AzureHound Offline Analyzer',
       'Description'    => %q{
-        This module wraps the BloodBash Python script to analyze SharpHound and
+        This module wraps SquidSec's BloodBash open source tool to analyze SharpHound and
         AzureHound JSON files offline. It detects AD and Azure/Entra ID attack paths,
         misconfigurations (e.g., ADCS ESC vulnerabilities, dangerous permissions,
         privileged Azure roles), and other vulnerabilities. Results are displayed and
         can be reported to the Metasploit database.
 
+        BloodBash is created and managed by SquidSec (https://squidhacker.com/).
         Requires BloodBash v1.3.1+ and Python dependencies (NetworkX, Rich, tqdm, PyYAML)
-        installed on the system.
+        installed on the system (or a SquidSec-published standalone binary).
       },
       'License'        => MSF_LICENSE,
-      'Author'         => ['☣️ Mr. The Plague ☣️', 'DotNetRussell'],
+      'Author'         => ['☣️ Mr. The Plague ☣️', 'DotNetRussell', 'SquidSec'],
       'References'     => [
+        ['URL', 'https://squidhacker.com/'],
+        ['URL', 'https://github.com/DotNetRussell/BloodBash'],
         ['URL', 'https://github.com/ly4k/BloodHound'],
         ['URL', 'https://github.com/BloodHoundAD/AzureHound'],
-        ['URL', 'https://github.com/DotNetRussell/BloodBash']
       ],
+
       'Platform'       => 'ruby',
       'Arch'           => ARCH_RUBY,
       'DisclosureDate' => '2026-06-27'

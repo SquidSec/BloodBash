@@ -175,7 +175,9 @@ jobs:
           generate_release_notes: true
           make_latest: true
           body: |
-            ## BloodBash ${{ steps.meta.outputs.base_version }} — build ${{ github.run_number }}
+            ## SquidSec BloodBash ${{ steps.meta.outputs.base_version }} — build ${{ github.run_number }}
+
+            **BloodBash** is an open source project created and managed by **[SquidSec](https://squidhacker.com/)**.
 
             Standalone binaries (no Python install required).
 
@@ -199,6 +201,9 @@ jobs:
             # Windows
             .\bloodbash-windows-x64.exe C:\path\to\sharphound --all
             ```
+
+            ---
+            [SquidSec](https://squidhacker.com/) · [BloodBash on GitHub](https://github.com/${{ github.repository }})
           files: |
             release-final/bloodbash-linux-x64
             release-final/bloodbash-windows-x64.exe
