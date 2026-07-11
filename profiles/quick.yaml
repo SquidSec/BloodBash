@@ -1,0 +1,27 @@
+# BloodBash built-in profile: quick hygiene + critical abuse
+name: quick
+description: Fast critical checks, inventory ladders, and path remediation hints
+all: false
+fast: true
+verbose: true
+checks:
+  - dcsync
+  - adcs
+  - dangerous-permissions
+  - kerberoastable
+  - as-rep-roastable
+  - password-never-expires
+  - password-not-required
+  - password-descriptions
+  - password-age
+  - stale-accounts
+  - privilege-inventory
+  - inventory
+  - path-break
+busiest_paths: short
+busiest_paths_top: 5
+path_break_top: 10
+export: html
+report_pack: bloodbash-report-pack
+export_zip: bloodbash-reports.zip
+log_file: bloodbash.log

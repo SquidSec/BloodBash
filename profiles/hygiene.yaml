@@ -1,0 +1,18 @@
+# BloodBash built-in profile: account / password hygiene
+name: hygiene
+description: Password age, stale accounts, roastables, and never-expires hygiene
+all: false
+fast: true
+verbose: true
+checks:
+  - password-age
+  - stale-accounts
+  - password-never-expires
+  - password-not-required
+  - password-descriptions
+  - kerberoastable
+  - as-rep-roastable
+  - inventory
+  - privilege-inventory
+export: csv
+report_pack: bloodbash-hygiene-report-pack
