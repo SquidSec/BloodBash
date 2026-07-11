@@ -1,0 +1,21 @@
+{
+  "meta": {"version": 6, "type": "users"},
+  "data": [
+    {
+      "ObjectIdentifier": "S-1-5-21-1-2-3-4100",
+      "Properties": {
+        "name": "SESSIONUSER@LAB.LOCAL",
+        "domain": "lab.local",
+        "type": "User"
+      }
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1-2-3-4101",
+      "Properties": {
+        "name": "PRIVUSER@LAB.LOCAL",
+        "domain": "lab.local",
+        "type": "User"
+      }
+    }
+  ]
+}
