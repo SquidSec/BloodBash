@@ -390,18 +390,23 @@ class TestBloodBash(unittest.TestCase):
             self.assertIn("<html>", content)
             self.assertIn("BloodBash Report", content)
     def test_export_csv(self):
-        try:
-            G = self._load_and_build_graph("local-admin-sessions-tests")
-        except FileNotFoundError as e:
-            self.skipTest(str(e))
+        G = nx.MultiDiGraph()
+        G.add_node("T", name="Target", type="User")
+        bloodbash_globals['add_finding']("DCSync", "User has GetChanges+GetChangesAll")
+        bloodbash_globals['add_finding']("Kerberoastable", "svc_sql has SPN")
         export_path = os.path.join(self.temp_dir, "test")
         bloodbash_globals['export_results'](G, output_prefix=export_path, format_type="csv")
-        csv_file = f"{export_path}_sessions.csv"
+        csv_file = f"{export_path}.csv"
         self.assertTrue(os.path.exists(csv_file))
-        with open(csv_file, 'r') as f:
+        with open(csv_file, 'r', encoding='utf-8') as f:
             lines = f.readlines()
-            self.assertGreater(len(lines), 1)
-            self.assertIn("Principal", lines[0])
+            self.assertGreaterEqual(len(lines), 3)  # header + 2 findings
+            self.assertIn("Severity", lines[0])
+            self.assertIn("Category", lines[0])
+            self.assertIn("Details", lines[0])
+            body = "".join(lines[1:])
+            self.assertIn("DCSync", body)
+            self.assertIn("Kerberoastable", body)
     def test_get_indirect_paths(self):
         G = nx.MultiDiGraph()
         G.add_node("U", name="User")
@@ -499,16 +504,28 @@ class TestBloodBash(unittest.TestCase):
         self.assertNotIn("User3", output)
     def test_export_md_and_json(self):
         G = nx.MultiDiGraph()
-        G.add_node("T", name="Target", type="User")
+        G.add_node("T", name="Domain Admins", type="Group")
+        G.add_node("U", name="RegularUser", type="User")
         bloodbash_globals['add_finding']("Test", "Sample finding")
         export_path = os.path.join(self.temp_dir, "test")
         bloodbash_globals['export_results'](G, output_prefix=export_path, format_type="md")
         self.assertTrue(os.path.exists(f"{export_path}.md"))
+        with open(f"{export_path}.md", 'r', encoding='utf-8') as f:
+            md = f.read()
+            self.assertIn("Prioritized Findings", md)
+            self.assertIn("Sample finding", md)
+            self.assertIn("High-Value Targets", md)
+            self.assertIn("Domain Admins", md)
         bloodbash_globals['export_results'](G, output_prefix=export_path, format_type="json")
         self.assertTrue(os.path.exists(f"{export_path}.json"))
-        with open(f"{export_path}.json", 'r') as f:
+        with open(f"{export_path}.json", 'r', encoding='utf-8') as f:
             data = json.load(f)
             self.assertIn("nodes", data)
+            self.assertIn("findings", data)
+            self.assertIn("high_value", data)
+            self.assertEqual(data["nodes"], 2)
+            self.assertTrue(any(f.get("details") == "Sample finding" for f in data["findings"]))
+            self.assertTrue(any(h.get("name") == "Domain Admins" for h in data["high_value"]))
     def test_prioritization_custom_scores(self):
         bloodbash_globals['add_finding']("Custom", "Low priority", score=1)
         bloodbash_globals['add_finding']("Custom2", "High priority", score=10)
@@ -1007,6 +1024,7 @@ class TestBloodBash(unittest.TestCase):
 
     def test_export_yaml(self):
         G = self._load_and_build_graph("yaml-export-tests")
+        bloodbash_globals['add_finding']("YAMLTest", "Finding for yaml export")
         export_path = os.path.join(self.temp_dir, "yaml_export")
         bloodbash_globals['export_results'](G, output_prefix=export_path, format_type="yaml")
         yaml_file = f"{export_path}.yaml"
@@ -1016,6 +1034,50 @@ class TestBloodBash(unittest.TestCase):
         self.assertEqual(data['nodes'], G.number_of_nodes())
         self.assertIn('high_value', data)
         self.assertIn('findings', data)
+        self.assertTrue(any(f.get("details") == "Finding for yaml export" for f in data["findings"]))
+
+    def test_export_formats_findings_parity(self):
+        """All --export formats share the same high-value + findings report model."""
+        G = nx.MultiDiGraph()
+        G.add_node("DA", name="Domain Admins", type="Group", props={"domain": "TEST.LOCAL"})
+        G.add_node("U", name="Alice", type="User", props={"domain": "TEST.LOCAL"})
+        bloodbash_globals['global_findings'] = []
+        bloodbash_globals['add_finding']("DCSync", "Alice can DCSync", score=10)
+        bloodbash_globals['add_finding']("Kerberoastable", "svc has SPN", score=5)
+        report = bloodbash_globals['build_export_report'](G)
+        self.assertEqual(report["nodes"], 2)
+        self.assertEqual(len(report["findings"]), 2)
+        self.assertEqual(report["findings"][0]["category"], "DCSync")  # higher score first
+        self.assertTrue(any(h["name"] == "Domain Admins" for h in report["high_value"]))
+
+        export_path = os.path.join(self.temp_dir, "parity")
+        for fmt, suffix in [("md", ".md"), ("json", ".json"), ("html", ".html"),
+                            ("csv", ".csv"), ("yaml", ".yaml")]:
+            bloodbash_globals['export_results'](G, output_prefix=export_path, format_type=fmt)
+            path = f"{export_path}{suffix}"
+            self.assertTrue(os.path.exists(path), f"missing {path}")
+            with open(path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            self.assertIn("DCSync", content)
+            self.assertIn("Alice can DCSync", content)
+            if fmt != "csv":
+                # CSV is findings-only; other formats also list high-value targets
+                self.assertIn("Domain Admins", content)
+
+        with open(f"{export_path}.json", 'r', encoding='utf-8') as f:
+            json_data = json.load(f)
+        with open(f"{export_path}.yaml", 'r', encoding='utf-8') as f:
+            yaml_data = bloodbash_globals['yaml'].safe_load(f)
+        self.assertEqual(json_data["nodes"], yaml_data["nodes"])
+        self.assertEqual(json_data["edges"], yaml_data["edges"])
+        self.assertEqual(
+            [(f["score"], f["category"], f["details"]) for f in json_data["findings"]],
+            [(f["score"], f["category"], f["details"]) for f in yaml_data["findings"]],
+        )
+        self.assertEqual(
+            [(h["name"], h["type"]) for h in json_data["high_value"]],
+            [(h["name"], h["type"]) for h in yaml_data["high_value"]],
+        )
 
     def test_get_bool_prop_ci(self):
         props = {"PasswordNeverExpires": True, "enabled": False}

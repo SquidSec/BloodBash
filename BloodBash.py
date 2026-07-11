@@ -1903,53 +1903,95 @@ def print_azure_service_principal_abuse(G, domain_filter=None):
 # ────────────────────────────────────────────────
 # Export
 # ────────────────────────────────────────────────
+def build_export_report(G, domain_filter=None):
+    """Structured report shared by all --export formats (md/json/html/csv/yaml)."""
+    high_value = [
+        {"name": name, "type": typ}
+        for _, name, typ in get_high_value_targets(G, domain_filter)
+    ]
+    findings = [
+        {"score": score, "category": cat, "details": det}
+        for score, cat, det in sorted(global_findings, key=lambda x: x[0], reverse=True)
+    ]
+    return {
+        "nodes": G.number_of_nodes(),
+        "edges": G.number_of_edges(),
+        "high_value": high_value,
+        "findings": findings,
+    }
+
 def export_results(G, output_prefix="bloodbash", format_type="md", domain_filter=None):
+    report = build_export_report(G, domain_filter)
     if format_type == "md":
         path = f"{output_prefix}.md"
         with open(path, "w", encoding="utf-8") as f:
             f.write("# BloodBash Report\n\n")
+            f.write(f"Nodes: {report['nodes']}  \nEdges: {report['edges']}\n\n")
             f.write("## High-Value Targets\n")
-            for _, name, typ in get_high_value_targets(G, domain_filter):
-                f.write(f"- {name} ({typ})\n")
-            f.write("\n## Sample Paths\n")
-            f.write("See console output for details.\n")
+            if report["high_value"]:
+                for hv in report["high_value"]:
+                    f.write(f"- {hv['name']} ({hv['type']})\n")
+            else:
+                f.write("- (none)\n")
+            f.write("\n## Prioritized Findings\n")
+            if report["findings"]:
+                for finding in report["findings"]:
+                    f.write(
+                        f"- **[{finding['score']}] {finding['category']}**: {finding['details']}\n"
+                    )
+            else:
+                f.write("- (none)\n")
         console.print(f"[green]Exported Markdown:[/green] {path}")
     elif format_type == "json":
         path = f"{output_prefix}.json"
-        summary = {"nodes": G.number_of_nodes(), "edges": G.number_of_edges(), "high_value": [{"name": d['name'], "type": d['type']} for _, d in G.nodes(data=True) if any(k in d['name'].lower() for k in ['admin', 'krbtgt', 'ca', 'template']) and (not domain_filter or d.get('props', {}).get('domain') == domain_filter or d.get('props', {}).get('tenantId') == domain_filter)]}
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(summary, f, indent=2)
+            json.dump(report, f, indent=2)
         console.print(f"[green]Exported JSON:[/green] {path}")
     elif format_type == "html":
         path = f"{output_prefix}.html"
-        html = f"""<html><head><title>BloodBash Report</title><style>body {{ font-family: Arial; }} .red {{ color: red; }} .yellow {{ color: orange; }} .green {{ color: green; }} table {{ border-collapse: collapse; }} th, td {{ border: 1px solid black; padding: 5px; }}</style></head><body><h1>BloodBash Report</h1><h2>High-Value Targets</h2><ul>"""
-        for _, name, typ in get_high_value_targets(G, domain_filter):
-            html += f"<li>{escape(name)} ({escape(typ)})</li>"
-        html += "</ul><h2>Prioritized Findings</h2><table><tr><th>Severity</th><th>Category</th><th>Details</th></tr>"
-        for score, cat, det in sorted(global_findings, key=lambda x: x[0], reverse=True):
-            html += f"<tr><td>{score}</td><td>{escape(cat)}</td><td>{escape(det)}</td></tr>"
+        html = (
+            "<html><head><title>BloodBash Report</title>"
+            "<style>body { font-family: Arial; } table { border-collapse: collapse; } "
+            "th, td { border: 1px solid black; padding: 5px; }</style></head><body>"
+            "<h1>BloodBash Report</h1>"
+            f"<p>Nodes: {report['nodes']} | Edges: {report['edges']}</p>"
+            "<h2>High-Value Targets</h2><ul>"
+        )
+        if report["high_value"]:
+            for hv in report["high_value"]:
+                html += f"<li>{escape(hv['name'])} ({escape(hv['type'])})</li>"
+        else:
+            html += "<li>(none)</li>"
+        html += (
+            "</ul><h2>Prioritized Findings</h2>"
+            "<table><tr><th>Severity</th><th>Category</th><th>Details</th></tr>"
+        )
+        if report["findings"]:
+            for finding in report["findings"]:
+                html += (
+                    f"<tr><td>{finding['score']}</td>"
+                    f"<td>{escape(finding['category'])}</td>"
+                    f"<td>{escape(finding['details'])}</td></tr>"
+                )
+        else:
+            html += "<tr><td colspan='3'>(none)</td></tr>"
         html += "</table></body></html>"
         with open(path, "w", encoding="utf-8") as f:
             f.write(html)
         console.print(f"[green]Exported HTML:[/green] {path}")
     elif format_type == "csv":
-        path = f"{output_prefix}_sessions.csv"
+        # General findings report (not LocalAdmin-only sessions stub)
+        path = f"{output_prefix}.csv"
         with open(path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow(["Principal", "Count", "Examples"])
-            computers = [n for n, d in G.nodes(data=True) if d['type'].lower() == 'computer' and (not domain_filter or d.get('props', {}).get('domain') == domain_filter) and not d.get('is_azure', False)]
-            admin_edges = [(u, v, d) for u, v, d in G.edges(data=True) if d.get('label') == 'LocalAdmin' and v in computers]
-            from collections import Counter
-            counts = Counter(u for u, _, _ in admin_edges)
-            for principal, count in counts.most_common(10):
-                examples = [G.nodes[v]['name'] for pu, v, _ in admin_edges if pu == principal][:3]
-                writer.writerow([G.nodes[principal]['name'], count, ", ".join(examples)])
+            writer.writerow(["Severity", "Category", "Details"])
+            for finding in report["findings"]:
+                writer.writerow([finding["score"], finding["category"], finding["details"]])
         console.print(f"[green]Exported CSV:[/green] {path}")
     elif format_type == "yaml":
         path = f"{output_prefix}.yaml"
-        summary = {"nodes": G.number_of_nodes(), "edges": G.number_of_edges(), "high_value": [{"name": d['name'], "type": d['type']} for _, d in G.nodes(data=True) if any(k in d['name'].lower() for k in ['admin', 'krbtgt', 'ca', 'template']) and (not domain_filter or d.get('props', {}).get('domain') == domain_filter or d.get('props', {}).get('tenantId') == domain_filter)], "findings": [{"score": s, "category": c, "details": d} for s, c, d in global_findings]}
         with open(path, "w", encoding="utf-8") as f:
-            yaml.dump(summary, f, default_flow_style=False)
+            yaml.dump(report, f, default_flow_style=False)
         console.print(f"[green]Exported YAML:[/green] {path}")
 
 def export_bloodhound_compatible(G, output_prefix="bloodbash_bh"):
