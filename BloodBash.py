@@ -209,6 +209,29 @@ def get_object_id(item):
         return oid
     return str(hash(json.dumps(item, sort_keys=True)))
 
+def _safe_extract_zip(zip_path, extract_to):
+    """Extract zip members only if resolved paths stay under extract_to (Zip Slip safe)."""
+    extract_to = Path(extract_to).resolve()
+    extract_to.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        for info in zip_ref.infolist():
+            # Skip directory entries (trailing slash)
+            name = info.filename
+            if not name or name.endswith('/'):
+                # Still create nested dirs when needed via file members
+                continue
+            # Reject absolute paths and Windows drive letters in member names
+            if name.startswith(('/', '\\')) or (len(name) > 1 and name[1] == ':'):
+                raise ValueError(f"Zip entry has absolute path: {name!r}")
+            dest = (extract_to / name).resolve()
+            try:
+                dest.relative_to(extract_to)
+            except ValueError:
+                raise ValueError(f"Zip entry escapes extract dir (Zip Slip): {name!r}")
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            with zip_ref.open(info) as src, open(dest, 'wb') as out:
+                out.write(src.read())
+
 def load_json_dir(directory, debug=False):
     nodes = {}
     try:
@@ -219,13 +242,15 @@ def load_json_dir(directory, debug=False):
             
             extract_to = path_obj.parent / path_obj.stem
             
-            with zipfile.ZipFile(path_obj, 'r') as zip_ref:
-                zip_ref.extractall(extract_to)
+            _safe_extract_zip(path_obj, extract_to)
                 
             directory = str(extract_to)
         files = [f for f in os.listdir(directory) if f.lower().endswith('.json')]
     except FileNotFoundError:
         console.print(f"[yellow]Warning: Directory '{directory}' not found. Skipping.[/yellow]")
+        return nodes
+    except ValueError as e:
+        console.print(f"[red]Refused to extract zip (unsafe paths): {e}[/red]")
         return nodes
     with Progress() as progress:
         task = progress.add_task("[cyan]Loading JSON files...", total=len(files))

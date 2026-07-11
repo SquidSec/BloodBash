@@ -8,6 +8,7 @@ import tempfile
 import shutil
 import zipfile
 from io import StringIO
+from pathlib import Path
 from unittest.mock import patch
 import json
 import networkx as nx
@@ -971,6 +972,34 @@ class TestBloodBash(unittest.TestCase):
             self.assertGreater(len(nodes), 0)
             G, _ = bloodbash_globals['build_graph'](nodes)
             self.assertGreater(G.number_of_nodes(), 0)
+
+    def test_zip_slip_rejected(self):
+        """Malicious zip members with path traversal must not extract outside the target dir."""
+        zip_path = os.path.join(self.temp_dir, "evil.zip")
+        # Craft a zip whose member path escapes the extract directory
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("../../evil_zip_slip_payload.txt", b"pwned")
+            zf.writestr("users.json", b'{"meta":{"type":"users"},"data":[]}')
+        extract_to = Path(self.temp_dir) / "evil"
+        outside = Path(self.temp_dir).parent / "evil_zip_slip_payload.txt"
+        if outside.exists():
+            outside.unlink()
+        with self.assertRaises(ValueError):
+            bloodbash_globals["_safe_extract_zip"](zip_path, extract_to)
+        self.assertFalse(outside.exists(), msg="Zip Slip wrote outside extract directory")
+        # load_json_dir should refuse and return empty nodes (not crash)
+        nodes = bloodbash_globals["load_json_dir"](zip_path)
+        self.assertEqual(nodes, {})
+
+    def test_safe_extract_nested_ok(self):
+        """Legitimate nested paths under extract_to still extract."""
+        zip_path = os.path.join(self.temp_dir, "nested.zip")
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("subdir/users.json", b'{"meta":{"type":"users"},"data":[]}')
+        extract_to = Path(self.temp_dir) / "nested_out"
+        bloodbash_globals["_safe_extract_zip"](zip_path, extract_to)
+        dest = extract_to / "subdir" / "users.json"
+        self.assertTrue(dest.is_file())
 
     def test_import_dependencies(self):
         for module_name in ("networkx", "rich", "tqdm", "yaml"):
