@@ -402,6 +402,71 @@ def build_graph(nodes, db_path=None, debug=False):
                         member_id = rel
                     if member_id and member_id in nodes:
                         G.add_edge(member_id, oid, label='MemberOf')
+            # SharpHound CE nested session collections:
+            # {Results: [{UserSID, ComputerSID}], Collected, FailureReason}
+            # BloodHound edge: Computer -HasSession-> User
+            for session_key in ('Sessions', 'PrivilegedSessions', 'RegistrySessions'):
+                block = None
+                for nk in node.keys():
+                    if nk.lower() == session_key.lower():
+                        block = node[nk]
+                        break
+                if block is None:
+                    continue
+                results = []
+                if isinstance(block, dict):
+                    results = block.get('Results') or block.get('results') or []
+                elif isinstance(block, list):
+                    results = block
+                for entry in results:
+                    if not isinstance(entry, dict):
+                        continue
+                    user_sid = (
+                        entry.get('UserSID')
+                        or entry.get('ObjectIdentifier')
+                        or entry.get('objectid')
+                    )
+                    if user_sid and user_sid in nodes:
+                        G.add_edge(oid, user_sid, label='HasSession')
+            # SharpHound CE LocalGroups: list of local groups with Results members.
+            # Map well-known RIDs to BloodHound-style edges (principal → right → computer).
+            local_groups = None
+            for nk in node.keys():
+                if nk.lower() == 'localgroups':
+                    local_groups = node[nk]
+                    break
+            if isinstance(local_groups, list):
+                for lg in local_groups:
+                    if not isinstance(lg, dict):
+                        continue
+                    group_sid = str(lg.get('ObjectIdentifier') or lg.get('objectid') or '')
+                    group_name = str(lg.get('Name') or lg.get('name') or '').lower()
+                    rid = group_sid.rsplit('-', 1)[-1] if group_sid else ''
+                    label = None
+                    if rid == '544' or 'administrator' in group_name:
+                        label = 'LocalAdmin'
+                    elif rid == '555' or 'remote desktop' in group_name:
+                        label = 'CanRDP'
+                    elif rid == '562' or 'distributed com' in group_name:
+                        label = 'ExecuteDCOM'
+                    if not label:
+                        continue
+                    members = lg.get('Results') or lg.get('results') or []
+                    if not isinstance(members, list):
+                        members = [members] if members else []
+                    for member in members:
+                        mid = None
+                        if isinstance(member, dict):
+                            mid = (
+                                member.get('ObjectIdentifier')
+                                or member.get('objectid')
+                                or member.get('ObjectId')
+                                or member.get('id')
+                            )
+                        else:
+                            mid = member
+                        if mid and mid in nodes:
+                            G.add_edge(mid, oid, label=label)
             aces = node.get('Aces', [])
             for ace in aces:
                 principal = ace.get('PrincipalSID') or ace.get('PrincipalObjectIdentifier')
