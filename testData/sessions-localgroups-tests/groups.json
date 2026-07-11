@@ -1,0 +1,14 @@
+{
+  "meta": {"version": 6, "type": "groups"},
+  "data": [
+    {
+      "ObjectIdentifier": "S-1-5-21-1-2-3-4102",
+      "Properties": {
+        "name": "HELP DESK@LAB.LOCAL",
+        "domain": "lab.local",
+        "type": "Group"
+      },
+      "Members": []
+    }
+  ]
+}

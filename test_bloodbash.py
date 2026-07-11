@@ -1022,10 +1022,74 @@ class TestBloodBash(unittest.TestCase):
         dest = extract_to / "subdir" / "users.json"
         self.assertTrue(dest.is_file())
 
+    def test_sessions_and_localgroups_ingest(self):
+        """SharpHound nested Sessions/LocalGroups become HasSession/LocalAdmin/etc edges."""
+        try:
+            G = self._load_and_build_graph("sessions-localgroups-tests")
+        except FileNotFoundError as e:
+            self.skipTest(str(e))
+        computer = "S-1-5-21-1-2-3-4001"
+        session_user = "S-1-5-21-1-2-3-4100"
+        priv_user = "S-1-5-21-1-2-3-4101"
+        helpdesk = "S-1-5-21-1-2-3-4102"
+        # Computer → HasSession → User
+        has_session = [
+            (u, v)
+            for u, v, d in G.edges(data=True)
+            if d.get("label") == "HasSession"
+        ]
+        self.assertIn((computer, session_user), has_session)
+        self.assertIn((computer, priv_user), has_session)
+        # principal → LocalAdmin → computer
+        local_admin = [
+            (u, v)
+            for u, v, d in G.edges(data=True)
+            if d.get("label") == "LocalAdmin"
+        ]
+        self.assertIn((session_user, computer), local_admin)
+        self.assertIn((helpdesk, computer), local_admin)
+        # CanRDP / ExecuteDCOM
+        can_rdp = [
+            (u, v)
+            for u, v, d in G.edges(data=True)
+            if d.get("label") == "CanRDP"
+        ]
+        self.assertIn((priv_user, computer), can_rdp)
+        dcom = [
+            (u, v)
+            for u, v, d in G.edges(data=True)
+            if d.get("label") == "ExecuteDCOM"
+        ]
+        self.assertIn((helpdesk, computer), dcom)
+        # print_sessions_localadmin should surface LocalAdmin counts
+        output = self._capture_output(
+            bloodbash_globals["print_sessions_localadmin"], G
+        )
+        self.assertIn("SESSIONUSER@LAB.LOCAL", output)
+        self.assertIn("LocalAdmin", output)
+
+    def test_sample_sessions_localgroups_edges(self):
+        """Real sample data should yield HasSession and/or LocalAdmin edges."""
+        sample_dir = "SampleSharphoundADData"
+        if not os.path.isdir(sample_dir):
+            self.skipTest(f"Sample directory '{sample_dir}' not present")
+        nodes = bloodbash_globals["load_json_dir"](sample_dir)
+        G, _ = bloodbash_globals["build_graph"](nodes)
+        has_session = sum(
+            1 for _, _, d in G.edges(data=True) if d.get("label") == "HasSession"
+        )
+        local_admin = sum(
+            1 for _, _, d in G.edges(data=True) if d.get("label") == "LocalAdmin"
+        )
+        self.assertGreater(
+            has_session + local_admin,
+            0,
+            msg="Sample data should produce HasSession and/or LocalAdmin edges",
+        )
+
     def test_get_object_id_prefers_objectidentifier(self):
         item = {"ObjectIdentifier": "S-1-5-21-1-2-3-1000", "Properties": {"name": "U"}}
         self.assertEqual(bloodbash_globals["get_object_id"](item), "S-1-5-21-1-2-3-1000")
-
     def test_get_object_id_fallback_is_stable(self):
         """Fallback OIDs must be stable across calls (not process-randomized hash())."""
         item = {"Properties": {"name": "orphan-user", "domain": "lab.local"}, "Aces": []}

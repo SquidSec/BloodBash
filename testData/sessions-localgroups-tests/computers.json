@@ -1,0 +1,63 @@
+{
+  "meta": {"version": 6, "type": "computers"},
+  "data": [
+    {
+      "ObjectIdentifier": "S-1-5-21-1-2-3-4001",
+      "Properties": {
+        "name": "WORKSTATION01$@LAB.LOCAL",
+        "domain": "lab.local",
+        "type": "Computer"
+      },
+      "Sessions": {
+        "Results": [
+          {
+            "UserSID": "S-1-5-21-1-2-3-4100",
+            "ComputerSID": "S-1-5-21-1-2-3-4001"
+          }
+        ],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [
+          {
+            "UserSID": "S-1-5-21-1-2-3-4101",
+            "ComputerSID": "S-1-5-21-1-2-3-4001"
+          }
+        ],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [
+        {
+          "ObjectIdentifier": "LAB.LOCAL-S-1-5-32-544",
+          "Name": "ADMINISTRATORS",
+          "Results": [
+            {"ObjectIdentifier": "S-1-5-21-1-2-3-4100", "ObjectType": "User"},
+            {"ObjectIdentifier": "S-1-5-21-1-2-3-4102", "ObjectType": "Group"}
+          ],
+          "Collected": true,
+          "FailureReason": null
+        },
+        {
+          "ObjectIdentifier": "LAB.LOCAL-S-1-5-32-555",
+          "Name": "REMOTE DESKTOP USERS",
+          "Results": [
+            {"ObjectIdentifier": "S-1-5-21-1-2-3-4101", "ObjectType": "User"}
+          ],
+          "Collected": true,
+          "FailureReason": null
+        },
+        {
+          "ObjectIdentifier": "LAB.LOCAL-S-1-5-32-562",
+          "Name": "DISTRIBUTED COM USERS",
+          "Results": [
+            {"ObjectIdentifier": "S-1-5-21-1-2-3-4102", "ObjectType": "Group"}
+          ],
+          "Collected": true,
+          "FailureReason": null
+        }
+      ]
+    }
+  ]
+}
