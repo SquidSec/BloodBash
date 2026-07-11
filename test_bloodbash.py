@@ -140,8 +140,9 @@ class TestBloodBash(unittest.TestCase):
         except FileNotFoundError as e:
             self.skipTest(str(e))
         output = self._capture_output(bloodbash_globals['print_shortest_paths'], G)
-        self.assertIn("DC1$", output)
-        self.assertIn("USER2@LAB.LOCAL", output)
+        # High-value targets are privileged groups (not bare "DC1$" hostnames)
+        self.assertIn("Domain Admins", output)
+        self.assertIn("LOWPRIV@LAB.LOCAL", output)
     def test_dangerous_permissions(self):
         try:
             G = self._load_and_build_graph("dangerous-permissions-tests")
@@ -429,7 +430,7 @@ class TestBloodBash(unittest.TestCase):
     def test_case_sensitivity_types_and_labels(self):
         G = nx.MultiDiGraph()
         G.add_node("U", name="User", type="USER")
-        G.add_node("C", name="DC1$", type="computer")
+        G.add_node("C", name="DC1$", type="computer", props={"highvalue": True})
         G.add_node("G", name="Group", type="GROUP")
         G.add_edge("U", "C", label="ADMinto")
         targets = bloodbash_globals['get_high_value_targets'](G)
@@ -437,9 +438,22 @@ class TestBloodBash(unittest.TestCase):
         path = ["U", "C"]
         formatted = bloodbash_globals['format_path'](G, path)
         self.assertIn("ADMinto", formatted)
+
+    def test_high_value_no_bare_dc_substring(self):
+        """Bare 'dc' must not match hostnames like CDC-FILESERVER or DC1$."""
+        G = nx.MultiDiGraph()
+        G.add_node("1", name="CDC-FILESERVER", type="Computer", props={}, is_azure=False)
+        G.add_node("2", name="DC1$", type="Computer", props={}, is_azure=False)
+        G.add_node("3", name="DOMAIN ADMINS", type="Group", props={}, is_azure=False)
+        G.add_node("4", name="WS01", type="Computer", props={"highvalue": True}, is_azure=False)
+        names = {t[1] for t in bloodbash_globals['get_high_value_targets'](G)}
+        self.assertIn("DOMAIN ADMINS", names)
+        self.assertIn("WS01", names)
+        self.assertNotIn("CDC-FILESERVER", names)
+        self.assertNotIn("DC1$", names)
     def test_performance_fast_mode_and_limits(self):
         G = nx.MultiDiGraph()
-        G.add_node("T", name="DC1$", type="Computer")
+        G.add_node("T", name="DOMAIN ADMINS", type="Group")
         for i in range(100):
             G.add_node(f"N{i}", name=f"Node{i}", type="User" if i % 2 == 0 else "Computer")
             if i > 0:
@@ -540,7 +554,7 @@ class TestBloodBash(unittest.TestCase):
     def test_no_results_shortest_paths(self):
         G = nx.MultiDiGraph()
         G.add_node("User", name="User", type="User")
-        G.add_node("Target", name="DC1$", type="Computer")
+        G.add_node("Target", name="DOMAIN ADMINS", type="Group")
         output = self._capture_output(bloodbash_globals['print_shortest_paths'], G)
         self.assertIn("No paths found", output)
     def test_no_results_dangerous_permissions(self):
@@ -579,7 +593,7 @@ class TestBloodBash(unittest.TestCase):
         G = nx.MultiDiGraph()
         G.add_node("U", name="User", type="User")
         G.add_node("G", name="Group", type="Group")
-        G.add_node("T", name="DC1$", type="Computer")
+        G.add_node("T", name="DOMAIN ADMINS", type="Group")
         G.add_edge("U", "G", label="MemberOf")
         G.add_edge("G", "T", label="GenericAll")
         output = self._capture_output(bloodbash_globals['print_dangerous_permissions'], G, indirect=True)
@@ -632,7 +646,7 @@ class TestBloodBash(unittest.TestCase):
             G.add_node(f"N{i}", name=f"Node{i}", type="User" if i % 2 == 0 else "Computer")
             if i > 0:
                 G.add_edge(f"N{i-1}", f"N{i}", label="MemberOf")
-        G.add_node("Target", name="DC1$", type="Computer")
+        G.add_node("Target", name="DOMAIN ADMINS", type="Group")
         output = self._capture_output(bloodbash_globals['print_shortest_paths'], G, fast=True, max_paths=5)
         self.assertIn("Fast mode enabled", output)
         self.assertNotIn("Length:", output)
