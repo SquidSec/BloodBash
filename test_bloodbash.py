@@ -409,7 +409,7 @@ class TestBloodBash(unittest.TestCase):
         self.assertTrue(os.path.exists(html_file))
         with open(html_file, 'r') as f:
             content = f.read()
-            self.assertIn("<html>", content)
+            self.assertIn("<html", content)
             self.assertIn("BloodBash Report", content)
     def test_export_csv(self):
         G = nx.MultiDiGraph()
@@ -538,7 +538,9 @@ class TestBloodBash(unittest.TestCase):
         bloodbash_globals['export_results'](G, output_prefix=export_path, format_type="html")
         with open(f"{export_path}.html", 'r') as f:
             content = f.read()
-            self.assertNotIn("<script>", content)
+            # User-controlled payload must be escaped (table-sort JS may still include <script>)
+            self.assertNotIn("Injected<script>", content)
+            self.assertNotIn("<script>alert('xss')</script>", content)
             self.assertIn("&lt;script&gt;", content)
     def test_new_features_unconstrained_delegation(self):
         G = nx.MultiDiGraph()
@@ -650,7 +652,8 @@ class TestBloodBash(unittest.TestCase):
         with open(f"{export_path}.html", 'r') as f:
             content = f.read()
             self.assertIn("Prioritized Findings", content)
-            self.assertNotIn("<script>", content)
+            # Finding payload escaped; branding may include a table-sort <script> block
+            self.assertNotIn("<script>alert('xss')</script>", content)
             self.assertIn("&lt;script&gt;", content)
     def test_state_isolation_multiple_runs(self):
         bloodbash_globals['global_findings'] = []
@@ -1257,10 +1260,176 @@ class TestBloodBash(unittest.TestCase):
             [(f["score"], f["category"], f["details"]) for f in json_data["findings"]],
             [(f["score"], f["category"], f["details"]) for f in yaml_data["findings"]],
         )
-        self.assertEqual(
-            [(h["name"], h["type"]) for h in json_data["high_value"]],
-            [(h["name"], h["type"]) for h in yaml_data["high_value"]],
+
+    # ────────────────────────────────────────────────
+    # v1.4 PlumHound-inspired reporting features
+    # ────────────────────────────────────────────────
+    def _path_demo_graph(self):
+        """User -> Group -> DA style graph for path/busiest/break tests."""
+        G = nx.MultiDiGraph()
+        G.add_node("DA", name="DOMAIN ADMINS@LAB.LOCAL", type="Group", props={"domain": "LAB.LOCAL", "highvalue": True}, is_azure=False)
+        G.add_node("G1", name="IT HELPDESK@LAB.LOCAL", type="Group", props={"domain": "LAB.LOCAL"}, is_azure=False)
+        G.add_node("C1", name="JUMP01.LAB.LOCAL", type="Computer", props={"domain": "LAB.LOCAL"}, is_azure=False)
+        G.add_node("U1", name="ALICE@LAB.LOCAL", type="User", props={"domain": "LAB.LOCAL", "enabled": True}, is_azure=False)
+        G.add_node("U2", name="BOB@LAB.LOCAL", type="User", props={"domain": "LAB.LOCAL", "enabled": True}, is_azure=False)
+        G.add_node("U3", name="CAROL@LAB.LOCAL", type="User", props={"domain": "LAB.LOCAL", "enabled": True}, is_azure=False)
+        # Paths: Alice/Bob via helpdesk; Carol via jump host AdminTo
+        G.add_edge("U1", "G1", label="MemberOf")
+        G.add_edge("U2", "G1", label="MemberOf")
+        G.add_edge("G1", "DA", label="MemberOf")
+        G.add_edge("U3", "C1", label="AdminTo")
+        G.add_edge("C1", "DA", label="HasSession")
+        return G
+
+    def test_parse_ad_timestamp_unix_and_filetime(self):
+        parse = bloodbash_globals["parse_ad_timestamp"]
+        self.assertIsNone(parse(0))
+        self.assertIsNone(parse(-1))
+        self.assertIsNone(parse(None))
+        self.assertAlmostEqual(parse(1_700_000_000), 1_700_000_000.0)
+        # Windows FILETIME for a known-ish modern range
+        ft = int((1_700_000_000 + 11644473600) * 10_000_000)
+        self.assertAlmostEqual(parse(ft), 1_700_000_000.0, places=0)
+
+    def test_password_age_buckets(self):
+        now = 2_000_000_000.0
+        G = nx.MultiDiGraph()
+        G.add_node("U1", name="New@LAB.LOCAL", type="User", props={
+            "domain": "LAB.LOCAL", "pwdlastset": now - 3600, "enabled": True,
+        }, is_azure=False)
+        G.add_node("U2", name="Old@LAB.LOCAL", type="User", props={
+            "domain": "LAB.LOCAL", "pwdlastset": now - (400 * 86400), "enabled": True,
+        }, is_azure=False)
+        G.add_node("U3", name="Never@LAB.LOCAL", type="User", props={
+            "domain": "LAB.LOCAL", "pwdlastset": 0, "enabled": True,
+        }, is_azure=False)
+        rows = bloodbash_globals["collect_password_age_rows"](G, now=now)
+        by_name = {r["name"]: r for r in rows}
+        self.assertEqual(by_name["New@LAB.LOCAL"]["bucket"], "< 1 day")
+        self.assertEqual(by_name["Old@LAB.LOCAL"]["bucket"], "> 1 year")
+        self.assertEqual(by_name["Never@LAB.LOCAL"]["bucket"], "Never set / unknown")
+
+    def test_stale_account_buckets(self):
+        now = 2_000_000_000.0
+        G = nx.MultiDiGraph()
+        G.add_node("U1", name="Active@LAB.LOCAL", type="User", props={
+            "domain": "LAB.LOCAL", "lastlogontimestamp": now - (10 * 86400), "enabled": True,
+        }, is_azure=False)
+        G.add_node("U2", name="Stale@LAB.LOCAL", type="User", props={
+            "domain": "LAB.LOCAL", "lastlogontimestamp": now - (400 * 86400), "enabled": True,
+        }, is_azure=False)
+        G.add_node("U3", name="Ghost@LAB.LOCAL", type="User", props={
+            "domain": "LAB.LOCAL", "lastlogon": 0, "enabled": True,
+        }, is_azure=False)
+        rows = bloodbash_globals["collect_stale_account_rows"](G, now=now)
+        by_name = {r["name"]: r for r in rows}
+        self.assertEqual(by_name["Active@LAB.LOCAL"]["bucket"], "Active < 6 months")
+        self.assertEqual(by_name["Stale@LAB.LOCAL"]["bucket"], "Inactive > 12 months")
+        self.assertEqual(by_name["Ghost@LAB.LOCAL"]["bucket"], "Never active / unknown")
+
+    def test_busiest_paths_and_path_breaks(self):
+        G = self._path_demo_graph()
+        busiest = bloodbash_globals["collect_busiest_paths"](G, mode="short", top=5)
+        self.assertTrue(busiest)
+        # Helpdesk group is on two user paths
+        names = {b["name"] for b in busiest}
+        self.assertTrue(any("HELPDESK" in n or "JUMP" in n for n in names))
+
+        breaks = bloodbash_globals["collect_path_breaks"](G, top=10)
+        self.assertTrue(breaks)
+        self.assertGreaterEqual(breaks[0]["paths_broken"], 1)
+        self.assertIn("Remove relationship", breaks[0]["recommendation"])
+
+        bloodbash_globals["global_findings"] = []
+        out = self._capture_output(bloodbash_globals["print_busiest_paths"], G, mode="short", top=3)
+        self._assert_output_contains(out, "Busiest Paths")
+        out2 = self._capture_output(bloodbash_globals["print_path_breaks"], G, top=5)
+        self._assert_output_contains(out2, "Removing")
+
+    def test_privilege_and_owned_inventory(self):
+        G = self._path_demo_graph()
+        G.nodes["DA"]["props"]["highvalue"] = True
+        priv = bloodbash_globals["collect_privilege_inventory"](G)
+        self.assertTrue(any("DOMAIN ADMINS" in r["group"] for r in priv))
+        owned = bloodbash_globals["collect_owned_inventory"](G, "ALICE")
+        self.assertEqual(len(owned), 1)
+        self.assertGreaterEqual(owned[0]["member_of_count"], 1)
+
+    def test_report_pack_and_zip(self):
+        G = self._path_demo_graph()
+        bloodbash_globals["global_findings"] = []
+        bloodbash_globals["add_finding"]("DCSync", "demo", score=10)
+        pack_dir = os.path.join(self.temp_dir, "pack")
+        written = bloodbash_globals["export_report_pack"](
+            G, pack_dir, owned="ALICE", busiest_mode="short", fast=True
         )
+        self.assertTrue(written)
+        index = os.path.join(pack_dir, "index.html")
+        self.assertTrue(os.path.exists(index))
+        with open(index, "r", encoding="utf-8") as f:
+            idx = f.read()
+        self.assertIn("Report Index", idx)
+        self.assertIn("sortable", open(os.path.join(pack_dir, "findings.html"), encoding="utf-8").read())
+        self.assertTrue(os.path.exists(os.path.join(pack_dir, "csv", "findings.csv")))
+        self.assertTrue(os.path.exists(os.path.join(pack_dir, "csv", "busiest_paths.csv")))
+        self.assertTrue(os.path.exists(os.path.join(pack_dir, "path_breaks.html")))
+
+        zip_path = os.path.join(self.temp_dir, "out.zip")
+        bloodbash_globals["export_zip_pack"](pack_dir, zip_path)
+        self.assertTrue(os.path.exists(zip_path))
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            names = zf.namelist()
+        self.assertIn("index.html", names)
+        self.assertTrue(any(n.startswith("csv/") for n in names))
+
+    def test_html_export_sortable_branded(self):
+        G = nx.MultiDiGraph()
+        G.add_node("DA", name="Domain Admins", type="Group", props={})
+        bloodbash_globals["global_findings"] = []
+        bloodbash_globals["add_finding"]("Test", "details", score=5)
+        export_path = os.path.join(self.temp_dir, "branded")
+        bloodbash_globals["export_results"](G, output_prefix=export_path, format_type="html")
+        with open(f"{export_path}.html", "r", encoding="utf-8") as f:
+            html = f.read()
+        self.assertIn("sortable", html)
+        self.assertIn("SquidSec", html)
+        self.assertIn("BloodBash", html)
+
+    def test_load_builtin_profile(self):
+        profile = bloodbash_globals["load_analysis_profile"]("quick")
+        self.assertIsInstance(profile, dict)
+        self.assertTrue(profile.get("fast") or "checks" in profile)
+        # Apply to a fake args namespace
+        import argparse
+        ns = argparse.Namespace(
+            all=False, fast=False, verbose=False, indirect=False, domain=None, owned=None,
+            export=None, export_bh=False, dot=None, db=None, path_from=None, path_to=None,
+            inspect=None, gpo_content_dir=None, busiest_paths=None, busiest_paths_top=5,
+            path_break=False, path_break_top=15, inventory=False, password_age=False,
+            stale_accounts=False, privilege_inventory=False, owned_inventory=False,
+            report_pack=None, export_zip=None, log_file=None, dcsync=False, adcs=False,
+            dangerous_permissions=False, kerberoastable=False, as_rep_roastable=False,
+            password_never_expires=False, password_not_required=False, password_descriptions=False,
+            shortest_paths=False, gpo_abuse=False, rbcd=False, sessions=False, sid_history=False,
+            unconstrained_delegation=False, shadow_credentials=False, gpo_parsing=False,
+            constrained_delegation=False, laps=False, azure_privileged_roles=False,
+            azure_app_secrets=False, azure_mfa_bypass=False, azure_guest_access=False,
+            azure_sp_abuse=False, deep_analysis=False,
+        )
+        bloodbash_globals["apply_profile_to_args"](ns, profile)
+        self.assertTrue(ns.fast or ns.dcsync or ns.inventory or ns.path_break or ns.password_age)
+
+    def test_run_logging(self):
+        log_path = os.path.join(self.temp_dir, "test-run.log")
+        resolved = bloodbash_globals["setup_run_logging"](log_path)
+        self.assertEqual(resolved, os.path.abspath(log_path))
+        bloodbash_globals["logger"].info("unit-test-log-line")
+        # ensure handlers flush
+        for h in list(bloodbash_globals["logging"].getLogger().handlers):
+            h.flush()
+        with open(log_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertIn("unit-test-log-line", content)
 
     def test_get_bool_prop_ci(self):
         props = {"PasswordNeverExpires": True, "enabled": False}

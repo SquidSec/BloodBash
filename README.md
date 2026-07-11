@@ -25,12 +25,12 @@
 |--|--|
 | **Organization** | [SquidSec](https://squidoffense.com/) |
 | **Website** | [https://squidoffense.com/](https://squidoffense.com/) |
-| **App version** | **v1.3.1** |
+| **App version** | **v1.4.0** |
 | **Latest binary** | [![GitHub release](https://img.shields.io/github/v/release/DotNetRussell/BloodBash)](https://github.com/DotNetRussell/BloodBash/releases/latest) |
 | **License** | [MIT](LICENSE) |
 | **Runtime (source)** | Python 3.9+ |
 
-Merges to `main` automatically build **Linux** and **Windows** binaries and publish a GitHub Release (tag `v1.3.1-build.N`).
+Merges to `main` automatically build **Linux** and **Windows** binaries and publish a GitHub Release (tag `v1.4.0-build.N`).
 
 ---
 
@@ -124,9 +124,33 @@ Sample data lives in `SampleSharphoundADData/` and `SampleAzurehoundData/`.
 | **ADCS** | ESC1–ESC7 (+ ESC8/ESC9/ESC13 when collector props exist). ESC10–12 need registry/HTTP role data often absent from SharpHound |
 | **Azure / Entra** | Privileged roles, app/SP credential *control* paths, explicit MFA disable, guest users, SP abuse rights |
 | **Paths** | Shortest paths to high-value targets (limited set in `--fast`), owned principals (`--owned`), custom `--path-from` / `--path-to` |
+| **Path remediation** | Busiest-path ranking (`--busiest-paths`), edge removal recommendations (`--path-break`) |
+| **Inventory** | Password-age ladders, stale/inactive accounts, privilege groups, structural (domains/DCs/trusts), owned-object inventory |
 | **Other** | LAPS via `haslaps`, GPO XML (`--gpo-content-dir`), domain `Trusts[]` edges, group nesting |
 
 Findings are scored and summarized in a **Prioritized Findings** table. Abuse panels suggest tools/commands per category.
+
+### Report packs, profiles, and deliverables (v1.4+)
+
+| Flag | Purpose |
+|------|---------|
+| `--busiest-paths [short\|all]` | Rank principals that appear on the most paths to high-value targets |
+| `--path-break` | Recommend which relationships to remove to break the most attack paths |
+| `--inventory` | Structural + password-age + stale + privilege inventories |
+| `--password-age` / `--stale-accounts` / `--privilege-inventory` | Individual inventory modules |
+| `--owned-inventory` | AdminTo / MemberOf inventory for `--owned` principals |
+| `--report-pack DIR` | Multi-page HTML suite + `index.html` + per-section CSVs |
+| `--export-zip [FILE]` | Zip a report pack into one engagement deliverable |
+| `--profile FILE\|name` | YAML analysis profile (`profiles/quick.yaml`, `adcs-heavy`, `hygiene`, or custom) |
+| `--log-file [FILE]` | Append-friendly run log (default `bloodbash.log`) |
+
+HTML exports use branded templates with **sortable tables**. Example:
+
+```bash
+python3 BloodBash.py ./sharpout --profile quick
+python3 BloodBash.py ./sharpout --inventory --busiest-paths short --path-break \
+  --report-pack ./reports --export-zip bloodbash-reports.zip --log-file run.log
+```
 
 This is an **offline heuristic analyzer** from SquidSec, not a full BloodHound CE replacement. Prefer validating against BloodHound CE on the same zip for path parity.
 
