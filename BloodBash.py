@@ -790,23 +790,76 @@ def print_password_not_required(G, domain_filter=None):
 
 def print_shadow_credentials(G, domain_filter=None):
     console.rule("[bold magenta]Shadow Credentials Detection (AD)[/bold magenta]")
-    found = False
+    # Primary attack surface: rights to write KeyCredentialLink (AddKeyCredentialLink).
+    # Existing KeyCredentialLink values are informational (often Windows Hello).
+    found_abuse = False
+    found_existing = False
+    abuse_labels = {
+        'addkeycredentiallink',
+        'writeowner',  # can often lead to full control including key creds
+    }
+    targets = []
     for n, d in G.nodes(data=True):
         if d.get('is_azure', False):
             continue
         if domain_filter and d.get('props', {}).get('domain') != domain_filter:
             continue
-        if d['type'].lower() == 'user':
-            props = d.get('props') or {}
-            key_credential_link = get_bool_prop_ci(props, ['keycredentiallink', 'msds-keycredentiallink', 'KeyCredentialLink'])
-            if key_credential_link:
-                found = True
-                console.print(f"[red]Shadow Credentials detected[/red]: [green]{d['name']}[/green]")
-                add_finding("Shadow Credentials", f"User {d['name']} has Shadow Credentials configured")
-    if found:
+        if d.get('type', '').lower() not in ('user', 'computer'):
+            continue
+        targets.append(n)
+    for tid in targets:
+        tname = G.nodes[tid]['name']
+        ttype = G.nodes[tid]['type']
+        for u, _, edata in G.in_edges(tid, data=True):
+            label = edata.get('label') or ''
+            if label.lower() not in abuse_labels and label != 'AddKeyCredentialLink':
+                # Exact AddKeyCredentialLink or aliases only for primary finding
+                if label.lower() != 'addkeycredentiallink':
+                    continue
+            if label.lower() != 'addkeycredentiallink':
+                continue
+            found_abuse = True
+            console.print(
+                f"[red]Shadow Credentials abuse right[/red]: "
+                f"[green]{G.nodes[u]['name']}[/green] --[{label}]--> "
+                f"[cyan]{tname}[/cyan] ({ttype})"
+            )
+            add_finding(
+                "Shadow Credentials",
+                f"{G.nodes[u]['name']} can AddKeyCredentialLink on {tname}",
+            )
+    # Informational: objects that already have key credentials populated
+    for n, d in G.nodes(data=True):
+        if d.get('is_azure', False):
+            continue
+        if domain_filter and d.get('props', {}).get('domain') != domain_filter:
+            continue
+        if d.get('type', '').lower() not in ('user', 'computer'):
+            continue
+        props = d.get('props') or {}
+        key_credential_link = get_bool_prop_ci(
+            props, ['keycredentiallink', 'msds-keycredentiallink', 'KeyCredentialLink']
+        )
+        # Non-empty list/string also counts
+        if not key_credential_link:
+            raw = props.get('keycredentiallink') or props.get('msds-keycredentiallink') or props.get('KeyCredentialLink')
+            if isinstance(raw, (list, str)) and raw:
+                key_credential_link = True
+        if key_credential_link:
+            found_existing = True
+            console.print(
+                f"[yellow]Existing KeyCredentialLink[/yellow] (informational): "
+                f"[green]{d['name']}[/green] — may be Windows Hello / legitimate device creds"
+            )
+    if found_abuse:
         print_abuse_panel("Shadow Credentials")
-    else:
-        console.print("[green]No accounts with Shadow Credentials found[/green]")
+    if not found_abuse and not found_existing:
+        console.print("[green]No Shadow Credentials abuse rights or existing KeyCredentialLink found[/green]")
+    elif not found_abuse and found_existing:
+        console.print(
+            "[dim]No AddKeyCredentialLink abuse rights found; "
+            "existing KeyCredentialLink entries listed above are informational only[/dim]"
+        )
 
 def print_gpo_content_parsing(G, domain_filter=None):
     console.rule("[bold magenta]GPO Content Parsing for Exploitable Settings (AD)[/bold magenta]")
@@ -1227,22 +1280,85 @@ def print_gpo_abuse(G, domain_filter=None):
 
 def print_dcsync_rights(G, domain_filter=None):
     console.rule("[bold magenta]DCSync / Replication Rights (AD)[/bold magenta]")
+    # Classic DCSync requires GetChanges + GetChangesAll together.
+    # GetChangesInFilteredSet alone is RODC-related, not full DCSync.
     found = False
-    domain_oids = [n for n, d in G.nodes(data=True) if d['type'] == 'Domain' and (not domain_filter or d.get('props', {}).get('domain') == domain_filter) and not d.get('is_azure', False)]
+    domain_oids = [
+        n for n, d in G.nodes(data=True)
+        if d['type'] == 'Domain'
+        and (not domain_filter or d.get('props', {}).get('domain') == domain_filter)
+        and not d.get('is_azure', False)
+    ]
     if not domain_oids:
         console.print("[yellow]No domain objects found[/yellow]")
         return
-    dangerous_rights = {'getchangesall', 'replicating directory changes all', 'replicating directory changes in filtered set'}
+    get_changes_labels = {
+        'getchanges',
+        'replicating directory changes',
+        'ds-replication-get-changes',
+    }
+    get_changes_all_labels = {
+        'getchangesall',
+        'replicating directory changes all',
+        'ds-replication-get-changes-all',
+    }
+    filtered_set_labels = {
+        'getchangesinfilteredset',
+        'replicating directory changes in filtered set',
+        'ds-replication-get-changes-in-filtered-set',
+    }
+    default_priv_keywords = (
+        'domain admins', 'enterprise admins', 'administrators',
+        'domain controllers', 'enterprise domain controllers',
+        'builtin\\administrators',
+    )
+
+    def _is_default_priv(name):
+        nl = name.lower()
+        return any(k in nl for k in default_priv_keywords)
+
     for domain_oid in domain_oids:
         domain_name = G.nodes[domain_oid]['name']
-        incoming = G.in_edges(domain_oid, data=True)
-        for u, _, d in incoming:
-            label_lower = d['label'].lower()
-            if label_lower in dangerous_rights:
+        # Collect rights per principal
+        by_principal = defaultdict(set)
+        for u, _, d in G.in_edges(domain_oid, data=True):
+            label_lower = (d.get('label') or '').lower()
+            by_principal[u].add(label_lower)
+        for u, labels in by_principal.items():
+            principal_name = G.nodes[u]['name']
+            has_gc = bool(labels & get_changes_labels)
+            has_gca = bool(labels & get_changes_all_labels)
+            has_filtered = bool(labels & filtered_set_labels)
+            if has_gc and has_gca:
                 found = True
-                principal_name = G.nodes[u]['name']
-                console.print(f"[red]DCSync possible[/red]: [green]{principal_name}[/green] --[{d['label']}]--> [cyan]{domain_name}[/cyan] (Domain)")
-                add_finding("DCSync", f"{principal_name} can DCSync on {domain_name}")
+                if _is_default_priv(principal_name):
+                    console.print(
+                        f"[dim]Expected DCSync rights[/dim]: [cyan]{principal_name}[/cyan] "
+                        f"on [cyan]{domain_name}[/cyan] (built-in high privilege)"
+                    )
+                else:
+                    console.print(
+                        f"[red]DCSync possible[/red]: [green]{principal_name}[/green] "
+                        f"has GetChanges + GetChangesAll on [cyan]{domain_name}[/cyan]"
+                    )
+                    add_finding("DCSync", f"{principal_name} can DCSync on {domain_name}")
+            elif has_gca and not has_gc:
+                # Incomplete — note but do not call full DCSync
+                console.print(
+                    f"[yellow]Partial replication rights[/yellow]: [green]{principal_name}[/green] "
+                    f"has GetChangesAll without GetChanges on [cyan]{domain_name}[/cyan]"
+                )
+                add_finding(
+                    "DCSync",
+                    f"{principal_name} has GetChangesAll only on {domain_name}",
+                    score=6,
+                )
+                found = True
+            elif has_filtered and not (has_gc and has_gca):
+                console.print(
+                    f"[dim]Filtered-set replication[/dim]: [cyan]{principal_name}[/cyan] "
+                    f"on [cyan]{domain_name}[/cyan] (RODC-related, not full DCSync)"
+                )
     if found:
         print_abuse_panel("DCSync")
     else:

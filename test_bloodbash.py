@@ -74,8 +74,14 @@ class TestBloodBash(unittest.TestCase):
         except FileNotFoundError as e:
             self.skipTest(str(e))
         output = self._capture_output(bloodbash_globals['print_dcsync_rights'], G)
-        self.assertIn("DCSync possible", output)
-        self.assertIn("LOWPRIV@LAB.LOCAL", output)
+        clean = self._strip_ansi(output)
+        self.assertIn("DCSync possible", clean)
+        self.assertIn("LOWPRIV@LAB.LOCAL", clean)
+        # Built-in DA still shown as expected, not as critical non-default finding text only
+        self.assertIn("DOMAIN ADMINS@LAB.LOCAL", clean)
+        # Partial GetChangesAll-only is not full DCSync
+        self.assertIn("PARTIAL@LAB.LOCAL", clean)
+        self.assertIn("Partial replication rights", clean)
     def test_rbcd(self):
         try:
             G = self._load_and_build_graph("rdbc-tests")
@@ -622,13 +628,24 @@ class TestBloodBash(unittest.TestCase):
         except FileNotFoundError as e:
             self.skipTest(str(e))
         output = self._capture_output(bloodbash_globals['print_shadow_credentials'], G)
-        self.assertIn("Shadow Credentials detected", output)
-        self.assertTrue(any("Shadow Credentials" in f[2] for f in bloodbash_globals['global_findings']))
+        clean = self._strip_ansi(output)
+        self.assertIn("Shadow Credentials abuse right", clean)
+        self.assertIn("ATTACKER@TEST.LOCAL", clean)
+        self.assertIn("TARGETUSER@TEST.LOCAL", clean)
+        self.assertTrue(
+            any("AddKeyCredentialLink" in f[2] for f in bloodbash_globals['global_findings'])
+        )
+        self.assertIn("Existing KeyCredentialLink", clean)
+        self.assertIn("HELLOUSER@TEST.LOCAL", clean)
+
     def test_no_results_shadow_credentials(self):
         G = nx.MultiDiGraph()
         G.add_node("U", name="User", type="User", props={})
         output = self._capture_output(bloodbash_globals['print_shadow_credentials'], G)
-        self.assertIn("No accounts with Shadow Credentials found", output)
+        self.assertIn(
+            "No Shadow Credentials abuse rights or existing KeyCredentialLink found",
+            self._strip_ansi(output),
+        )
     def test_no_results_gpo_content_parsing(self):
         G = nx.MultiDiGraph()
         G.add_node("G", name="SafeGPO", type="GPO", props={})

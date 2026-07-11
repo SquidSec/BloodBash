@@ -1,9 +1,54 @@
 {
   "meta": { "type": "users" },
   "data": [
-    { "ObjectIdentifier": "S-1-5-21-1000-1000-1000-1001", "Properties": { "name": "User1", "keycredentiallink": true, "domain": "test.local" }, "ObjectType": "User" },
-    { "ObjectIdentifier": "S-1-5-21-1000-1000-1000-1002", "Properties": { "name": "User2", "domain": "test.local" }, "ObjectType": "User" },
-    { "ObjectIdentifier": "S-1-5-21-1000-1000-1000-1003", "Properties": { "name": "User3", "KeyCredentialLink": true, "domain": "test.local" }, "ObjectType": "User" },
-    { "ObjectIdentifier": "S-1-5-21-1000-1000-1000-1004", "Properties": { "name": "User4", "domain": "test.local" }, "ObjectType": "User" }
+    {
+      "ObjectIdentifier": "S-1-5-21-1000-1000-1000-1001",
+      "Properties": {
+        "name": "TARGETUSER@TEST.LOCAL",
+        "domain": "test.local",
+        "type": "User"
+      },
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1000-1000-1000-1005",
+          "PrincipalType": "User",
+          "RightName": "AddKeyCredentialLink",
+          "IsInherited": false
+        }
+      ]
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1000-1000-1000-1002",
+      "Properties": {
+        "name": "User2",
+        "domain": "test.local",
+        "type": "User"
+      }
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1000-1000-1000-1003",
+      "Properties": {
+        "name": "HELLOUSER@TEST.LOCAL",
+        "KeyCredentialLink": true,
+        "domain": "test.local",
+        "type": "User"
+      }
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1000-1000-1000-1004",
+      "Properties": {
+        "name": "User4",
+        "domain": "test.local",
+        "type": "User"
+      }
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1000-1000-1000-1005",
+      "Properties": {
+        "name": "ATTACKER@TEST.LOCAL",
+        "domain": "test.local",
+        "type": "User"
+      }
+    }
   ]
 }
