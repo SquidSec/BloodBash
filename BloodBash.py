@@ -1304,7 +1304,7 @@ def print_dcsync_rights(G, domain_filter=None):
     found = False
     domain_oids = [
         n for n, d in G.nodes(data=True)
-        if d['type'] == 'Domain'
+        if d.get('type', '').lower() == 'domain'
         and (not domain_filter or d.get('props', {}).get('domain') == domain_filter)
         and not d.get('is_azure', False)
     ]

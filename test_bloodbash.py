@@ -82,6 +82,27 @@ class TestBloodBash(unittest.TestCase):
         # Partial GetChangesAll-only is not full DCSync
         self.assertIn("PARTIAL@LAB.LOCAL", clean)
         self.assertIn("Partial replication rights", clean)
+
+    def test_dcsync_domain_type_case_insensitive(self):
+        """Domain nodes with type 'domain' (lowercase) must still be scanned."""
+        G = nx.MultiDiGraph()
+        G.add_node(
+            "D1",
+            name="TEST.LOCAL",
+            type="domain",
+            props={"domain": "test.local"},
+            is_azure=False,
+        )
+        G.add_node("U1", name="attacker@test.local", type="User", props={}, is_azure=False)
+        G.add_edge("U1", "D1", label="GetChanges")
+        G.add_edge("U1", "D1", label="GetChangesAll")
+        bloodbash_globals['global_findings'] = []
+        output = self._capture_output(bloodbash_globals['print_dcsync_rights'], G)
+        clean = self._strip_ansi(output)
+        self.assertNotIn("No domain objects found", clean)
+        self.assertIn("DCSync possible", clean)
+        self.assertIn("attacker@test.local", clean)
+
     def test_rbcd(self):
         try:
             G = self._load_and_build_graph("rdbc-tests")
