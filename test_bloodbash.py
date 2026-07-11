@@ -236,6 +236,55 @@ class TestBloodBash(unittest.TestCase):
             msg="SampleSharphoundADData should produce MemberOf edges from group Members",
         )
 
+    def test_allowedtoact_edge_direction(self):
+        """AllowedToAct must be principal → resource (not resource → principal)."""
+        try:
+            G = self._load_and_build_graph("allowedtoact-tests")
+        except FileNotFoundError as e:
+            self.skipTest(str(e))
+        principal = "S-1-5-21-1-2-3-1002"
+        resource = "S-1-5-21-1-2-3-1001"
+        edges = [
+            (u, v)
+            for u, v, d in G.edges(data=True)
+            if d.get("label") == "AllowedToAct"
+        ]
+        self.assertEqual(len(edges), 1, msg=f"Expected one AllowedToAct edge, got {edges}")
+        self.assertEqual(edges[0], (principal, resource))
+        # Attack path direction: attacker computer can reach target resource
+        self.assertTrue(nx.has_path(G, principal, resource))
+        self.assertFalse(nx.has_path(G, resource, principal))
+
+    def test_sample_allowedtoact_edge_direction(self):
+        """Sample SharpHound AllowedToAct edges must point principal → resource."""
+        sample_dir = "SampleSharphoundADData"
+        if not os.path.isdir(sample_dir):
+            self.skipTest(f"Sample directory '{sample_dir}' not present")
+        nodes = bloodbash_globals["load_json_dir"](sample_dir)
+        G, _ = bloodbash_globals["build_graph"](nodes)
+        # Known sample: EXTCA01.WRAITH.CORP lists EXTCA02 in AllowedToAct
+        resource_oids = [
+            n for n, d in G.nodes(data=True)
+            if d.get("name", "").upper().startswith("EXTCA01.")
+            and d.get("type", "").lower() == "computer"
+        ]
+        if not resource_oids:
+            self.skipTest("EXTCA01 computer not in sample data")
+        resource = resource_oids[0]
+        ata = [
+            (u, v)
+            for u, v, d in G.edges(data=True)
+            if d.get("label") == "AllowedToAct" and v == resource
+        ]
+        self.assertGreater(len(ata), 0, msg="Expected AllowedToAct into EXTCA01")
+        for principal, res in ata:
+            self.assertEqual(res, resource)
+            self.assertNotEqual(principal, resource)
+            # Principal is the actor; resource is the target (RBCD resource)
+            self.assertTrue(
+                G.nodes[principal]["name"].upper().startswith("EXTCA02."),
+                msg=f"Expected EXTCA02 as principal, got {G.nodes[principal]['name']}",
+            )
     def test_database_persistence(self):
         try:
             G = self._load_and_build_graph("adcs-tests")
