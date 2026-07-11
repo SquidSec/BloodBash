@@ -83,6 +83,31 @@ class TestBloodBash(unittest.TestCase):
         output = self._capture_output(bloodbash_globals['print_rbcd'], G)
         self.assertIn("RBCD configured", output)
         self.assertIn("TARGET-COMPUTER$", output)
+        # Principal who can act on the resource (AllowedToAct edge direction)
+        self.assertIn("ATTACKER-COMPUTER$", output)
+        # Constrained-delegation property alone must not be reported as RBCD
+        self.assertNotIn("SAFE-COMPUTER$", output)
+
+    def test_rbcd_not_constrained_delegation_property(self):
+        """msds-allowedtodelegateto is KCD, not RBCD."""
+        try:
+            G = self._load_and_build_graph("rdbc-tests")
+        except FileNotFoundError as e:
+            self.skipTest(str(e))
+        # SAFE-COMPUTER has KCD property but empty AllowedToAct
+        safe = None
+        for n, d in G.nodes(data=True):
+            if d.get("name") == "SAFE-COMPUTER$":
+                safe = n
+                break
+        self.assertIsNotNone(safe)
+        ata_in = [
+            u for u, _, ed in G.in_edges(safe, data=True)
+            if ed.get("label") == "AllowedToAct"
+        ]
+        self.assertEqual(ata_in, [])
+        output = self._capture_output(bloodbash_globals["print_rbcd"], G)
+        self.assertNotIn("SAFE-COMPUTER$", output)
     def test_shortest_paths(self):
         try:
             G = self._load_and_build_graph("shortest-paths-tests")
