@@ -1008,23 +1008,52 @@ def print_dcsync_rights(G, domain_filter=None):
 
 def print_rbcd(G, domain_filter=None):
     console.rule("[bold magenta]Resource-Based Constrained Delegation (RBCD) (AD)[/bold magenta]")
+    # RBCD is msDS-AllowedToActOnBehalfOfOtherIdentity / AllowedToAct edges
+    # (principal → AllowedToAct → resource). msDS-AllowedToDelegateTo is KCD,
+    # handled by print_constrained_delegation — do not treat it as RBCD.
     found = False
     for n, d in G.nodes(data=True):
         if d.get('is_azure', False):
             continue
         if domain_filter and d.get('props', {}).get('domain') != domain_filter:
             continue
-        if d['type'] != 'Computer':
+        if d.get('type', '').lower() != 'computer':
             continue
-        props = d.get('props', {})
-        allowed_to_delegate = props.get('msds-allowedtodelegateto', [])
-        if not isinstance(allowed_to_delegate, list):
-            allowed_to_delegate = [allowed_to_delegate] if allowed_to_delegate else []
-        if allowed_to_delegate:
+        principals = []
+        # Graph edges (preferred after AllowedToAct direction fix)
+        for u, _, edata in G.in_edges(n, data=True):
+            if edata.get('label', '').lower() == 'allowedtoact':
+                principals.append(G.nodes[u]['name'])
+        # Property fallback for raw SharpHound fields if edges were not built
+        if not principals:
+            props = d.get('props') or {}
+            raw = (
+                props.get('allowedtoact')
+                or props.get('AllowedToAct')
+                or props.get('msds-allowedtoactonbehalfofotheridentity')
+                or props.get('msDS-AllowedToActOnBehalfOfOtherIdentity')
+            )
+            if raw:
+                if not isinstance(raw, list):
+                    raw = [raw]
+                for item in raw:
+                    if isinstance(item, dict):
+                        principals.append(
+                            item.get('ObjectIdentifier')
+                            or item.get('name')
+                            or str(item)
+                        )
+                    else:
+                        principals.append(str(item))
+        principals = [p for p in principals if p]
+        if principals:
             found = True
-            console.print(f"[yellow]RBCD configured[/yellow]: [bold cyan]{d['name']}[/bold cyan] allows delegation from:")
-            for tgt in allowed_to_delegate:
-                console.print(f"  → [green]{tgt}[/green]")
+            console.print(
+                f"[yellow]RBCD configured[/yellow]: [bold cyan]{d['name']}[/bold cyan] "
+                f"allows delegation from:"
+            )
+            for pname in principals:
+                console.print(f"  → [green]{pname}[/green]")
             add_finding("RBCD", f"RBCD on {d['name']}")
     if found:
         print_abuse_panel("RBCD")
