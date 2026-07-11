@@ -1,0 +1,32 @@
+{
+  "meta": {"version": 6, "type": "computers"},
+  "data": [
+    {
+      "ObjectIdentifier": "S-1-5-21-1-2-3-3101",
+      "Properties": {
+        "name": "CE-UNCONSTR$",
+        "domain": "lab.local",
+        "type": "Computer",
+        "unconstraineddelegation": true
+      }
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1-2-3-3102",
+      "Properties": {
+        "name": "CE-CONSTR$",
+        "domain": "lab.local",
+        "type": "Computer",
+        "trustedtoauth": true,
+        "allowedtodelegate": ["cifs/target.lab.local"]
+      }
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1-2-3-3103",
+      "Properties": {
+        "name": "CE-SAFE$",
+        "domain": "lab.local",
+        "type": "Computer"
+      }
+    }
+  ]
+}

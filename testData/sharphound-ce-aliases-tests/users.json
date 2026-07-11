@@ -1,0 +1,31 @@
+{
+  "meta": {"version": 6, "type": "users"},
+  "data": [
+    {
+      "ObjectIdentifier": "S-1-5-21-1-2-3-3001",
+      "Properties": {
+        "name": "CE-PNE@LAB.LOCAL",
+        "domain": "lab.local",
+        "type": "User",
+        "pwdneverexpires": true
+      }
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1-2-3-3002",
+      "Properties": {
+        "name": "CE-PNR@LAB.LOCAL",
+        "domain": "lab.local",
+        "type": "User",
+        "passwordnotreqd": true
+      }
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1-2-3-3003",
+      "Properties": {
+        "name": "CE-NORMAL@LAB.LOCAL",
+        "domain": "lab.local",
+        "type": "User"
+      }
+    }
+  ]
+}
