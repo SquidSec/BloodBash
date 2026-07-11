@@ -151,11 +151,22 @@ activemq-data/
 .env
 .envrc
 .venv
+.venv-build/
 env/
 venv/
 ENV/
 env.bak/
 venv.bak/
+
+# Local analysis exports
+bloodbash.json
+bloodbash.md
+bloodbash.html
+bloodbash.yaml
+bloodbash.csv
+bloodbash.db
+bloodbash.dot
+bloodbash_bh.json
 
 # Spyder project settings
 .spyderproject

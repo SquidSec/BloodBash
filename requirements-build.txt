@@ -1,0 +1,2 @@
+# Build-time only (CI / local binary packaging)
+pyinstaller>=6.0
