@@ -132,21 +132,39 @@ jobs:
         id: meta
         run: |
           set -euo pipefail
-          BASE_VERSION=$(python3 -c "import re; t=open('BloodBash.py').read(); print(re.search(r'__version__\s*=\s*[\"']([^\"']+)', t).group(1))")
+          BASE_VERSION=$(python3 <<'PY'
+          import re
+          from pathlib import Path
+          text = Path("BloodBash.py").read_text(encoding="utf-8")
+          m = re.search(r'__version__\s*=\s*["\']([^"\']+)', text)
+          if not m:
+              raise SystemExit("Could not parse __version__ from BloodBash.py")
+          print(m.group(1))
+          PY
+          )
           RUN="${{ github.run_number }}"
           SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
           # Unique tag per main build; still readable as base version + build number
           TAG="v${BASE_VERSION}-build.${RUN}"
           RELEASE_NAME="BloodBash ${BASE_VERSION} (build ${RUN})"
-          echo "base_version=${BASE_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "release_name=${RELEASE_NAME}" >> "$GITHUB_OUTPUT"
-          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
-          ls -la release-assets/
-          chmod +x release-assets/bloodbash-linux-x64
-          # Stable asset names for /releases/latest/download/...
-          test -f release-assets/bloodbash-linux-x64
-          test -f release-assets/bloodbash-windows-x64.exe
+          {
+            echo "base_version=${BASE_VERSION}"
+            echo "tag=${TAG}"
+            echo "release_name=${RELEASE_NAME}"
+            echo "short_sha=${SHORT_SHA}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Resolved tag=${TAG}"
+          ls -laR release-assets/
+          # Artifacts may download into nested dirs depending on upload layout
+          find release-assets -type f -print
+          mkdir -p release-final
+          LINUX=$(find release-assets -type f -name 'bloodbash-linux-x64' | head -1)
+          WIN=$(find release-assets -type f -name 'bloodbash-windows-x64.exe' | head -1)
+          test -n "$LINUX" && test -n "$WIN"
+          cp -f "$LINUX" release-final/bloodbash-linux-x64
+          cp -f "$WIN" release-final/bloodbash-windows-x64.exe
+          chmod +x release-final/bloodbash-linux-x64
+          ls -la release-final/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -182,7 +200,7 @@ jobs:
             .\bloodbash-windows-x64.exe C:\path\to\sharphound --all
             ```
           files: |
-            release-assets/bloodbash-linux-x64
-            release-assets/bloodbash-windows-x64.exe
+            release-final/bloodbash-linux-x64
+            release-final/bloodbash-windows-x64.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
