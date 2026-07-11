@@ -25,7 +25,7 @@ import hashlib
 __version__ = "1.3.1"
 __org__ = "SquidSec"
 __org_tagline__ = "Open source security tooling by SquidSec"
-__org_url__ = "https://squidhacker.com/"
+__org_url__ = "https://squidoffense.com/"
 __project_url__ = "https://github.com/DotNetRussell/BloodBash"
 
 console = Console()
