@@ -1001,6 +1001,25 @@ class TestBloodBash(unittest.TestCase):
         dest = extract_to / "subdir" / "users.json"
         self.assertTrue(dest.is_file())
 
+    def test_get_object_id_prefers_objectidentifier(self):
+        item = {"ObjectIdentifier": "S-1-5-21-1-2-3-1000", "Properties": {"name": "U"}}
+        self.assertEqual(bloodbash_globals["get_object_id"](item), "S-1-5-21-1-2-3-1000")
+
+    def test_get_object_id_fallback_is_stable(self):
+        """Fallback OIDs must be stable across calls (not process-randomized hash())."""
+        item = {"Properties": {"name": "orphan-user", "domain": "lab.local"}, "Aces": []}
+        oid1 = bloodbash_globals["get_object_id"](item)
+        oid2 = bloodbash_globals["get_object_id"](item)
+        self.assertEqual(oid1, oid2)
+        self.assertTrue(oid1.startswith("synth-"), msg=oid1)
+        self.assertEqual(len(oid1), len("synth-") + 32)
+        # Same content → same id even if key order differs at construction time
+        item_reordered = {"Aces": [], "Properties": {"domain": "lab.local", "name": "orphan-user"}}
+        self.assertEqual(bloodbash_globals["get_object_id"](item_reordered), oid1)
+        # Different content → different id
+        other = {"Properties": {"name": "other-user", "domain": "lab.local"}, "Aces": []}
+        self.assertNotEqual(bloodbash_globals["get_object_id"](other), oid1)
+
     def test_import_dependencies(self):
         for module_name in ("networkx", "rich", "tqdm", "yaml"):
             __import__(module_name)
