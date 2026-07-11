@@ -656,10 +656,11 @@ def get_bool_prop_ci(props, keys, default=False):
                 return bool(props[p_key])
     return default
 def get_high_value_targets(G, domain_filter=None):
+    # Prefer full group/role phrases; avoid bare "dc" which matches CDC-FILESERVER etc.
     ad_keywords = [
         'domain admins', 'enterprise admins', 'schema admins', 'administrators',
         'krbtgt', 'domain controllers', 'dnsadmins', 'enterprise key admins',
-        'certificate template', 'enterprise ca', 'root ca', 'ntauth','dc'
+        'certificate template', 'enterprise ca', 'root ca', 'ntauth store', 'ntauth',
     ]
     azure_keywords = [
         'global admin', 'user admin', 'application admin', 'exchange admin', 'sharepoint admin',
@@ -672,6 +673,11 @@ def get_high_value_targets(G, domain_filter=None):
         name = d['name'].lower()
         typ = d['type'].lower()
         is_azure = d.get('is_azure', False)
+        props = d.get('props') or {}
+        # Explicit SharpHound highvalue flag
+        if get_bool_prop_ci(props, ['highvalue', 'HighValue']):
+            targets.append((n, d['name'], d['type']))
+            continue
         keywords = azure_keywords if is_azure else ad_keywords
         if any(k in name for k in keywords) or ('ca' in typ and not is_azure) or ('role' in typ and is_azure):
             targets.append((n, d['name'], d['type']))
