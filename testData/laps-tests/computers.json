@@ -36,6 +36,24 @@
         "domain": "test.local"
       },
       "ObjectType": "Computer"
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1000-1000-1000-3005",
+      "Properties": {
+        "name": "Comp5",
+        "haslaps": true,
+        "domain": "test.local"
+      },
+      "ObjectType": "Computer"
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1000-1000-1000-3006",
+      "Properties": {
+        "name": "Comp6",
+        "haslaps": false,
+        "domain": "test.local"
+      },
+      "ObjectType": "Computer"
     }
   ]
 }
