@@ -689,7 +689,30 @@ class TestBloodBash(unittest.TestCase):
         output = self._capture_output(bloodbash_globals['print_laps_status'], G)
         self.assertIn("LAPS enabled", output)
         self.assertIn("LAPS not enabled", output)
+        # Password attrs (any case) and SharpHound haslaps=true count as enabled
+        self.assertIn("Comp1", output)
+        self.assertIn("Comp3", output)  # ms-Mcs-AdmPwd case variant
+        self.assertIn("Comp5", output)  # haslaps: true (CE)
         self.assertTrue(any("LAPS" in f[2] for f in bloodbash_globals['global_findings']))
+        # Comp3 must not be reported as missing LAPS when password attr is present
+        self.assertFalse(
+            any("Comp3" in f[2] for f in bloodbash_globals['global_findings']),
+            "Comp3 has ms-Mcs-AdmPwd and should not be a LAPS-missing finding",
+        )
+
+    def test_laps_haslaps_flag(self):
+        """SharpHound CE haslaps boolean is the primary LAPS signal."""
+        G = nx.MultiDiGraph()
+        G.add_node("c1", name="HASLAPS-PC", type="Computer", props={"haslaps": True}, is_azure=False)
+        G.add_node("c2", name="NOLAPS-PC", type="Computer", props={"haslaps": False}, is_azure=False)
+        bloodbash_globals['global_findings'] = []
+        output = self._capture_output(bloodbash_globals['print_laps_status'], G)
+        self.assertIn("LAPS enabled", output)
+        self.assertIn("HASLAPS-PC", output)
+        self.assertIn("NOLAPS-PC", output)
+        self.assertTrue(any("NOLAPS-PC" in f[2] for f in bloodbash_globals['global_findings']))
+        self.assertFalse(any("HASLAPS-PC" in f[2] for f in bloodbash_globals['global_findings']))
+
     def test_no_results_laps_status(self):
         G = nx.MultiDiGraph()
         output = self._capture_output(bloodbash_globals['print_laps_status'], G)
