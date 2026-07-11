@@ -174,6 +174,68 @@ class TestBloodBash(unittest.TestCase):
         output = self._capture_output(bloodbash_globals['print_sid_history_abuse'], G)
         self.assertIn("SID History potential", output)
         self.assertIn("DOMAIN ADMINS@LAB.LOCAL", output.replace("\n", ""))
+
+    def test_sharphound_members_become_memberof_edges(self):
+        """SharpHound CE group Members lists must become member → MemberOf → group edges."""
+        try:
+            G = self._load_and_build_graph("members-tests")
+        except FileNotFoundError as e:
+            self.skipTest(str(e))
+        memberof = [
+            (u, v)
+            for u, v, d in G.edges(data=True)
+            if d.get("label") == "MemberOf"
+        ]
+        self.assertEqual(len(memberof), 4, msg=f"Expected 4 MemberOf edges, got {memberof}")
+        # Direct memberships
+        self.assertIn(
+            ("S-1-5-21-1-2-3-1100", "S-1-5-21-1-2-3-512"),
+            memberof,
+        )
+        self.assertIn(
+            ("S-1-5-21-1-2-3-1101", "S-1-5-21-1-2-3-512"),
+            memberof,
+        )
+        # Nested group membership: HELP DESK is member of DOMAIN ADMINS
+        self.assertIn(
+            ("S-1-5-21-1-2-3-1102", "S-1-5-21-1-2-3-512"),
+            memberof,
+        )
+        self.assertIn(
+            ("S-1-5-21-1-2-3-1103", "S-1-5-21-1-2-3-1102"),
+            memberof,
+        )
+        # Pathfinding relies on MemberOf direction: user → group
+        self.assertTrue(nx.has_path(G, "S-1-5-21-1-2-3-1103", "S-1-5-21-1-2-3-512"))
+        path = nx.shortest_path(G, "S-1-5-21-1-2-3-1103", "S-1-5-21-1-2-3-512")
+        self.assertEqual(
+            path,
+            ["S-1-5-21-1-2-3-1103", "S-1-5-21-1-2-3-1102", "S-1-5-21-1-2-3-512"],
+        )
+        # Orphan user with no membership should have no MemberOf edges
+        orphan_edges = [
+            (u, v)
+            for u, v in memberof
+            if u == "S-1-5-21-1-2-3-1199" or v == "S-1-5-21-1-2-3-1199"
+        ]
+        self.assertEqual(orphan_edges, [])
+
+    def test_sample_sharphound_memberof_edges_from_members(self):
+        """Real SharpHound sample data must yield MemberOf edges after Members ingest."""
+        sample_dir = "SampleSharphoundADData"
+        if not os.path.isdir(sample_dir):
+            self.skipTest(f"Sample directory '{sample_dir}' not present")
+        nodes = bloodbash_globals["load_json_dir"](sample_dir)
+        G, _ = bloodbash_globals["build_graph"](nodes)
+        memberof_count = sum(
+            1 for _, _, d in G.edges(data=True) if d.get("label") == "MemberOf"
+        )
+        self.assertGreater(
+            memberof_count,
+            0,
+            msg="SampleSharphoundADData should produce MemberOf edges from group Members",
+        )
+
     def test_database_persistence(self):
         try:
             G = self._load_and_build_graph("adcs-tests")
