@@ -2081,16 +2081,28 @@ def main():
             console.print("[red]No objects loaded. Exiting.[/red]")
             sys.exit(1)
         G, name_to_oid = build_graph(nodes, args.db if args.db else None, debug=DEBUG)
+    selected_checks = any([
+        args.shortest_paths, args.dangerous_permissions, args.adcs, args.gpo_abuse,
+        args.dcsync, args.rbcd, args.sessions, args.kerberoastable, args.as_rep_roastable,
+        args.sid_history, args.unconstrained_delegation, args.password_descriptions,
+        args.password_never_expires, args.password_not_required, args.shadow_credentials,
+        args.gpo_parsing, args.constrained_delegation, args.laps,
+        args.azure_privileged_roles, args.azure_app_secrets, args.azure_mfa_bypass,
+        args.azure_guest_access, args.azure_sp_abuse, args.owned, args.path_from,
+        args.path_to, args.inspect, args.export_bh, args.dot, args.deep_analysis,
+        args.gpo_content_dir,
+    ])
+    run_all = args.all or not selected_checks
+
     if args.all:
         mode_str = "Full analysis (AD + Azure) (--all)"
-    elif any([args.shortest_paths, args.dangerous_permissions, args.adcs, args.gpo_abuse, args.dcsync, args.rbcd, args.sessions, args.kerberoastable, args.as_rep_roastable, args.sid_history, args.unconstrained_delegation, args.password_descriptions, args.password_never_expires, args.password_not_required, args.shadow_credentials, args.gpo_parsing, args.constrained_delegation, args.laps, args.azure_privileged_roles, args.azure_app_secrets, args.azure_mfa_bypass, args.azure_guest_access, args.azure_sp_abuse, args.owned, args.path_from, args.path_to, args.inspect, args.export_bh, args.dot]):
+    elif selected_checks:
         mode_str = "Selected checks (including AD and Azure features)"
     else:
         mode_str = "Default (verbose summary + common checks)"
     if DEBUG:
         mode_str += " [DEBUG]"
     print_intro_banner(mode_str)
-    run_all = args.all or not any([args.shortest_paths, args.dangerous_permissions, args.adcs, args.gpo_abuse, args.dcsync, args.rbcd, args.sessions, args.kerberoastable, args.as_rep_roastable, args.sid_history, args.unconstrained_delegation, args.password_descriptions, args.password_never_expires, args.password_not_required, args.shadow_credentials, args.gpo_parsing, args.constrained_delegation, args.laps, args.azure_privileged_roles, args.azure_app_secrets, args.azure_mfa_bypass, args.azure_guest_access, args.azure_sp_abuse, args.owned, args.path_from, args.path_to, args.inspect, args.export_bh, args.dot])
     if args.verbose or run_all:
         print_verbose_summary(G, args.domain)
     if args.shortest_paths or run_all:
@@ -2139,18 +2151,23 @@ def main():
         print_azure_guest_access(G, args.domain)
     if args.azure_sp_abuse or run_all:
         print_azure_service_principal_abuse(G, args.domain)
-    if args.owned or run_all:
+    if args.owned:
         print_paths_to_owned(G, args.owned, args.domain)
-    if (args.path_from or args.path_to) or run_all:
+    if args.path_from and args.path_to:
         print_arbitrary_paths(G, args.path_from, args.path_to, args.domain)
     if args.inspect:
         for ident in [x.strip() for x in args.inspect.split(',') if x.strip()]:
             inspect_node(G, ident, args.domain)
-    if args.gpo_content_dir or run_all:
+    if args.gpo_content_dir:
         print_gpo_content_analysis(G, args.gpo_content_dir, args.domain)
-    print_trust_abuse(G, args.domain)
-    print_group_analysis(G, args.domain, deep_analysis=args.deep_analysis)
-    print_stats_dashboard(G, args.domain)
+    # Trust / group nesting / stats only on --all or default full run (run_all),
+    # not when the user selected a narrow check set.
+    if run_all:
+        print_trust_abuse(G, args.domain)
+        print_group_analysis(G, args.domain, deep_analysis=args.deep_analysis)
+        print_stats_dashboard(G, args.domain)
+    elif args.deep_analysis:
+        print_group_analysis(G, args.domain, deep_analysis=True)
     if args.export:
         export_results(G, format_type=args.export, domain_filter=args.domain)
     if args.export_bh:
