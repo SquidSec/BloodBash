@@ -108,6 +108,25 @@ class TestBloodBash(unittest.TestCase):
         self.assertEqual(ata_in, [])
         output = self._capture_output(bloodbash_globals["print_rbcd"], G)
         self.assertNotIn("SAFE-COMPUTER$", output)
+
+    def test_sharphound_ce_property_aliases(self):
+        """SharpHound CE field names must be recognized by detectors."""
+        try:
+            G = self._load_and_build_graph("sharphound-ce-aliases-tests")
+        except FileNotFoundError as e:
+            self.skipTest(str(e))
+        pne = self._capture_output(bloodbash_globals["print_password_never_expires"], G)
+        self.assertIn("CE-PNE@LAB.LOCAL", pne)
+        self.assertNotIn("CE-NORMAL@LAB.LOCAL", pne)
+        pnr = self._capture_output(bloodbash_globals["print_password_not_required"], G)
+        self.assertIn("CE-PNR@LAB.LOCAL", pnr)
+        self.assertNotIn("CE-NORMAL@LAB.LOCAL", pnr)
+        unc = self._capture_output(bloodbash_globals["print_unconstrained_delegation"], G)
+        self.assertIn("CE-UNCONSTR$", unc)
+        self.assertNotIn("CE-SAFE$", unc)
+        kcd = self._capture_output(bloodbash_globals["print_constrained_delegation"], G)
+        self.assertIn("CE-CONSTR$", kcd)
+        self.assertNotIn("CE-SAFE$", kcd)
     def test_shortest_paths(self):
         try:
             G = self._load_and_build_graph("shortest-paths-tests")
