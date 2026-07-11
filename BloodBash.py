@@ -20,6 +20,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 import traceback
 import zipfile
+import hashlib
 
 __version__ = "1.3.1"  
 
@@ -207,7 +208,14 @@ def get_object_id(item):
     oid = _get_prop_ci(item, ('ObjectIdentifier', 'objectid', 'objectId', 'ObjectId', 'id'))
     if oid:
         return oid
-    return str(hash(json.dumps(item, sort_keys=True)))
+    # Stable fallback for incomplete records (never use builtin hash() — it is
+    # randomized per process via PYTHONHASHSEED and breaks SQLite identity).
+    try:
+        canonical = json.dumps(item, sort_keys=True, default=str, separators=(',', ':'))
+    except (TypeError, ValueError):
+        canonical = repr(item)
+    digest = hashlib.sha256(canonical.encode('utf-8')).hexdigest()
+    return f"synth-{digest[:32]}"
 
 def _safe_extract_zip(zip_path, extract_to):
     """Extract zip members only if resolved paths stay under extract_to (Zip Slip safe)."""
