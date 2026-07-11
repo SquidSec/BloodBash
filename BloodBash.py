@@ -631,7 +631,16 @@ def print_password_never_expires(G, domain_filter=None):
             continue
         if d['type'].lower() == 'user':
             props = d.get('props') or {}
-            password_never_expires = get_bool_prop_ci(props, ['passwordneverexpires', 'PasswordNeverExpires'])
+            # SharpHound CE uses pwdneverexpires; also accept UAC DONT_EXPIRE_PASSWORD
+            password_never_expires = get_bool_prop_ci(
+                props, ['passwordneverexpires', 'PasswordNeverExpires', 'pwdneverexpires']
+            )
+            if not password_never_expires:
+                uac_raw = props.get('useraccountcontrol') or props.get('UserAccountControl')
+                try:
+                    password_never_expires = bool(int(uac_raw) & 0x10000)
+                except (TypeError, ValueError):
+                    pass
             if password_never_expires:
                 found = True
                 uac_raw = props.get('useraccountcontrol') or props.get('UserAccountControl')
@@ -653,7 +662,16 @@ def print_password_not_required(G, domain_filter=None):
             continue
         if d['type'].lower() == 'user':
             props = d.get('props') or {}
-            password_not_required = get_bool_prop_ci(props, ['passwordnotrequired', 'PasswordNotRequired'])
+            # SharpHound CE uses passwordnotreqd; also accept UAC PASSWD_NOTREQD
+            password_not_required = get_bool_prop_ci(
+                props, ['passwordnotrequired', 'PasswordNotRequired', 'passwordnotreqd']
+            )
+            if not password_not_required:
+                uac_raw = props.get('useraccountcontrol') or props.get('UserAccountControl')
+                try:
+                    password_not_required = bool(int(uac_raw) & 0x20)
+                except (TypeError, ValueError):
+                    pass
             if password_not_required:
                 found = True
                 uac_raw = props.get('useraccountcontrol') or props.get('UserAccountControl')
@@ -771,8 +789,20 @@ def print_constrained_delegation(G, domain_filter=None):
             continue
         if d['type'].lower() == 'computer':
             props = d.get('props') or {}
-            trusted_to_auth = get_bool_prop_ci(props, ['trustedtoauthfordelegation', 'TrustedToAuthForDelegation'])
-            allowed_to_delegate_to = props.get('msds-allowedtodelegateto', []) or props.get('allowedtodelegateto', [])
+            # SharpHound CE: trustedtoauth, allowedtodelegate (and top-level AllowedToDelegate)
+            trusted_to_auth = get_bool_prop_ci(
+                props,
+                ['trustedtoauthfordelegation', 'TrustedToAuthForDelegation', 'trustedtoauth'],
+            )
+            allowed_to_delegate_to = (
+                props.get('msds-allowedtodelegateto')
+                or props.get('allowedtodelegateto')
+                or props.get('allowedtodelegate')
+                or props.get('AllowedToDelegate')
+                or []
+            )
+            if not isinstance(allowed_to_delegate_to, list):
+                allowed_to_delegate_to = [allowed_to_delegate_to] if allowed_to_delegate_to else []
             if trusted_to_auth or allowed_to_delegate_to:
                 found = True
                 console.print(f"[yellow]Constrained Delegation enabled[/yellow]: [bold cyan]{d['name']}[/bold cyan]")
@@ -816,8 +846,18 @@ def print_unconstrained_delegation(G, domain_filter=None):
         if domain_filter and d.get('props', {}).get('domain') != domain_filter:
             continue
         if d['type'].lower() == 'computer':
-            props = d.get('props', {})
-            trusted_for_delegation = props.get('TrustedForDelegation', False)
+            props = d.get('props') or {}
+            # SharpHound CE uses unconstraineddelegation
+            trusted_for_delegation = get_bool_prop_ci(
+                props,
+                ['trustedfordelegation', 'TrustedForDelegation', 'unconstraineddelegation'],
+            )
+            if not trusted_for_delegation:
+                uac_raw = props.get('useraccountcontrol') or props.get('UserAccountControl')
+                try:
+                    trusted_for_delegation = bool(int(uac_raw) & 0x80000)
+                except (TypeError, ValueError):
+                    pass
             if trusted_for_delegation:
                 found = True
                 console.print(f"[yellow]Unconstrained delegation enabled[/yellow]: [bold cyan]{d['name']}[/bold cyan]")
