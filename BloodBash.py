@@ -997,14 +997,22 @@ def print_sid_history_abuse(G, domain_filter=None):
         console.print("[green]No obvious SID history abuse detected[/green]")
 
 def print_adcs_vulnerabilities(G, domain_filter=None):
+    """Detect AD CS misconfigs using SpecterOps ESC1–ESC8 naming.
+
+    Labels follow Certified Pre-Owned / BloodHound CE semantics (not the prior
+    swapped numbering). ESC8 (NTLM relay to HTTP enrollment) is only noted when
+    explicit web-enrollment signals exist in the graph data.
+    """
     console.rule("[bold magenta]ADCS ESC Vulnerabilities (ESC1–ESC8) (AD)[/bold magenta]")
     found = False
-    def get_bool_prop(props, keys, default=False):
-        for key in keys:
-            val = props.get(key.lower(), props.get(key, None))
-            if val is not None:
-                return bool(val)
-        return default
+    # Common EKUs
+    EKU_CLIENT_AUTH = '1.3.6.1.5.5.7.3.2'
+    EKU_SMART_CARD = '1.3.6.1.4.1.311.20.2.2'
+    EKU_ANY_PURPOSE = '2.5.29.37.0'
+    EKU_CERT_REQUEST_AGENT = '1.3.6.1.4.1.311.20.2.1'  # Enrollment Agent
+    DANGEROUS_TEMPLATE_RIGHTS = {
+        'GenericAll', 'WriteDacl', 'WriteOwner', 'GenericWrite', 'WriteProperty',
+    }
     for n, d in G.nodes(data=True):
         if d.get('is_azure', False):
             continue
@@ -1014,75 +1022,164 @@ def print_adcs_vulnerabilities(G, domain_filter=None):
         if obj_type not in ['certificate template', 'enterprise ca', 'root ca', 'ntauth store']:
             continue
         name = d.get('name') or d.get('props', {}).get('name', n)
-        props = d.get('props', {}) or {}
-        for key in ['EDITF_ATTRIBUTESUBJECTALTNAME2', 'EDITF_ATTRIBUTESUBJECTALTNAME2']:
+        props = dict(d.get('props') or {})
+        # Lift common top-level SharpHound flags into props for detection
+        for key in (
+            'EnrolleeSuppliesSubject', 'enrolleesuppliessubject',
+            'RequiresManagerApproval', 'requiresmanagerapproval',
+            'EDITF_ATTRIBUTESUBJECTALTNAME2', 'editf_attributesubjectaltname2',
+            'IsUserSpecifiesSanEnabled', 'isuserspecifiessanenabled',
+        ):
             if key in d and key not in props:
                 props[key] = d[key]
         incoming = list(G.in_edges(n, data=True))
-        rights = {edge_data['label'] for _, _, edge_data in incoming}
-        enrollee_supplies = get_bool_prop(props, ['enrolleesuppliessubject', 'EnrolleeSuppliesSubject'])
-        requires_mgr_approval = get_bool_prop(props, ['requiresmanagerapproval', 'RequiresManagerApproval'], default=False)
+        rights = {edge_data.get('label') for _, _, edge_data in incoming if edge_data.get('label')}
+        rights_ci = {r.lower() for r in rights}
+        can_enroll = 'enroll' in rights_ci or 'autoenroll' in rights_ci
+        enrollee_supplies = get_bool_prop_ci(
+            props, ['enrolleesuppliessubject', 'EnrolleeSuppliesSubject']
+        )
+        requires_mgr_approval = get_bool_prop_ci(
+            props, ['requiresmanagerapproval', 'RequiresManagerApproval'], default=False
+        )
         no_approval = not requires_mgr_approval
-        editf_san2 = get_bool_prop(props, ['editf_attributesubjectaltname2', 'EDITF_ATTRIBUTESUBJECTALTNAME2'])
-        ekus = props.get('ekus', []) or props.get('mspki-certificate-application-policy', [])
-        has_cert_request_agent = '1.3.6.1.4.1.311.20.2.1' in ekus
-        has_web_server = '1.3.6.1.5.5.7.3.1' in ekus
-        if obj_type == 'certificate template':
-            if 'Enroll' in rights and enrollee_supplies and no_approval:
+        # ESC6: CA allows user-specified SAN
+        editf_san2 = get_bool_prop_ci(
+            props,
+            [
+                'editf_attributesubjectaltname2',
+                'EDITF_ATTRIBUTESUBJECTALTNAME2',
+                'isuserspecifiessanenabled',
+                'IsUserSpecifiesSanEnabled',
+            ],
+        )
+        ekus = props.get('ekus') or props.get('effectiveekus') or props.get('mspki-certificate-application-policy') or []
+        if not isinstance(ekus, list):
+            ekus = [ekus] if ekus else []
+        eku_set = set(str(e) for e in ekus)
+        auth_enabled = get_bool_prop_ci(props, ['authenticationenabled', 'AuthenticationEnabled'])
+        has_client_auth = (
+            auth_enabled
+            or EKU_CLIENT_AUTH in eku_set
+            or EKU_SMART_CARD in eku_set
+            or EKU_ANY_PURPOSE in eku_set
+        )
+        has_any_purpose = EKU_ANY_PURPOSE in eku_set or len(eku_set) == 0
+        has_cert_request_agent = EKU_CERT_REQUEST_AGENT in eku_set
+        dangerous_on_object = {r for r in rights if r in DANGEROUS_TEMPLATE_RIGHTS}
+
+        def _print_enrollers():
+            for u, _, edge in incoming:
+                if edge.get('label', '').lower() in ('enroll', 'autoenroll'):
+                    console.print(f"  → [green]{G.nodes[u]['name']}[/green] can Enroll")
+
+        def _print_right_holders(right_set):
+            for u, _, edge in incoming:
+                if edge.get('label') in right_set:
+                    console.print(f"  → [green]{G.nodes[u]['name']}[/green] --[{edge['label']}]-->")
+
+        # ── ESC1: ESS + client auth path + enroll + no manager approval ──
+        if obj_type == 'certificate template' and can_enroll and enrollee_supplies and no_approval:
+            # Prefer client-auth capable templates; still report ESS+enroll when EKU unknown
+            if has_client_auth or not eku_set:
                 found = True
-                console.print(f"[red]ESC1/ESC2[/red]: [bold cyan]{name}[/bold cyan] (Enroll + EnrolleeSuppliesSubject + no approval)")
-                for u, _, edge in incoming:
-                    if edge['label'] == 'Enroll':
-                        console.print(f"  → [green]{G.nodes[u]['name']}[/green] can Enroll")
-                add_finding("ESC1-ESC8", f"ESC1/2 on {name}")
-        if obj_type == 'certificate template' and no_approval:
-            dangerous = {'GenericAll', 'WriteDacl', 'WriteOwner', 'GenericWrite'}
-            dangerous_found = dangerous & rights
-            if dangerous_found:
-                found = True
-                console.print(f"[red]ESC3[/red]: [bold cyan]{name}[/bold cyan] (no approval + dangerous rights)")
-                for u, _, edge in incoming:
-                    if edge['label'] in dangerous_found:
-                        console.print(f"  → [green]{G.nodes[u]['name']}[/green] --[{edge['label']}]-->")
-                add_finding("ESC1-ESC8", f"ESC3 on {name}")
-        if obj_type in ['certificate template', 'enterprise ca', 'root ca']:
-            dangerous = {'GenericAll', 'WriteDacl', 'WriteOwner', 'GenericWrite'}
-            dangerous_found = dangerous & rights
-            if dangerous_found:
-                found = True
-                console.print(f"[red]ESC4[/red]: [bold cyan]{name}[/bold cyan] (dangerous rights on PKI object)")
-                for u, _, edge in incoming:
-                    if edge['label'] in dangerous_found:
-                        console.print(f"  → [green]{G.nodes[u]['name']}[/green] --[{edge['label']}]-->")
-                add_finding("ESC1-ESC8", f"ESC4 on {name}")
+                console.print(
+                    f"[red]ESC1[/red]: [bold cyan]{name}[/bold cyan] "
+                    f"(Enroll + EnrolleeSuppliesSubject + no manager approval"
+                    f"{'' if has_client_auth or not eku_set else ''})"
+                )
+                _print_enrollers()
+                add_finding("ESC1-ESC8", f"ESC1 on {name}")
+
+        # ── ESC2: Any Purpose / no EKU + enroll + no approval (without ESS) ──
+        if (
+            obj_type == 'certificate template'
+            and can_enroll
+            and no_approval
+            and not enrollee_supplies
+            and has_any_purpose
+        ):
+            found = True
+            console.print(
+                f"[red]ESC2[/red]: [bold cyan]{name}[/bold cyan] "
+                f"(Enroll + Any Purpose/no EKU + no manager approval)"
+            )
+            _print_enrollers()
+            add_finding("ESC1-ESC8", f"ESC2 on {name}")
+
+        # ── ESC3: Enrollment Agent (Certificate Request Agent EKU) ──
         if obj_type == 'certificate template' and has_cert_request_agent:
             found = True
-            console.print(f"[red]ESC5[/red]: [bold cyan]{name}[/bold cyan] (Certificate Request Agent EKU)")
-            for u, _, edge in incoming:
-                if edge['label'] == 'Enroll':
-                    console.print(f"  → [green]{G.nodes[u]['name']}[/green] can Enroll")
-            add_finding("ESC1-ESC8", f"ESC5 on {name}")
-        if obj_type == 'enterprise ca' and editf_san2 and 'Enroll' in rights:
+            console.print(
+                f"[red]ESC3[/red]: [bold cyan]{name}[/bold cyan] "
+                f"(Certificate Request Agent / Enrollment Agent EKU)"
+            )
+            _print_enrollers()
+            add_finding("ESC1-ESC8", f"ESC3 on {name}")
+
+        # ── ESC4: Dangerous ACLs on certificate *template* ──
+        if obj_type == 'certificate template' and dangerous_on_object:
             found = True
-            console.print(f"[red]ESC6[/red]: [bold cyan]{name}[/bold cyan] (EDITF_ATTRIBUTESUBJECTALTNAME2 + Enroll)")
-            for u, _, edge in incoming:
-                if edge['label'] == 'Enroll':
-                    console.print(f"  → [green]{G.nodes[u]['name']}[/green] can Enroll")
+            console.print(
+                f"[red]ESC4[/red]: [bold cyan]{name}[/bold cyan] "
+                f"(dangerous rights on certificate template)"
+            )
+            _print_right_holders(dangerous_on_object)
+            add_finding("ESC1-ESC8", f"ESC4 on {name}")
+
+        # ── ESC5: Dangerous ACLs on other PKI objects (CA / NTAuth), not ManageCA ──
+        if obj_type in ['enterprise ca', 'root ca', 'ntauth store']:
+            esc5_rights = dangerous_on_object  # GenericAll etc. on PKI objects
+            if esc5_rights:
+                found = True
+                console.print(
+                    f"[red]ESC5[/red]: [bold cyan]{name}[/bold cyan] "
+                    f"(dangerous rights on PKI object)"
+                )
+                _print_right_holders(esc5_rights)
+                add_finding("ESC1-ESC8", f"ESC5 on {name}")
+
+        # ── ESC6: CA allows requester-specified SAN ──
+        if obj_type == 'enterprise ca' and editf_san2:
+            found = True
+            console.print(
+                f"[red]ESC6[/red]: [bold cyan]{name}[/bold cyan] "
+                f"(CA allows user-specified SAN / EDITF_ATTRIBUTESUBJECTALTNAME2)"
+            )
+            _print_enrollers()
             add_finding("ESC1-ESC8", f"ESC6 on {name}")
-        if obj_type == 'certificate template' and has_web_server:
-            found = True
-            console.print(f"[red]ESC7[/red]: [bold cyan]{name}[/bold cyan] (HTTP Certificate - Web Server EKU)")
-            for u, _, edge in incoming:
-                if edge['label'] == 'Enroll':
-                    console.print(f"  → [green]{G.nodes[u]['name']}[/green] can Enroll")
-            add_finding("ESC1-ESC8", f"ESC7 on {name}")
-        if obj_type == 'ntauth store' and 'GenericAll' in rights:
-            found = True
-            console.print(f"[red]ESC8[/red]: [bold cyan]{name}[/bold cyan] (GenericAll on NTAuth)")
-            for u, _, edge in incoming:
-                if edge['label'] == 'GenericAll':
-                    console.print(f"  → [green]{G.nodes[u]['name']}[/green] --[GenericAll]-->")
-            add_finding("ESC1-ESC8", f"ESC8 on {name}")
+
+        # ── ESC7: ManageCA / ManageCertificates on CA ──
+        if obj_type in ['enterprise ca', 'root ca']:
+            manage_rights = {r for r in rights if r in ('ManageCA', 'ManageCertificates')}
+            if manage_rights:
+                found = True
+                console.print(
+                    f"[red]ESC7[/red]: [bold cyan]{name}[/bold cyan] "
+                    f"(ManageCA/ManageCertificates on CA)"
+                )
+                _print_right_holders(manage_rights)
+                add_finding("ESC1-ESC8", f"ESC7 on {name}")
+
+        # ── ESC8: Web enrollment / HTTP AD CS (limited signal from JSON) ──
+        if obj_type == 'enterprise ca':
+            web_enroll = get_bool_prop_ci(
+                props,
+                [
+                    'webenrollment',
+                    'WebEnrollment',
+                    'httpenrollment',
+                    'HttpEnrollment',
+                    'haswebenrollment',
+                ],
+            )
+            if web_enroll:
+                found = True
+                console.print(
+                    f"[red]ESC8[/red]: [bold cyan]{name}[/bold cyan] "
+                    f"(web/HTTP enrollment enabled — NTLM relay risk)"
+                )
+                add_finding("ESC1-ESC8", f"ESC8 on {name}")
     if found:
         print_abuse_panel("ESC1-ESC8 (AD CS)")
     else:
