@@ -22,7 +22,11 @@ import traceback
 import zipfile
 import hashlib
 
-__version__ = "1.3.1"  
+__version__ = "1.3.1"
+__org__ = "SquidSec"
+__org_tagline__ = "Open source security tooling by SquidSec"
+__org_url__ = "https://squidhacker.com/"
+__project_url__ = "https://github.com/DotNetRussell/BloodBash"
 
 console = Console()
 # ────────────────────────────────────────────────
@@ -50,7 +54,11 @@ def print_prioritized_findings():
         return
     console.rule("[bold magenta]Prioritized Findings by Severity[/bold magenta]")
     sorted_findings = sorted(global_findings, key=lambda x: x[0], reverse=True)
-    table = Table(title="Findings Summary", show_header=True, header_style="bold red")
+    table = Table(
+        title=f"Findings Summary · {__org__}",
+        show_header=True,
+        header_style="bold red",
+    )
     table.add_column("Severity Score", style="red", justify="right")
     table.add_column("Category", style="cyan")
     table.add_column("Details", style="yellow")
@@ -63,9 +71,15 @@ def print_prioritized_findings():
 # Intro Banner
 # ────────────────────────────────────────────────
 def print_intro_banner(mode_str):
-    console.rule(f"[bold magenta]BloodBash v{__version__} - SharpHound & AzureHound Offline Analyzer[/bold magenta]", style="magenta")
+    console.rule(
+        f"[bold magenta]BloodBash v{__version__}[/bold magenta]  "
+        f"[bold cyan]· {__org__} Open Source[/bold cyan]",
+        style="magenta",
+    )
     console.print(Panel(
         f"""
+[bold cyan]{__org__}[/bold cyan]  ·  Open Source Security Tooling
+[dim]{__org_url__}[/dim]
                                                                                              
 [red]@@@@@@@   @@@        @@@@@@    @@@@@@   @@@@@@@      @@@@@@@    @@@@@@    @@@@@@   @@@  @@@[/red]  
 [red]@@@@@@@@  @@@       @@@@@@@@  @@@@@@@@  @@@@@@@@     @@@@@@@@  @@@@@@@@  @@@@@@@   @@@  @@@[/red]    
@@ -78,16 +92,19 @@ def print_intro_banner(mode_str):
 [red] :: ::::   :: ::::  ::::: ::  ::::: ::   :::: ::      :: ::::  ::   :::  :::: ::   ::   :::[/red]    
 [red]:: : ::   : :: : :   : :  :    : :  :   :: :  :      :: : ::    :   : :  :: : :     :   : :[/red]    
                                                                                              
-Parses SharpHound, AzureHound, and BloodHound-Python JSON files → finds AD/Azure attack paths & misconfigurations
+[bold]BloodBash[/bold] — offline SharpHound / AzureHound analyzer from [bold cyan]{__org__}[/bold cyan]
+Parses collector JSON → AD/Entra attack paths & misconfigurations (no Neo4j required)
 Mode: [cyan]{mode_str}[/cyan]
-Supports both Active Directory (SharpHound/BloodHound-Python) and Azure AD (AzureHound) data.
-For authorized security testing / red teaming only.
+Supports Active Directory (SharpHound/BloodHound-Python) and Azure AD (AzureHound) data.
+[yellow]For authorized security testing / red teaming only.[/yellow]
+Project: [dim]{__project_url__}[/dim]
 Use --help for all options.
 """,
-        title="Quick Overview",
+        title=f"BloodBash by {__org__}",
         border_style="bright_blue",
         padding=(1, 2)
     ))
+    console.print(f"[bold cyan]{__org_tagline__}[/bold cyan]\n")
     console.print("[bold]Color guide:[/bold]")
     console.print("  [red]Red[/red]          = Critical findings (ESCs, DCSync, Azure privileged roles)")
     console.print("  [yellow]Yellow[/yellow]       = Medium risk (weak GPOs, roastable accounts, Azure MFA bypass)")
@@ -2419,6 +2436,11 @@ def build_export_report(G, domain_filter=None):
         for score, cat, det in sorted(global_findings, key=lambda x: x[0], reverse=True)
     ]
     return {
+        "tool": "BloodBash",
+        "version": __version__,
+        "organization": __org__,
+        "organization_url": __org_url__,
+        "project_url": __project_url__,
         "nodes": G.number_of_nodes(),
         "edges": G.number_of_edges(),
         "high_value": high_value,
@@ -2430,8 +2452,12 @@ def export_results(G, output_prefix="bloodbash", format_type="md", domain_filter
     if format_type == "md":
         path = f"{output_prefix}.md"
         with open(path, "w", encoding="utf-8") as f:
-            f.write("# BloodBash Report\n\n")
+            f.write(f"# BloodBash Report\n\n")
+            f.write(f"**{__org__}** open source · BloodBash v{__version__}  \n")
+            f.write(f"{__org_url__}  \n")
+            f.write(f"{__project_url__}\n\n")
             f.write(f"Nodes: {report['nodes']}  \nEdges: {report['edges']}\n\n")
+
             f.write("## High-Value Targets\n")
             if report["high_value"]:
                 for hv in report["high_value"]:
@@ -2455,13 +2481,17 @@ def export_results(G, output_prefix="bloodbash", format_type="md", domain_filter
     elif format_type == "html":
         path = f"{output_prefix}.html"
         html = (
-            "<html><head><title>BloodBash Report</title>"
+            "<html><head><title>BloodBash Report — SquidSec</title>"
             "<style>body { font-family: Arial; } table { border-collapse: collapse; } "
             "th, td { border: 1px solid black; padding: 5px; }</style></head><body>"
-            "<h1>BloodBash Report</h1>"
+            f"<h1>BloodBash Report</h1>"
+            f"<p><strong>{escape(__org__)}</strong> open source · BloodBash v{escape(__version__)}<br>"
+            f"<a href=\"{escape(__org_url__)}\">{escape(__org_url__)}</a><br>"
+            f"<a href=\"{escape(__project_url__)}\">{escape(__project_url__)}</a></p>"
             f"<p>Nodes: {report['nodes']} | Edges: {report['edges']}</p>"
             "<h2>High-Value Targets</h2><ul>"
         )
+
         if report["high_value"]:
             for hv in report["high_value"]:
                 html += f"<li>{escape(hv['name'])} ({escape(hv['type'])})</li>"
@@ -2507,7 +2537,18 @@ def export_bloodhound_compatible(G, output_prefix="bloodbash_bh"):
     rels_list = []
     for u, v, data in G.edges(data=True):
         rels_list.append({"start": u, "end": v, "type": data.get('label')})
-    bh_data = {"meta": {"version": __version__, "generator": "BloodBash"}, "nodes": nodes_list, "relationships": rels_list}
+    bh_data = {
+        "meta": {
+            "version": __version__,
+            "generator": "BloodBash",
+            "organization": __org__,
+            "organization_url": __org_url__,
+            "project_url": __project_url__,
+        },
+        "nodes": nodes_list,
+        "relationships": rels_list,
+    }
+
     with open(path, "w", encoding="utf-8") as f:
         json.dump(bh_data, f, indent=2)
     console.print(f"[green]Exported BloodHound-compatible JSON:[/green] {path}")
@@ -2532,7 +2573,13 @@ def export_to_dot(G, dot_path, domain_filter=None):
 # Main execution
 # ────────────────────────────────────────────────
 def main():
-    parser = argparse.ArgumentParser(description="BloodBash - Advanced BloodHound & AzureHound Offline Analyzer")
+    parser = argparse.ArgumentParser(
+        description=(
+            f"BloodBash v{__version__} by {__org__} — offline SharpHound & AzureHound analyzer "
+            f"({__org_url__})"
+        )
+    )
+
     parser.add_argument('directory', nargs='?', default='.', help='Path to SharpHound & AzureHound JSON files or zip archive.')
     parser.add_argument('--shortest-paths', action='store_true')
     parser.add_argument('--dangerous-permissions', action='store_true')
@@ -2682,6 +2729,10 @@ def main():
     print_prioritized_findings()
     elapsed = time.time() - start_time
     console.print(f"\n[italic green]Completed in {elapsed:.2f} seconds[/italic green]")
+    console.rule(
+        f"[bold cyan]BloodBash by {__org__}[/bold cyan]  ·  [dim]{__org_url__}[/dim]",
+        style="cyan",
+    )
     if DEBUG:
         console.print(f"[bold blue]DEBUG: Total findings: {len(global_findings)}[/bold blue]")
 

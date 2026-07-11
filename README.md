@@ -1,18 +1,42 @@
 # BloodBash
 
+<p align="center">
+  <strong>A SquidSec Open Source Project</strong><br>
+  <a href="https://squidhacker.com/">squidhacker.com</a> ·
+  <a href="https://github.com/DotNetRussell/BloodBash">GitHub</a>
+</p>
+
 [![Run Unit Tests](https://github.com/DotNetRussell/BloodBash/actions/workflows/run-tests.yml/badge.svg)](https://github.com/DotNetRussell/BloodBash/actions/workflows/run-tests.yml)
 [![Build and Release Binaries](https://github.com/DotNetRussell/BloodBash/actions/workflows/release-binaries.yml/badge.svg)](https://github.com/DotNetRussell/BloodBash/actions/workflows/release-binaries.yml)
 [![Latest release](https://img.shields.io/github/v/release/DotNetRussell/BloodBash?label=latest%20build)](https://github.com/DotNetRussell/BloodBash/releases/latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Offline SharpHound **and** AzureHound JSON analyzer. Builds a graph, surfaces AD/Entra attack paths and misconfigs, and prints prioritized findings — no Neo4j or BloodHound UI required.
+**BloodBash** is an open source offline SharpHound **and** AzureHound JSON analyzer, created and managed by **[SquidSec](https://squidhacker.com/)**. It builds a graph, surfaces AD/Entra attack paths and misconfigs, and prints prioritized findings — no Neo4j or BloodHound UI required.
 
-**Latest build:** [![GitHub release (latest by date)](https://img.shields.io/github/v/release/DotNetRussell/BloodBash)](https://github.com/DotNetRussell/BloodBash/releases/latest) · App version **v1.3.1** · Python 3.9+ (source) · [MIT](LICENSE)
+| | |
+|--|--|
+| **Organization** | [SquidSec](https://squidhacker.com/) |
+| **App version** | **v1.3.1** |
+| **Latest binary** | [![GitHub release](https://img.shields.io/github/v/release/DotNetRussell/BloodBash)](https://github.com/DotNetRussell/BloodBash/releases/latest) |
+| **License** | [MIT](LICENSE) |
+| **Runtime (source)** | Python 3.9+ |
 
 Merges to `main` automatically build **Linux** and **Windows** binaries and publish a GitHub Release (tag `v1.3.1-build.N`).
 
+---
+
+## About SquidSec
+
+BloodBash is built and maintained by **SquidSec** for the security community — red teamers, pentesters, and defenders who need fast offline AD/Entra analysis without standing up BloodHound infrastructure.
+
+- Site: [https://squidhacker.com/](https://squidhacker.com/)
+- Project: [https://github.com/DotNetRussell/BloodBash](https://github.com/DotNetRussell/BloodBash)
+
+---
+
 ## Download (no Python required)
 
-Standalone executables — no Python, pip, or venv needed:
+Standalone **SquidSec** BloodBash executables — no Python, pip, or venv needed:
 
 | Platform | Latest download |
 |----------|-----------------|
@@ -71,7 +95,7 @@ bloodbash /path/to/json --all
 # Common selective run
 python3 BloodBash.py ./sharpout --adcs --dcsync --dangerous-permissions --verbose
 
-# Large datasets: skip pathfinding
+# Large datasets: limited pathfinding
 python3 BloodBash.py sharpout --all --fast
 
 # Export + SQLite cache
@@ -95,7 +119,7 @@ Sample data lives in `SampleSharphoundADData/` and `SampleAzurehoundData/`.
 
 Findings are scored and summarized in a **Prioritized Findings** table. Abuse panels suggest tools/commands per category.
 
-This is an **offline heuristic analyzer**, not a full BloodHound CE replacement. Prefer validating against BloodHound CE on the same zip for path parity.
+This is an **offline heuristic analyzer** from SquidSec, not a full BloodHound CE replacement. Prefer validating against BloodHound CE on the same zip for path parity.
 
 ## Useful flags
 
@@ -126,7 +150,7 @@ Ingest understands modern collector output: group `Members`, `AllowedToAct` (RBC
 
 ## Metasploit module
 
-Wraps the CLI and reports findings into the Metasploit DB.
+Wraps the SquidSec BloodBash CLI and reports findings into the Metasploit DB.
 
 ```bash
 cp modules/auxiliary/analyzer/bloodbash_analyzer.rb \
@@ -162,6 +186,8 @@ pyinstaller --onefile --console --name bloodbash-linux-x64 BloodBash.py
 
 CI (on every push to `main`) runs tests, builds Linux + Windows one-file binaries with PyInstaller, and publishes a Release with stable asset names for the `/releases/latest/download/...` links above.
 
-## License
+## License & attribution
 
 MIT — for **authorized** security testing and red teaming only.
+
+**BloodBash** is an open source project created and managed by **[SquidSec](https://squidhacker.com/)**.
