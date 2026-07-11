@@ -1,18 +1,33 @@
 {
-    "meta": {
-      "version": 6,
-      "type": "relationships"
+  "meta": {
+    "version": 6,
+    "type": "relationships"
+  },
+  "data": [
+    {
+      "start": "S-1-5-21-...-1000",
+      "end": "DC=lab,DC=local",
+      "label": "GetChanges"
     },
-    "data": [
-      {
-        "start": "S-1-5-21-...-1000",
-        "end": "DC=lab,DC=local",
-        "label": "GetChangesAll"
-      },
-      {
-        "start": "S-1-5-21-...-512",
-        "end": "DC=lab,DC=local",
-        "label": "Replicating Directory Changes All"
-      }
-    ]
-  }
+    {
+      "start": "S-1-5-21-...-1000",
+      "end": "DC=lab,DC=local",
+      "label": "GetChangesAll"
+    },
+    {
+      "start": "S-1-5-21-...-512",
+      "end": "DC=lab,DC=local",
+      "label": "GetChanges"
+    },
+    {
+      "start": "S-1-5-21-...-512",
+      "end": "DC=lab,DC=local",
+      "label": "GetChangesAll"
+    },
+    {
+      "start": "S-1-5-21-...-1001",
+      "end": "DC=lab,DC=local",
+      "label": "GetChangesAll"
+    }
+  ]
+}
