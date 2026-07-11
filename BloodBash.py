@@ -330,6 +330,7 @@ def load_json_dir(directory, debug=False):
     console.print(f"[green]✓ Loaded {len(nodes)} objects from {len(files)} files[/green]")
     return nodes
 
+
 def build_graph(nodes, db_path=None, debug=False):
     G = nx.MultiDiGraph()
     name_to_oid = {}
@@ -372,8 +373,18 @@ def build_graph(nodes, db_path=None, debug=False):
                     rels = [rels] if rels else []
                 for rel in rels:
                     target = rel.get('ObjectIdentifier') if isinstance(rel, dict) else rel
-                    if not target or target not in nodes:
+                    if not target:
                         continue
+                    if target not in G.nodes:
+                        G.add_node(
+                            target,
+                            name=str(target),
+                            type='Unknown',
+                            props={},
+                            is_azure=False,
+                        )
+                        if target not in nodes:
+                            name_to_oid[str(target).upper().split('@')[0]] = target
                     if key.lower() == 'allowedtoact':
                         # principal (listed) → AllowedToAct → resource (this node)
                         G.add_edge(target, oid, label=key)
@@ -400,7 +411,17 @@ def build_graph(nodes, db_path=None, debug=False):
                         )
                     else:
                         member_id = rel
-                    if member_id and member_id in nodes:
+                    if member_id:
+                        if member_id not in G.nodes:
+                            G.add_node(
+                                member_id,
+                                name=str(member_id),
+                                type='Unknown',
+                                props={},
+                                is_azure=False,
+                            )
+                            if member_id not in nodes:
+                                name_to_oid[str(member_id).upper().split('@')[0]] = member_id
                         G.add_edge(member_id, oid, label='MemberOf')
             # SharpHound CE nested session collections:
             # {Results: [{UserSID, ComputerSID}], Collected, FailureReason}
@@ -426,7 +447,17 @@ def build_graph(nodes, db_path=None, debug=False):
                         or entry.get('ObjectIdentifier')
                         or entry.get('objectid')
                     )
-                    if user_sid and user_sid in nodes:
+                    if user_sid:
+                        if user_sid not in G.nodes:
+                            G.add_node(
+                                user_sid,
+                                name=str(user_sid),
+                                type='Unknown',
+                                props={},
+                                is_azure=False,
+                            )
+                            if user_sid not in nodes:
+                                name_to_oid[str(user_sid).upper().split('@')[0]] = user_sid
                         G.add_edge(oid, user_sid, label='HasSession')
             # SharpHound CE LocalGroups: list of local groups with Results members.
             # Map well-known RIDs to BloodHound-style edges (principal → right → computer).
@@ -465,13 +496,33 @@ def build_graph(nodes, db_path=None, debug=False):
                             )
                         else:
                             mid = member
-                        if mid and mid in nodes:
+                        if mid:
+                            if mid not in G.nodes:
+                                G.add_node(
+                                    mid,
+                                    name=str(mid),
+                                    type='Unknown',
+                                    props={},
+                                    is_azure=False,
+                                )
+                                if mid not in nodes:
+                                    name_to_oid[str(mid).upper().split('@')[0]] = mid
                             G.add_edge(mid, oid, label=label)
             aces = node.get('Aces', [])
             for ace in aces:
                 principal = ace.get('PrincipalSID') or ace.get('PrincipalObjectIdentifier')
                 right = ace.get('RightName')
-                if principal and right and principal in nodes:
+                if principal and right:
+                    if principal not in G.nodes:
+                        G.add_node(
+                            principal,
+                            name=str(principal),
+                            type='Unknown',
+                            props={},
+                            is_azure=False,
+                        )
+                        if principal not in nodes:
+                            name_to_oid[str(principal).upper().split('@')[0]] = principal
                     G.add_edge(principal, oid, label=right)
             # Azure relationships (case-insensitive, expanded)
             azure_rels = ['MemberOf', 'HasRole', 'Owns', 'CanRead', 'CanWrite', 'CanDelete', 'Execute', 'AddMembers', 'ResetPassword', 'AddSecret', 'AddCertificate', 'AddOwner', 'GetChanges', 'GetChangesAll', 'GenericAll', 'GenericWrite', 'WriteDacl', 'WriteOwner']
@@ -486,9 +537,20 @@ def build_graph(nodes, db_path=None, debug=False):
                 if not isinstance(rels, list):
                     rels = [rels] if rels else []
                 for rel in rels:
-                    target = rel.get('ObjectIdentifier') or rel.get('id') if isinstance(rel, dict) else rel
-                    if target and target in nodes:
-                        G.add_edge(oid, target, label=key)
+                    target = (rel.get('ObjectIdentifier') or rel.get('id')) if isinstance(rel, dict) else rel
+                    if not target:
+                        continue
+                    if target not in G.nodes:
+                        G.add_node(
+                            target,
+                            name=str(target),
+                            type='Unknown',
+                            props={},
+                            is_azure=False,
+                        )
+                        if target not in nodes:
+                            name_to_oid[str(target).upper().split('@')[0]] = target
+                    G.add_edge(oid, target, label=key)
             # Handle Azure 'Relationships' property if present
             if is_azure:
                 rels_prop = None
