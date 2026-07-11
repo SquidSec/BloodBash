@@ -341,6 +341,27 @@ class TestBloodBash(unittest.TestCase):
         G_loaded, _ = bloodbash_globals['load_graph_from_db'](db_path)
         self.assertEqual(G.number_of_nodes(), G_loaded.number_of_nodes())
         self.assertEqual(G.number_of_edges(), G_loaded.number_of_edges())
+
+    def test_database_resave_does_not_duplicate_edges(self):
+        """Re-saving into an existing SQLite DB must not accumulate edges."""
+        G = nx.MultiDiGraph()
+        G.add_node("A", name="UserA", type="User", props={}, is_azure=False)
+        G.add_node("B", name="GroupB", type="Group", props={}, is_azure=False)
+        G.add_edge("A", "B", label="MemberOf")
+        db_path = os.path.join(self.temp_dir, "resave.db")
+        bloodbash_globals["save_graph_to_db"](G, db_path)
+        bloodbash_globals["save_graph_to_db"](G, db_path)
+        bloodbash_globals["save_graph_to_db"](G, db_path)
+        G_loaded, _ = bloodbash_globals["load_graph_from_db"](db_path)
+        self.assertEqual(G_loaded.number_of_nodes(), 2)
+        self.assertEqual(G_loaded.number_of_edges(), 1)
+        # Explicit row count in edges table
+        import sqlite3
+        conn = sqlite3.connect(db_path)
+        count = conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+        conn.close()
+        self.assertEqual(count, 1)
+
     def test_severity_scoring_and_prioritization(self):
         bloodbash_globals['global_findings'] = []
         bloodbash_globals['add_finding']("ESC1-ESC8", "Test ESC issue")
