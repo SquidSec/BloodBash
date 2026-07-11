@@ -972,6 +972,26 @@ def print_constrained_delegation(G, domain_filter=None):
     else:
         console.print("[green]No Constrained Delegation found[/green]")
 
+def _has_laps_enabled(props):
+    """SharpHound CE uses haslaps; password attrs are rarely collected and vary in case."""
+    if not isinstance(props, dict):
+        return False
+    if get_bool_prop_ci(props, ['haslaps', 'HasLAPS']):
+        return True
+    # Legacy / rare: non-empty LAPS password attribute (case-insensitive key match)
+    password_keys = {
+        'ms-mcs-admpwd',
+        'msmcsadmpwd',
+        'ms-mcs-admpwdexpirationtime',
+        'msmcsadmpwdexpirationtime',
+    }
+    for p_key, p_val in props.items():
+        if p_val is None or p_val is False or p_val == '':
+            continue
+        if p_key.lower() in password_keys or 'admpwd' in p_key.lower():
+            return True
+    return False
+
 def print_laps_status(G, domain_filter=None):
     console.rule("[bold magenta]LAPS (Local Administrator Password Solution) Status (AD)[/bold magenta]")
     computers = [d for _, d in G.nodes(data=True) if d['type'].lower() == 'computer' and (not domain_filter or d.get('props', {}).get('domain') == domain_filter) and not d.get('is_azure', False)]
@@ -982,8 +1002,7 @@ def print_laps_status(G, domain_filter=None):
     found_disabled = False
     for d in computers:
         props = d.get('props') or {}
-        laps_password = props.get('ms-mcs-admpwd') or props.get('msMcsAdmPwd')
-        if laps_password:
+        if _has_laps_enabled(props):
             found_enabled = True
             console.print(f"[green]LAPS enabled[/green]: [bold cyan]{d['name']}[/bold cyan]")
         else:
