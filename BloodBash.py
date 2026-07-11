@@ -338,6 +338,29 @@ def build_graph(nodes, db_path=None, debug=False):
                     target = rel.get('ObjectIdentifier') if isinstance(rel, dict) else rel
                     if target and target in nodes:
                         G.add_edge(oid, target, label=key)
+            # SharpHound CE stores group membership on groups as Members
+            # (not MemberOf on users). Emit member → MemberOf → group edges.
+            members = None
+            for nk in node.keys():
+                if nk.lower() == 'members':
+                    members = node[nk]
+                    break
+            if members is not None:
+                if not isinstance(members, list):
+                    members = [members] if members else []
+                for rel in members:
+                    member_id = None
+                    if isinstance(rel, dict):
+                        member_id = (
+                            rel.get('ObjectIdentifier')
+                            or rel.get('objectid')
+                            or rel.get('ObjectId')
+                            or rel.get('id')
+                        )
+                    else:
+                        member_id = rel
+                    if member_id and member_id in nodes:
+                        G.add_edge(member_id, oid, label='MemberOf')
             aces = node.get('Aces', [])
             for ace in aces:
                 principal = ace.get('PrincipalSID') or ace.get('PrincipalObjectIdentifier')
