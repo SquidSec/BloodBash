@@ -858,9 +858,50 @@ class TestBloodBash(unittest.TestCase):
         G.add_edge("User1", "Template1", label="Enroll")
         bloodbash_globals['global_findings'] = []  # Reset findings
         output = self._capture_output(bloodbash_globals['print_adcs_vulnerabilities'], G)
-        self.assertIn("ESC1/ESC2", output)
+        self.assertIn("ESC1", output)
+        self.assertNotIn("ESC1/ESC2", output)
         self.assertGreater(len(bloodbash_globals['global_findings']), 0)  # Ensure findings were added
-    # ────────────────────────────────────────────────
+
+    def test_adcs_esc_labels_specterops(self):
+        """ESC labels must match SpecterOps Certified Pre-Owned numbering."""
+        G = nx.MultiDiGraph()
+        # ESC1: ESS + enroll + no approval
+        G.add_node("T1", name="ESC1-Template", type="Certificate Template",
+                   props={"enrolleesuppliessubject": True, "requiresmanagerapproval": False,
+                          "ekus": ["1.3.6.1.5.5.7.3.2"]})
+        G.add_node("U1", name="LowPriv", type="User", props={})
+        G.add_edge("U1", "T1", label="Enroll")
+        # ESC3: Enrollment Agent EKU
+        G.add_node("T3", name="ESC3-Template", type="Certificate Template",
+                   props={"ekus": ["1.3.6.1.4.1.311.20.2.1"], "requiresmanagerapproval": False})
+        G.add_edge("U1", "T3", label="Enroll")
+        # ESC4: dangerous ACL on template
+        G.add_node("T4", name="ESC4-Template", type="Certificate Template",
+                   props={"requiresmanagerapproval": True})
+        G.add_edge("U1", "T4", label="WriteDacl")
+        # ESC7: ManageCA on enterprise CA
+        G.add_node("CA1", name="ESC7-CA", type="Enterprise CA", props={})
+        G.add_edge("U1", "CA1", label="ManageCA")
+        # ESC5: GenericAll on CA (PKI object control, not ManageCA)
+        G.add_node("CA2", name="ESC5-CA", type="Enterprise CA", props={})
+        G.add_edge("U1", "CA2", label="GenericAll")
+        bloodbash_globals["global_findings"] = []
+        output = self._capture_output(bloodbash_globals["print_adcs_vulnerabilities"], G)
+        self.assertIn("ESC1", output)
+        self.assertIn("ESC3", output)
+        self.assertIn("ESC4", output)
+        self.assertIn("ESC5", output)
+        self.assertIn("ESC7", output)
+        # Enrollment agent EKU must be ESC3, not ESC5 (old bug)
+        self.assertIn("ESC3: ESC3-Template", self._strip_ansi(output))
+        self.assertNotIn("ESC5: ESC3-Template", self._strip_ansi(output))
+        # Template ACL abuse is ESC4, not ESC3
+        self.assertIn("ESC4: ESC4-Template", self._strip_ansi(output))
+        findings = " ".join(f[2] for f in bloodbash_globals["global_findings"])
+        self.assertIn("ESC1 on", findings)
+        self.assertIn("ESC3 on", findings)
+        self.assertIn("ESC4 on", findings)
+        self.assertIn("ESC7 on", findings)    # ────────────────────────────────────────────────
     # Tests for decode_uac() (UAC attribute translation)
     # ────────────────────────────────────────────────
     def test_decode_uac_single_flag(self):
