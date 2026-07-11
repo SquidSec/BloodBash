@@ -1,0 +1,53 @@
+{
+  "meta": {
+    "version": 6,
+    "type": "groups"
+  },
+  "data": [
+    {
+      "ObjectIdentifier": "S-1-5-21-1-2-3-512",
+      "Properties": {
+        "name": "DOMAIN ADMINS@LAB.LOCAL",
+        "domain": "lab.local",
+        "type": "Group"
+      },
+      "Members": [
+        {
+          "ObjectIdentifier": "S-1-5-21-1-2-3-1100",
+          "ObjectType": "User"
+        },
+        {
+          "ObjectIdentifier": "S-1-5-21-1-2-3-1101",
+          "ObjectType": "User"
+        },
+        {
+          "ObjectIdentifier": "S-1-5-21-1-2-3-1102",
+          "ObjectType": "Group"
+        }
+      ]
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1-2-3-1102",
+      "Properties": {
+        "name": "HELP DESK@LAB.LOCAL",
+        "domain": "lab.local",
+        "type": "Group"
+      },
+      "Members": [
+        {
+          "ObjectIdentifier": "S-1-5-21-1-2-3-1103",
+          "ObjectType": "User"
+        }
+      ]
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1-2-3-514",
+      "Properties": {
+        "name": "DOMAIN GUESTS@LAB.LOCAL",
+        "domain": "lab.local",
+        "type": "Group"
+      },
+      "Members": []
+    }
+  ]
+}

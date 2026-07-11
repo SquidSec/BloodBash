@@ -1,0 +1,44 @@
+{
+  "meta": {
+    "version": 6,
+    "type": "users"
+  },
+  "data": [
+    {
+      "ObjectIdentifier": "S-1-5-21-1-2-3-1100",
+      "Properties": {
+        "name": "LOWPRIV@LAB.LOCAL",
+        "domain": "lab.local",
+        "type": "User",
+        "enabled": true
+      }
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1-2-3-1101",
+      "Properties": {
+        "name": "ADMINUSER@LAB.LOCAL",
+        "domain": "lab.local",
+        "type": "User",
+        "enabled": true
+      }
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1-2-3-1103",
+      "Properties": {
+        "name": "NESTEDUSER@LAB.LOCAL",
+        "domain": "lab.local",
+        "type": "User",
+        "enabled": true
+      }
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1-2-3-1199",
+      "Properties": {
+        "name": "ORPHAN@LAB.LOCAL",
+        "domain": "lab.local",
+        "type": "User",
+        "enabled": true
+      }
+    }
+  ]
+}
