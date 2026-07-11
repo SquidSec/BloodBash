@@ -650,10 +650,24 @@ class TestBloodBash(unittest.TestCase):
         self.assertIn("ATTACKER@TEST.LOCAL", clean)
         self.assertIn("TARGETUSER@TEST.LOCAL", clean)
         self.assertTrue(
-            any("AddKeyCredentialLink" in f[2] for f in bloodbash_globals['global_findings'])
+            any("AddKeyCredentialLink" in f[2] or "shadow credential path" in f[2]
+                for f in bloodbash_globals['global_findings'])
         )
         self.assertIn("Existing KeyCredentialLink", clean)
         self.assertIn("HELLOUSER@TEST.LOCAL", clean)
+
+    def test_shadow_credentials_genericall_path(self):
+        """GenericAll on a user is a shadow-credential abuse path."""
+        G = nx.MultiDiGraph()
+        G.add_node("A", name="ATTACKER", type="User", props={}, is_azure=False)
+        G.add_node("T", name="TARGET", type="User", props={}, is_azure=False)
+        G.add_edge("A", "T", label="GenericAll")
+        bloodbash_globals['global_findings'] = []
+        output = self._capture_output(bloodbash_globals['print_shadow_credentials'], G)
+        clean = self._strip_ansi(output)
+        self.assertIn("Shadow Credentials abuse right", clean)
+        self.assertIn("GenericAll", clean)
+        self.assertTrue(any("Shadow Credentials" in f[1] for f in bloodbash_globals['global_findings']))
 
     def test_no_results_shadow_credentials(self):
         G = nx.MultiDiGraph()
@@ -819,13 +833,47 @@ class TestBloodBash(unittest.TestCase):
     def test_azure_app_secrets(self):
         G = self._load_and_build_graph(AZURE_TEST_DIR)
         output = self._capture_output(bloodbash_globals['print_azure_app_secrets'], G)
-        self._assert_output_contains(output, "Azure app with secrets", "Owns")
+        # Credential presence alone is not reported; Owns/AddSecret paths are
+        self._assert_output_contains(output, "credential abuse path", "Owns")
         self.assertTrue(any("Azure App Secrets" in f[1] for f in bloodbash_globals['global_findings']))
     def test_azure_mfa_bypass(self):
         G = self._load_and_build_graph(AZURE_TEST_DIR)
         output = self._capture_output(bloodbash_globals['print_azure_mfa_bypass'], G)
+        # Fixture sets mfaEnrolled: false explicitly — still a finding
         self._assert_output_contains(output, "Azure user without MFA")
         self.assertTrue(any("Azure MFA Bypass" in f[1] for f in bloodbash_globals['global_findings']))
+
+    def test_azure_mfa_unknown_not_flagged(self):
+        """Missing MFA fields must not be treated as MFA bypass."""
+        G = nx.MultiDiGraph()
+        G.add_node(
+            "u1",
+            name="no-mfa-fields@tenant.com",
+            type="Azure User",
+            props={"userType": "Member"},
+            is_azure=True,
+        )
+        bloodbash_globals['global_findings'] = []
+        output = self._capture_output(bloodbash_globals['print_azure_mfa_bypass'], G)
+        clean = self._strip_ansi(output)
+        self.assertIn("not present in data", clean)
+        self.assertFalse(any("Azure MFA Bypass" in f[1] for f in bloodbash_globals['global_findings']))
+
+    def test_azure_app_secrets_not_flag_presence_only(self):
+        """keyCredentials alone without control rights is not a finding."""
+        G = nx.MultiDiGraph()
+        G.add_node(
+            "a1",
+            name="NormalApp",
+            type="Azure Application",
+            props={"keyCredentials": [{"keyId": "k1"}]},
+            is_azure=True,
+        )
+        bloodbash_globals['global_findings'] = []
+        output = self._capture_output(bloodbash_globals['print_azure_app_secrets'], G)
+        clean = self._strip_ansi(output)
+        self.assertIn("credential presence alone", clean)
+        self.assertFalse(any("Azure App Secrets" in f[1] for f in bloodbash_globals['global_findings']))
     def test_azure_guest_access(self):
         G = self._load_and_build_graph(AZURE_TEST_DIR)
         output = self._capture_output(bloodbash_globals['print_azure_guest_access'], G)

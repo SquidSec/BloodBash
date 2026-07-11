@@ -790,13 +790,18 @@ def print_password_not_required(G, domain_filter=None):
 
 def print_shadow_credentials(G, domain_filter=None):
     console.rule("[bold magenta]Shadow Credentials Detection (AD)[/bold magenta]")
-    # Primary attack surface: rights to write KeyCredentialLink (AddKeyCredentialLink).
+    # Rights that enable writing msDS-KeyCredentialLink (shadow credentials).
     # Existing KeyCredentialLink values are informational (often Windows Hello).
     found_abuse = False
     found_existing = False
+    # BloodHound CE: AddKeyCredentialLink is direct; these ACLs can often reach it.
     abuse_labels = {
         'addkeycredentiallink',
-        'writeowner',  # can often lead to full control including key creds
+        'genericall',
+        'genericwrite',
+        'writeowner',
+        'writedacl',
+        'writeproperty',
     }
     targets = []
     for n, d in G.nodes(data=True):
@@ -812,11 +817,7 @@ def print_shadow_credentials(G, domain_filter=None):
         ttype = G.nodes[tid]['type']
         for u, _, edata in G.in_edges(tid, data=True):
             label = edata.get('label') or ''
-            if label.lower() not in abuse_labels and label != 'AddKeyCredentialLink':
-                # Exact AddKeyCredentialLink or aliases only for primary finding
-                if label.lower() != 'addkeycredentiallink':
-                    continue
-            if label.lower() != 'addkeycredentiallink':
+            if label.lower() not in abuse_labels:
                 continue
             found_abuse = True
             console.print(
@@ -826,7 +827,7 @@ def print_shadow_credentials(G, domain_filter=None):
             )
             add_finding(
                 "Shadow Credentials",
-                f"{G.nodes[u]['name']} can AddKeyCredentialLink on {tname}",
+                f"{G.nodes[u]['name']} has {label} on {tname} (shadow credential path)",
             )
     # Informational: objects that already have key credentials populated
     for n, d in G.nodes(data=True):
@@ -1812,45 +1813,94 @@ def print_azure_privileged_roles(G, domain_filter=None):
 def print_azure_app_secrets(G, domain_filter=None):
     console.rule("[bold magenta]Azure Application Secrets/Certificates Exposure[/bold magenta]")
     found = False
+    # Having keyCredentials/passwordCredentials is normal. Report abuse surface:
+    # principals who can add secrets/certs/owners, or own the app.
+    abuse_rights = {
+        'owns', 'addsecret', 'addcertificate', 'addowner',
+        'genericall', 'writeowner', 'writedacl', 'genericwrite',
+    }
     for n, d in G.nodes(data=True):
         if not d.get('is_azure', False):
             continue
         if domain_filter and d.get('props', {}).get('tenantId') != domain_filter:
             continue
-        if d['type'].lower() == 'azure application':
-            props = d.get('props', {})
-            has_secrets = props.get('keyCredentials', []) or props.get('passwordCredentials', [])
-            if has_secrets:
-                found = True
-                console.print(f"[red]Azure app with secrets/certificates[/red]: [bold cyan]{d['name']}[/bold cyan]")
-                incoming = list(G.in_edges(n, data=True))
-                for u, _, edata in incoming:
-                    if edata.get('label') in ['Owns', 'AddSecret', 'AddCertificate']:
-                        console.print(f"  → [green]{G.nodes[u]['name']}[/green] --[{edata['label']}]-->")
-                add_finding("Azure App Secrets", f"App with secrets: {d['name']}")
+        if d['type'].lower() not in ('azure application', 'azure service principal'):
+            continue
+        incoming = list(G.in_edges(n, data=True))
+        abuse_edges = [
+            (u, edata.get('label'))
+            for u, _, edata in incoming
+            if (edata.get('label') or '').lower() in abuse_rights
+        ]
+        if not abuse_edges:
+            continue
+        found = True
+        console.print(
+            f"[red]Azure app/SP credential abuse path[/red]: "
+            f"[bold cyan]{d['name']}[/bold cyan]"
+        )
+        for u, label in abuse_edges:
+            console.print(f"  → [green]{G.nodes[u]['name']}[/green] --[{label}]-->")
+        add_finding(
+            "Azure App Secrets",
+            f"Credential control path on {d['name']}: "
+            + ", ".join(f"{G.nodes[u]['name']}:{lab}" for u, lab in abuse_edges[:5]),
+        )
     if found:
         print_abuse_panel("Azure App Secrets")
     else:
-        console.print("[green]No Azure apps with exposed secrets/certificates[/green]")
+        console.print(
+            "[green]No Azure app/SP secret-control abuse paths detected "
+            "(credential presence alone is not reported)[/green]"
+        )
 def print_azure_mfa_bypass(G, domain_filter=None):
     console.rule("[bold magenta]Azure MFA Bypass Risks[/bold magenta]")
     found = False
+    unknown = 0
     for n, d in G.nodes(data=True):
         if not d.get('is_azure', False):
             continue
         if domain_filter and d.get('props', {}).get('tenantId') != domain_filter:
             continue
-        if d['type'].lower() == 'azure user':
-            props = d.get('props', {})
-            mfa_enabled = props.get('strongAuthenticationRequirements', {}).get('state') == 'Enforced' or props.get('mfaEnrolled', False)
-            if not mfa_enabled:
-                found = True
-                console.print(f"[yellow]Azure user without MFA[/yellow]: [green]{d['name']}[/green]")
-                add_finding("Azure MFA Bypass", f"User without MFA: {d['name']}")
+        if d['type'].lower() != 'azure user':
+            continue
+        props = d.get('props') or {}
+        # Only report when MFA is explicitly disabled / not enforced.
+        # Missing fields are common in AzureHound exports and are NOT findings.
+        mfa_state = None
+        sar = props.get('strongAuthenticationRequirements')
+        if isinstance(sar, dict):
+            mfa_state = sar.get('state') or sar.get('State')
+        elif isinstance(sar, list) and sar:
+            # Some exports use a list of requirement objects
+            for item in sar:
+                if isinstance(item, dict) and item.get('state'):
+                    mfa_state = item.get('state')
+                    break
+        enrolled = props.get('mfaEnrolled')
+        if enrolled is None:
+            enrolled = props.get('MfaEnrolled')
+        has_explicit = mfa_state is not None or enrolled is not None
+        if not has_explicit:
+            unknown += 1
+            continue
+        mfa_enabled = (
+            (isinstance(mfa_state, str) and mfa_state.lower() in ('enforced', 'enabled'))
+            or enrolled is True
+        )
+        if not mfa_enabled:
+            found = True
+            console.print(f"[yellow]Azure user without MFA[/yellow]: [green]{d['name']}[/green]")
+            add_finding("Azure MFA Bypass", f"User without MFA: {d['name']}")
     if found:
         print_abuse_panel("Azure MFA Bypass")
+    elif unknown and not found:
+        console.print(
+            f"[dim]MFA state not present in data for {unknown} Azure user(s); "
+            f"not flagging as bypass (unknown ≠ disabled)[/dim]"
+        )
     else:
-        console.print("[green]All Azure users have MFA enabled (or not detectable)[/green]")
+        console.print("[green]No explicitly MFA-disabled Azure users detected[/green]")
         
 def print_azure_guest_access(G, domain_filter=None):
     console.rule("[bold magenta]Azure Guest User Access Risks[/bold magenta]")
