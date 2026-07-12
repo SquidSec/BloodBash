@@ -1036,11 +1036,31 @@ def print_password_not_required(G, domain_filter=None):
     else:
         console.print("[green]No users with 'Password Not Required' found[/green]")
 
+def _is_expected_key_credential_holder(name: str) -> bool:
+    """
+    Principals that legitimately hold AddKeyCredentialLink / key-admin rights
+    in most domains (Windows Hello / Key Admins). Not interesting as shadow-cred
+    attack paths by themselves.
+    """
+    if not name:
+        return False
+    if _is_default_high_priv_name(name):
+        return True
+    nl = str(name).lower()
+    expected = (
+        "key admins@",
+        "enterprise key admins",
+        "key admins ",
+        "msol_",  # Azure AD Connect sync accounts often have broad rights
+    )
+    return any(x in nl for x in expected)
+
+
 def print_shadow_credentials(G, domain_filter=None):
     console.rule("[bold magenta]Shadow Credentials Detection (AD)[/bold magenta]")
     # Primary signal: AddKeyCredentialLink (direct msDS-KeyCredentialLink write).
     # Secondary: GenericAll/WriteDacl/WriteOwner/GenericWrite from *non-default*
-    # principals only (Domain Admins etc. create massive noise otherwise).
+    # principals only (Domain Admins / Key Admins create massive noise otherwise).
     # Existing KeyCredentialLink values are informational (often Windows Hello).
     found_abuse = False
     found_existing = False
@@ -1051,6 +1071,10 @@ def print_shadow_credentials(G, domain_filter=None):
         'writeowner',
         'writedacl',
     }
+    # Collect (principal, label, is_primary) -> list of target display names
+    primary_hits = []  # list of (uname, label, tname, ttype)
+    secondary_agg = defaultdict(list)  # (uname, label) -> [tname, ...]
+
     targets = []
     for n, d in G.nodes(data=True):
         if d.get('is_azure', False):
@@ -1060,32 +1084,69 @@ def print_shadow_credentials(G, domain_filter=None):
         if d.get('type', '').lower() not in ('user', 'computer'):
             continue
         targets.append(n)
+
     for tid in targets:
         tname = G.nodes[tid]['name']
         ttype = G.nodes[tid]['type']
         for u, _, edata in G.in_edges(tid, data=True):
             label = edata.get('label') or ''
             ll = label.lower()
-            uname = G.nodes[u]['name']
-            if ll in primary_labels:
-                pass  # always report
-            elif ll in secondary_labels:
-                if _is_default_high_priv_name(uname):
-                    continue
-            else:
+            if ll not in primary_labels and ll not in secondary_labels:
                 continue
-            found_abuse = True
-            score = 8 if ll in primary_labels else 6
+            uname = G.nodes[u]['name']
+            # Skip built-in / key-admin principals for *all* shadow-cred rights
+            if _is_expected_key_credential_holder(uname):
+                continue
+            if ll in primary_labels:
+                primary_hits.append((uname, label, tname, ttype))
+            else:
+                secondary_agg[(uname, label)].append(tname)
+
+    # Primary: one finding per edge (should be rare after noise filter)
+    for uname, label, tname, ttype in primary_hits:
+        found_abuse = True
+        console.print(
+            f"[red]Shadow Credentials abuse right[/red]: "
+            f"[green]{uname}[/green] --[{label}]--> "
+            f"[cyan]{tname}[/cyan] ({ttype})"
+        )
+        add_finding(
+            "Shadow Credentials",
+            f"{uname} has {label} on {tname} (shadow credential path)",
+            score=8,
+        )
+
+    # Secondary: aggregate per principal+right to avoid 100s of near-identical rows
+    max_secondary_detail = 30
+    secondary_items = sorted(
+        secondary_agg.items(),
+        key=lambda kv: len(kv[1]),
+        reverse=True,
+    )
+    for i, ((uname, label), tnames) in enumerate(secondary_items):
+        found_abuse = True
+        n_targets = len(tnames)
+        examples = ", ".join(tnames[:3])
+        extra = f" … +{n_targets - 3} more" if n_targets > 3 else ""
+        if i < max_secondary_detail:
             console.print(
-                f"[red]Shadow Credentials abuse right[/red]: "
+                f"[yellow]Shadow Credentials ACL path[/yellow]: "
                 f"[green]{uname}[/green] --[{label}]--> "
-                f"[cyan]{tname}[/cyan] ({ttype})"
+                f"[cyan]{n_targets}[/cyan] principal(s) "
+                f"[dim]({examples}{extra})[/dim]"
             )
-            add_finding(
-                "Shadow Credentials",
-                f"{uname} has {label} on {tname} (shadow credential path)",
-                score=score,
-            )
+        add_finding(
+            "Shadow Credentials",
+            f"{uname} has {label} on {n_targets} principal(s) "
+            f"(e.g. {examples}{extra}) — possible shadow credential path",
+            score=6,
+        )
+    if len(secondary_items) > max_secondary_detail:
+        console.print(
+            f"[dim]… and {len(secondary_items) - max_secondary_detail} more "
+            f"secondary ACL principal/right pairs (see findings table)[/dim]"
+        )
+
     # Informational: objects that already have key credentials populated
     for n, d in G.nodes(data=True):
         if d.get('is_azure', False):
@@ -1115,7 +1176,7 @@ def print_shadow_credentials(G, domain_filter=None):
         console.print("[green]No Shadow Credentials abuse rights or existing KeyCredentialLink found[/green]")
     elif not found_abuse and found_existing:
         console.print(
-            "[dim]No AddKeyCredentialLink abuse rights found; "
+            "[dim]No non-default AddKeyCredentialLink / ACL abuse rights found; "
             "existing KeyCredentialLink entries listed above are informational only[/dim]"
         )
 
@@ -2019,8 +2080,7 @@ def print_dangerous_permissions(G, domain_filter=None, indirect=False):
 
 def print_kerberoastable(G, domain_filter=None):
     console.rule("[bold magenta]Kerberoastable Accounts (AD)[/bold magenta]")
-    found = False
-    count = 0
+    hits = []
     max_display = 20
     for n, d in G.nodes(data=True):
         if d.get('is_azure', False):
@@ -2033,27 +2093,30 @@ def print_kerberoastable(G, domain_filter=None):
         hasspn = get_bool_prop_ci(props, ['hasspn', 'hasSPN', 'has_spn'])
         sensitive = props.get('sensitive', props.get('Sensitive', False))
         enabled = props.get('enabled', props.get('Enabled', True))
+        # krbtgt always has an SPN but is not a practical Kerberoast target here
+        name = d.get('name') or ''
+        if name.upper().startswith('KRBTGT@') or name.upper() == 'KRBTGT':
+            continue
         if hasspn and not sensitive and enabled:
-            found = True
-            uac_raw = props.get('useraccountcontrol') or props.get('UserAccountControl')
-            uac_str = f" | UAC: {decode_uac(uac_raw)}" if uac_raw is not None else ""
+            hits.append(d)
+    for i, d in enumerate(hits):
+        props = d.get('props') or {}
+        uac_raw = props.get('useraccountcontrol') or props.get('UserAccountControl')
+        uac_str = f" | UAC: {decode_uac(uac_raw)}" if uac_raw is not None else ""
+        if i < max_display:
             console.print(f"  • [cyan]{d['name']}[/cyan]{uac_str}")
-            count += 1
-            if count >= max_display:
-                remaining = sum(1 for n_inner, d_inner in G.nodes(data=True) if d_inner.get('type', '').lower() == 'user' and get_bool_prop_ci(d_inner.get('props', {}), ['hasspn', 'hasSPN', 'has_spn']) and not d_inner.get('props', {}).get('sensitive', d_inner.get('props', {}).get('Sensitive', False)) and d_inner.get('props', {}).get('enabled', d_inner.get('props', {}).get('Enabled', True))) - max_display
-                if remaining > 0:
-                    console.print(f"  [dim]... and {remaining} more[/dim]")
-                break
-    if found:
+        # One findings-table row per account (not a single aggregated count)
+        add_finding("Kerberoastable", f"{d['name']} has SPN (Kerberoastable)", score=5)
+    if len(hits) > max_display:
+        console.print(f"  [dim]... and {len(hits) - max_display} more[/dim]")
+    if hits:
         print_abuse_panel("Kerberoastable")
-        add_finding("Kerberoastable", f"{count} accounts")
     else:
         console.print("[green]None found[/green]")
 
 def print_as_rep_roastable(G, domain_filter=None):
     console.rule("[bold magenta]AS-REP Roastable Accounts (DONT_REQ_PREAUTH) (AD)[/bold magenta]")
-    found = False
-    count = 0
+    hits = []
     max_display = 20
     for n, d in G.nodes(data=True):
         if d.get('is_azure', False):
@@ -2067,19 +2130,22 @@ def print_as_rep_roastable(G, domain_filter=None):
         sensitive = props.get('sensitive', props.get('Sensitive', False))
         enabled = props.get('enabled', props.get('Enabled', True))
         if dontreqpreauth and not sensitive and enabled:
-            found = True
-            uac_raw = props.get('useraccountcontrol') or props.get('UserAccountControl')
-            uac_str = f" | UAC: {decode_uac(uac_raw)}" if uac_raw is not None else ""
+            hits.append(d)
+    for i, d in enumerate(hits):
+        props = d.get('props') or {}
+        uac_raw = props.get('useraccountcontrol') or props.get('UserAccountControl')
+        uac_str = f" | UAC: {decode_uac(uac_raw)}" if uac_raw is not None else ""
+        if i < max_display:
             console.print(f"  • [cyan]{d['name']}[/cyan]{uac_str}")
-            count += 1
-            if count >= max_display:
-                remaining = sum(1 for n_inner, d_inner in G.nodes(data=True) if d_inner.get('type', '').lower() == 'user' and get_bool_prop_ci(d_inner.get('props', {}), ['dontreqpreauth', 'dontReqPreauth', 'dont_req_preauth']) and not d_inner.get('props', {}).get('sensitive', d_inner.get('props', {}).get('Sensitive', False)) and d_inner.get('props', {}).get('enabled', d_inner.get('props', {}).get('Enabled', True))) - max_display
-                if remaining > 0:
-                    console.print(f"  [dim]... and {remaining} more[/dim]")
-                break
-    if found:
+        add_finding(
+            "AS-REP Roastable",
+            f"{d['name']} has DONT_REQ_PREAUTH (AS-REP roastable)",
+            score=5,
+        )
+    if len(hits) > max_display:
+        console.print(f"  [dim]... and {len(hits) - max_display} more[/dim]")
+    if hits:
         print_abuse_panel("AS-REP Roastable")
-        add_finding("AS-REP Roastable", f"{count} accounts")
     else:
         console.print("[green]None found[/green]")
 

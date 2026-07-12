@@ -716,7 +716,7 @@ class TestBloodBash(unittest.TestCase):
         self.assertIn("HELLOUSER@TEST.LOCAL", clean)
 
     def test_shadow_credentials_genericall_path(self):
-        """GenericAll on a user is a shadow-credential abuse path."""
+        """GenericAll on a user is a shadow-credential abuse path (aggregated)."""
         G = nx.MultiDiGraph()
         G.add_node("A", name="ATTACKER", type="User", props={}, is_azure=False)
         G.add_node("T", name="TARGET", type="User", props={}, is_azure=False)
@@ -724,9 +724,39 @@ class TestBloodBash(unittest.TestCase):
         bloodbash_globals['global_findings'] = []
         output = self._capture_output(bloodbash_globals['print_shadow_credentials'], G)
         clean = self._strip_ansi(output)
-        self.assertIn("Shadow Credentials abuse right", clean)
+        self.assertIn("Shadow Credentials", clean)
         self.assertIn("GenericAll", clean)
+        self.assertIn("ATTACKER", clean)
         self.assertTrue(any("Shadow Credentials" in f[1] for f in bloodbash_globals['global_findings']))
+        # Secondary rights are aggregated (principal + right + target count)
+        self.assertTrue(
+            any("1 principal" in f[2] or "TARGET" in f[2] for f in bloodbash_globals['global_findings'])
+        )
+
+    def test_shadow_credentials_aggregates_secondary_and_filters_key_admins(self):
+        """Key Admins AddKeyCredentialLink is expected noise; secondary ACLs aggregate."""
+        G = nx.MultiDiGraph()
+        G.add_node("KA", name="KEY ADMINS@LAB.LOCAL", type="Group", props={}, is_azure=False)
+        G.add_node("U1", name="user1@LAB.LOCAL", type="User", props={}, is_azure=False)
+        G.add_node("U2", name="user2@LAB.LOCAL", type="User", props={}, is_azure=False)
+        G.add_node("A", name="lowpriv@LAB.LOCAL", type="User", props={}, is_azure=False)
+        G.add_edge("KA", "U1", label="AddKeyCredentialLink")
+        G.add_edge("KA", "U2", label="AddKeyCredentialLink")
+        G.add_edge("A", "U1", label="GenericAll")
+        G.add_edge("A", "U2", label="GenericAll")
+        bloodbash_globals['global_findings'] = []
+        out = self._capture_output(bloodbash_globals['print_shadow_credentials'], G)
+        clean = self._strip_ansi(out)
+        # Key Admins primary rights filtered
+        self.assertFalse(
+            any("KEY ADMINS" in f[2] for f in bloodbash_globals['global_findings']),
+            msg=str(bloodbash_globals['global_findings']),
+        )
+        # One aggregated secondary finding for lowpriv GenericAll on 2 principals
+        shadow = [f for f in bloodbash_globals['global_findings'] if f[1] == "Shadow Credentials"]
+        self.assertEqual(len(shadow), 1)
+        self.assertIn("2 principal", shadow[0][2])
+        self.assertIn("lowpriv@LAB.LOCAL", clean)
 
     def test_no_results_shadow_credentials(self):
         G = nx.MultiDiGraph()
@@ -841,6 +871,39 @@ class TestBloodBash(unittest.TestCase):
         self.assertIn('attacker@LAB.LOCAL', clean)
         # Domain Admins GenericAll should be filtered
         self.assertFalse(any('DOMAIN ADMINS' in f[2] and 'GenericAll' in f[2] for f in bloodbash_globals['global_findings']))
+        # Attacker primary right still recorded as a finding
+        self.assertTrue(
+            any('attacker@LAB.LOCAL' in f[2] and 'AddKeyCredentialLink' in f[2]
+                for f in bloodbash_globals['global_findings'])
+        )
+
+    def test_kerberoastable_and_asrep_one_finding_per_user(self):
+        G = nx.MultiDiGraph()
+        G.add_node("K1", name="svc1@LAB.LOCAL", type="User", props={
+            "hasspn": True, "sensitive": False, "enabled": True,
+        }, is_azure=False)
+        G.add_node("K2", name="svc2@LAB.LOCAL", type="User", props={
+            "hasspn": True, "sensitive": False, "enabled": True,
+        }, is_azure=False)
+        G.add_node("KT", name="KRBTGT@LAB.LOCAL", type="User", props={
+            "hasspn": True, "sensitive": False, "enabled": True,
+        }, is_azure=False)
+        G.add_node("A1", name="nopre@LAB.LOCAL", type="User", props={
+            "dontreqpreauth": True, "sensitive": False, "enabled": True,
+        }, is_azure=False)
+        bloodbash_globals['global_findings'] = []
+        self._capture_output(bloodbash_globals['print_kerberoastable'], G)
+        kerb = [f for f in bloodbash_globals['global_findings'] if f[1] == "Kerberoastable"]
+        self.assertEqual(len(kerb), 2)
+        self.assertTrue(any("svc1@LAB.LOCAL" in f[2] for f in kerb))
+        self.assertTrue(any("svc2@LAB.LOCAL" in f[2] for f in kerb))
+        self.assertFalse(any("KRBTGT" in f[2] for f in kerb))
+
+        bloodbash_globals['global_findings'] = []
+        self._capture_output(bloodbash_globals['print_as_rep_roastable'], G)
+        asrep = [f for f in bloodbash_globals['global_findings'] if f[1] == "AS-REP Roastable"]
+        self.assertEqual(len(asrep), 1)
+        self.assertIn("nopre@LAB.LOCAL", asrep[0][2])
 
     def test_no_results_laps_status(self):
         G = nx.MultiDiGraph()
