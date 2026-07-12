@@ -95,25 +95,23 @@ Point at a SharpHound/AzureHound output directory (or a `.zip` of those files):
 # Binary (from Releases)
 ./bloodbash /path/to/json --all
 
-# Full analysis from source (recommended when developing)
+# Full analysis from source
 python3 BloodBash.py /path/to/json --all
 
 # After pipx install
 bloodbash /path/to/json --all
 
-# Common selective run
-python3 BloodBash.py ./sharpout --adcs --dcsync --dangerous-permissions --verbose
-
-# Large datasets: limited pathfinding
-python3 BloodBash.py sharpout --all --fast
-
-# Export + SQLite cache
-python3 BloodBash.py . --all --export=html --export-bh --dot --db bloodbash.db
+# Just landed a user — compromise dossier (outbound capabilities)
+python3 BloodBash.py ./sharpout --from-user alice --from-user-export
 ```
 
 With no check flags, BloodBash runs a default pass (verbose summary + common checks).
 
-Sample data lives in `SampleSharphoundADData/` and `SampleAzurehoundData/`.
+Sample data: `SampleSharphoundADData/` and `SampleAzurehoundData/`.
+
+```bash
+python3 BloodBash.py --help   # structured flag tables + many example commands
+```
 
 ## What it finds
 
@@ -123,79 +121,225 @@ Sample data lives in `SampleSharphoundADData/` and `SampleAzurehoundData/`.
 | **AD credentials** | Kerberoastable, AS-REP roastable, shadow credentials (`AddKeyCredentialLink` + non-default ACL paths), password in description, PasswordNeverExpires / PasswordNotRequired |
 | **ADCS** | ESC1–ESC7 (+ ESC8/ESC9/ESC13 when collector props exist). ESC10–12 need registry/HTTP role data often absent from SharpHound |
 | **Azure / Entra** | Privileged roles, app/SP credential *control* paths, explicit MFA disable, guest users, SP abuse rights |
-| **Paths** | Shortest paths to high-value targets (limited set in `--fast`), owned principals (`--owned`), custom `--path-from` / `--path-to` |
+| **Paths** | Shortest paths to high-value targets (limited set in `--fast`), owned principals (`--owned` = inbound), custom `--path-from` / `--path-to` |
+| **Compromise dossier** | `--from-user` / `--compromise`: outbound membership, AdminTo/RDP/ACL counts, nested groups, auto paths to HV, txt/csv export |
 | **Path remediation** | Busiest-path ranking (`--busiest-paths`), edge removal recommendations (`--path-break`) |
 | **Inventory** | Password-age ladders, stale/inactive accounts, privilege groups, structural (domains/DCs/trusts), owned-object inventory |
 | **Other** | LAPS via `haslaps`, GPO XML (`--gpo-content-dir`), domain `Trusts[]` edges, group nesting |
 
-Findings are scored and summarized in a **Prioritized Findings** table. Abuse panels suggest tools/commands per category.
+Findings are scored and summarized in a **Prioritized Findings** table (use `--all-findings` for every row). Abuse panels suggest tools/commands per category.
 
-### Report packs, profiles, and deliverables (v1.4+)
+This is an **offline heuristic analyzer** from SquidSec, not a full BloodHound CE replacement. Prefer validating against BloodHound CE on the same zip for path parity.
+
+---
+
+## Example commands
+
+Replace `./sharpout` with your SharpHound/AzureHound directory or zip. Binary users can substitute `./bloodbash` or `bloodbash` for `python3 BloodBash.py`.
+
+### Basics
+
+```bash
+# Help (tables + examples)
+python3 BloodBash.py --help
+
+# Full analysis
+python3 BloodBash.py ./sharpout --all
+python3 BloodBash.py ./sharpout --all --fast
+python3 BloodBash.py ./2024-collection.zip --all --fast
+
+# Default pass (no module flags)
+python3 BloodBash.py ./sharpout
+
+# One domain / tenant only
+python3 BloodBash.py ./sharpout --all --domain CORP.LOCAL
+python3 BloodBash.py ./azureout --azure-privileged-roles --domain <tenantId>
+
+# In-repo samples
+python3 BloodBash.py SampleSharphoundADData --all --fast --all-findings
+python3 BloodBash.py SampleAzurehoundData --azure-privileged-roles --azure-guest-access --all-findings
+```
+
+### Compromise dossier (newly owned / foothold user)
+
+**Outbound** view: “I just compromised this principal — what can they do?”
+
+| Flag | Meaning |
+|------|---------|
+| `--from-user` / `--compromise` | Build dossier (nested groups, rights, HV paths) |
+| `--from-user-export [DIR]` | Write txt/csv/json lists (default `compromise-<user>/`) |
+| `--owned` | Different: paths **to** that principal (inbound) |
+
+```bash
+# Console dossier only
+python3 BloodBash.py ./sharpout --from-user alice
+python3 BloodBash.py ./sharpout --compromise alice@corp.local
+
+# Console + export pack
+python3 BloodBash.py ./sharpout --from-user alice --from-user-export
+python3 BloodBash.py ./sharpout --from-user alice --from-user-export ./alice-dossier
+
+# Multiple footholds (one subdir each under ./footholds)
+python3 BloodBash.py ./sharpout --from-user alice,bob,svc_backup --from-user-export ./footholds
+
+# Domain-scoped + full findings table
+python3 BloodBash.py ./sharpout --from-user alice --domain CORP.LOCAL --from-user-export --all-findings
+
+# Sample lab: SCOTT has LocalAdmin via Tier2Support and paths to DA
+python3 BloodBash.py SampleSharphoundADData --from-user SCOTT --from-user-export ./scott-out --fast
+
+# Pair with inspect / explicit path
+python3 BloodBash.py ./sharpout --from-user alice --inspect alice
+python3 BloodBash.py ./sharpout --path-from alice --path-to 'domain admins@corp.local'
+
+# Inbound (who can reach my loot) — not the dossier
+python3 BloodBash.py ./sharpout --owned alice --owned-inventory --shortest-paths
+```
+
+**Export layout** (per principal):
+
+```text
+compromise-alice/
+  summary.md              README.txt           counts.csv
+  membership_direct.txt   membership_effective.txt
+  paths_to_high_value.txt paths_to_high_value.csv
+  dossier.json
+  rights/
+    AdminTo.txt  AdminTo.csv  CanRDP.txt  LocalAdmin.txt  GenericAll.txt  ...
+```
+
+### Attack paths & remediation
+
+```bash
+python3 BloodBash.py ./sharpout --shortest-paths
+python3 BloodBash.py ./sharpout --shortest-paths --indirect --fast
+python3 BloodBash.py ./sharpout --busiest-paths short --busiest-paths-top 10
+python3 BloodBash.py ./sharpout --busiest-paths all --busiest-paths-top 5
+python3 BloodBash.py ./sharpout --path-break --path-break-top 20
+python3 BloodBash.py ./sharpout --busiest-paths short --path-break --fast \
+  --report-pack ./path-reports --export-zip path-reports.zip
+python3 BloodBash.py ./sharpout --path-from helpdesk --path-to 'domain admins@corp.local'
+python3 BloodBash.py ./sharpout --path-from alice,bob --path-to 'domain admins,enterprise admins'
+python3 BloodBash.py ./sharpout --deep-analysis
+python3 BloodBash.py ./sharpout --inspect 'DOMAIN ADMINS@CORP.LOCAL'
+```
+
+### Selective AD checks
+
+```bash
+# Critical / common engagement set
+python3 BloodBash.py ./sharpout --dcsync --adcs --dangerous-permissions --verbose
+python3 BloodBash.py ./sharpout --dcsync --adcs --dangerous-permissions --all-findings
+
+# Credentials
+python3 BloodBash.py ./sharpout --kerberoastable --as-rep-roastable --password-descriptions
+python3 BloodBash.py ./sharpout --password-never-expires --password-not-required --password-age
+
+# Delegation / RBCD / shadow creds
+python3 BloodBash.py ./sharpout --unconstrained-delegation --constrained-delegation --rbcd
+python3 BloodBash.py ./sharpout --shadow-credentials
+
+# Sessions, LAPS, SID history, GPO
+python3 BloodBash.py ./sharpout --sessions --laps --sid-history
+python3 BloodBash.py ./sharpout --gpo-abuse --gpo-parsing
+python3 BloodBash.py ./sharpout --gpo-abuse --gpo-content-dir ./sysvol-gpo-xml
+```
+
+### Inventory, profiles, and deliverables
+
+```bash
+# Inventory modules
+python3 BloodBash.py ./sharpout --inventory
+python3 BloodBash.py ./sharpout --stale-accounts --password-age --privilege-inventory
+python3 BloodBash.py ./sharpout --owned alice --owned-inventory
+
+# Built-in YAML profiles (see profiles/)
+python3 BloodBash.py ./sharpout --profile quick
+python3 BloodBash.py ./sharpout --profile adcs-heavy
+python3 BloodBash.py ./sharpout --profile hygiene
+python3 BloodBash.py ./sharpout --profile ./my-engagement.yaml
+
+# Multi-page HTML report pack + zip
+python3 BloodBash.py ./sharpout --inventory --busiest-paths short --path-break \
+  --report-pack ./reports --export-zip bloodbash-reports.zip --log-file ./bloodbash.log
+
+# Single-file exports
+python3 BloodBash.py ./sharpout --all --export=md
+python3 BloodBash.py ./sharpout --all --export=html
+python3 BloodBash.py ./sharpout --all --export=csv
+python3 BloodBash.py ./sharpout --all --export=json --export-bh --dot graph.dot
+python3 BloodBash.py ./sharpout --all --export=yaml
+
+# SQLite graph cache
+python3 BloodBash.py ./sharpout --all --db bloodbash.db
+python3 BloodBash.py . --db bloodbash.db --from-user alice --from-user-export
+```
+
+### Azure / Entra
+
+```bash
+python3 BloodBash.py ./azureout --azure-privileged-roles
+python3 BloodBash.py ./azureout --azure-app-secrets --azure-sp-abuse
+python3 BloodBash.py ./azureout --azure-mfa-bypass --azure-guest-access
+python3 BloodBash.py ./azureout \
+  --azure-privileged-roles --azure-app-secrets --azure-mfa-bypass \
+  --azure-guest-access --azure-sp-abuse --all-findings --export=html
+
+python3 BloodBash.py SampleAzurehoundData \
+  --azure-privileged-roles --azure-guest-access --all-findings
+```
+
+### Combined engagement recipes
+
+```bash
+# Nightly full + deliverable
+python3 BloodBash.py ./sharpout --all --fast --all-findings \
+  --report-pack ./nightly --export-zip nightly.zip --log-file nightly.log
+
+# Foothold day-0 then domain hygiene
+python3 BloodBash.py ./sharpout --from-user alice --from-user-export ./dossiers
+python3 BloodBash.py ./sharpout --profile hygiene --report-pack ./hygiene --export-zip hygiene.zip
+
+# ADCS-focused with path remediation
+python3 BloodBash.py ./sharpout --profile adcs-heavy --path-break --busiest-paths short \
+  --report-pack ./adcs-paths --export-zip adcs-paths.zip
+```
+
+---
+
+## Flags reference
+
+### Report packs, profiles, dossier, deliverables (v1.4+)
 
 | Flag | Purpose |
 |------|---------|
-| `--busiest-paths [short\|all]` | Rank principals that appear on the most paths to high-value targets |
+| `--from-user` / `--compromise USER` | **Compromise dossier** (outbound): nested groups, AdminTo/RDP/ACL counts, paths to high-value |
+| `--from-user-export [DIR]` | Export dossier txt/csv/json (default `compromise-<user>/`) |
+| `--busiest-paths [short\|all]` | Rank principals on the most paths to high-value targets |
 | `--path-break` | Recommend which relationships to remove to break the most attack paths |
 | `--inventory` | Structural + password-age + stale + privilege inventories |
 | `--password-age` / `--stale-accounts` / `--privilege-inventory` | Individual inventory modules |
 | `--owned-inventory` | AdminTo / MemberOf inventory for `--owned` principals |
 | `--report-pack DIR` | Multi-page HTML suite + `index.html` + per-section CSVs |
 | `--export-zip [FILE]` | Zip a report pack into one engagement deliverable |
-| `--profile FILE\|name` | YAML analysis profile (`profiles/quick.yaml`, `adcs-heavy`, `hygiene`, or custom) |
+| `--profile FILE\|name` | YAML analysis profile (`quick`, `adcs-heavy`, `hygiene`, or path) |
 | `--log-file [FILE]` | Append-friendly run log (default `bloodbash.log`) |
-| `--all-findings` | End of run: print a table of **every** finding (always shown, even if empty; not limited to top 20) |
-| `--from-user` / `--compromise USER` | **Compromise dossier** for a foothold principal: nested groups, outbound AdminTo/RDP/ACL counts, paths to high-value |
-| `--from-user-export [DIR]` | Export dossier as txt/csv/json lists (default `compromise-<user>/`) |
+| `--all-findings` | End of run: print a table of **every** finding (even if empty) |
 
-#### Compromise dossier (engagement foothold view)
-
-When you land a user and want “everything this principal can do”:
-
-```bash
-# Console dossier only
-python3 BloodBash.py ./sharpout --from-user alice
-
-# Console + export pack (membership/rights/paths as .txt + .csv + dossier.json)
-python3 BloodBash.py ./sharpout --compromise 'alice@corp.local' --from-user-export
-
-# Multiple footholds
-python3 BloodBash.py ./sharpout --from-user alice,bob --from-user-export ./footholds
-```
-
-Export layout (per principal):
-
-- `summary.md` / `README.txt` / `counts.csv` — high-level numbers  
-- `membership_direct.txt` / `membership_effective.txt` — direct + nested groups  
-- `rights/<Right>.txt` + `.csv` — AdminTo, CanRDP, LocalAdmin, GenericAll, etc.  
-- `paths_to_high_value.txt` / `.csv` — outbound attack paths to HV targets  
-- `dossier.json` — full machine-readable dump  
-
-Note: `--owned` still means **paths to** owned principals (inbound). Use `--from-user` for **outbound** capability analysis.
-
-HTML exports use branded templates with **sortable tables**. Example:
-
-```bash
-python3 BloodBash.py ./sharpout --profile quick
-python3 BloodBash.py ./sharpout --inventory --busiest-paths short --path-break \
-  --report-pack ./reports --export-zip bloodbash-reports.zip --log-file run.log
-```
-
-This is an **offline heuristic analyzer** from SquidSec, not a full BloodHound CE replacement. Prefer validating against BloodHound CE on the same zip for path parity.
-
-## Useful flags
+### Other useful flags
 
 | Flag | Purpose |
 |------|---------|
 | `--all` | Run every analysis module |
 | `--fast` | Limit pathfinding to top DA/EA-style targets (not a full skip) |
 | `--domain X` | Filter to one AD domain or Azure `tenantId` |
-| `--owned a,b` | Paths involving owned principals |
+| `--owned a,b` | Paths **to** owned principals (inbound) |
 | `--path-from` / `--path-to` | Arbitrary shortest paths |
 | `--inspect NODE` | Dump props + edges for a node |
 | `--indirect` | Include group-mediated paths/rights |
 | `--deep-analysis` | Slow group nesting + cycle detection |
 | `--gpo-content-dir DIR` | Parse GPO XMLs (tasks, scripts, cPassword) |
-| `--export {md,json,html,csv,yaml}` | Write a report (all formats include high-value targets + prioritized findings) |
+| `--export {md,json,html,csv,yaml}` | Write a report (high-value targets + prioritized findings) |
 | `--export-bh` | BloodHound-style graph JSON |
 | `--dot [FILE]` | Graphviz DOT export |
 | `--db FILE` | Load/save graph in SQLite |
@@ -203,7 +347,7 @@ This is an **offline heuristic analyzer** from SquidSec, not a full BloodHound C
 
 Azure-only toggles: `--azure-privileged-roles`, `--azure-app-secrets`, `--azure-mfa-bypass`, `--azure-guest-access`, `--azure-sp-abuse`.
 
-Run `python3 BloodBash.py --help` for the full list.
+Run `python3 BloodBash.py --help` for structured tables and the full example set.
 
 ## SharpHound CE notes
 
@@ -233,7 +377,8 @@ Set `PYTHON` if `python3` is not on `PATH`. Options mirror the CLI (Azure checks
 
 ```bash
 pip install -r requirements-dev.txt
-python3 -m pytest test_bloodbash.py test_members_ingest.py -q
+python3 -m pytest test_bloodbash.py test_members_ingest.py \
+  test_detection_variations.py test_compromise_dossier.py -q
 ```
 
 ### Local binary build

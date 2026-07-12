@@ -160,6 +160,9 @@ class TestCompromiseDossier(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertIn("--from-user", result.stdout)
         self.assertIn("Compromise dossier", result.stdout)
+        self.assertIn("--from-user-export", result.stdout)
+        self.assertIn("Examples — compromise dossier", result.stdout)
+        self.assertIn("--from-user alice", result.stdout)
 
 
 if __name__ == "__main__":
