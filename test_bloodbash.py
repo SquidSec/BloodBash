@@ -1500,6 +1500,71 @@ class TestBloodBash(unittest.TestCase):
         self.assertFalse(bloodbash_globals['get_bool_prop_ci'](props, ['passwordnotrequired']))
         self.assertFalse(bloodbash_globals['get_bool_prop_ci'](None, ['enabled']))
 
+    def test_pne_kerb_false_negatives_from_real_collector_quirks(self):
+        """Regression: --password-never-expires / --kerberoastable returned 0 despite
+        flags present in raw SharpHound JSON.
+
+        Covers: lowercase ``properties`` bag, missing meta.type (filename/type fallback),
+        SPN list without hasspn, case-insensitive --domain, krbtgt exclusion.
+        """
+        G = self._load_and_build_graph("pne-kerb-false-negatives-tests")
+        types = {d["type"] for _, d in G.nodes(data=True)}
+        self.assertIn("User", types)
+
+        pne_out = self._capture_output(
+            bloodbash_globals["print_password_never_expires"], G
+        )
+        self._assert_output_contains(pne_out, "PNEUSER@CONTOSO.COM")
+        self.assertNotIn("No users with 'Password Never Expires' found", self._strip_ansi(pne_out))
+
+        # Case-insensitive domain filter (props.domain is contoso.com)
+        pne_filtered = self._capture_output(
+            bloodbash_globals["print_password_never_expires"], G, "CONTOSO.COM"
+        )
+        self._assert_output_contains(pne_filtered, "PNEUSER@CONTOSO.COM")
+
+        kerb_out = self._capture_output(
+            bloodbash_globals["print_kerberoastable"], G
+        )
+        clean = self._strip_ansi(kerb_out)
+        self.assertIn("SVC_SQL@CONTOSO.COM", clean)
+        self.assertNotIn("KRBTGT@CONTOSO.COM", clean)
+        self.assertNotIn("None found", clean)
+
+        # SPN helper: list alone is enough
+        self.assertTrue(
+            bloodbash_globals["_user_has_spn"](
+                {"serviceprincipalnames": ["HTTP/app.contoso.com"]}
+            )
+        )
+        self.assertFalse(bloodbash_globals["_user_has_spn"]({"hasspn": False}))
+
+    def test_domain_matches_case_insensitive(self):
+        d = {
+            "name": "ALICE@LAB.LOCAL",
+            "props": {"domain": "lab.local"},
+        }
+        self.assertTrue(bloodbash_globals["_domain_matches"](d, "LAB.LOCAL"))
+        self.assertTrue(bloodbash_globals["_domain_matches"](d, "lab.local"))
+        self.assertFalse(bloodbash_globals["_domain_matches"](d, "other.local"))
+        self.assertTrue(bloodbash_globals["_domain_matches"](d, None))
+
+    def test_extract_props_lowercase_and_type_from_filename(self):
+        item = {
+            "ObjectIdentifier": "S-1-5-21-9-9-9-1",
+            "properties": {"name": "X@Y.Z", "type": "User", "pwdneverexpires": True},
+        }
+        props = bloodbash_globals["_extract_node_props"](item)
+        self.assertEqual(props.get("name"), "X@Y.Z")
+        self.assertEqual(
+            bloodbash_globals["_resolve_object_type"]("", item, "20240101_users.json"),
+            "User",
+        )
+        self.assertEqual(
+            bloodbash_globals["_type_from_filename"]("20240305110018_users.json"),
+            "User",
+        )
+
     def test_get_object_id_azure_objectid(self):
         item = {"kind": "User", "objectId": "azure-user-abc", "name": "test@tenant.com"}
         self.assertEqual(bloodbash_globals['get_object_id'](item), "azure-user-abc")
