@@ -171,11 +171,19 @@ Use --help for all options.
 # Type Mapping (Extended for Azure)
 # ────────────────────────────────────────────────
 TYPE_FROM_META = {
-    # SharpHound AD types
-    "users": "User", "computers": "Computer", "groups": "Group", "gpos": "GPO",
-    "ous": "OU", "domains": "Domain", "containers": "Container",
-    "certtemplates": "Certificate Template", "enterprisecas": "Enterprise CA",
-    "rootcas": "Root CA", "aiacas": "AIA CA", "ntauthstores": "NTAuth Store",
+    # SharpHound AD types (plural + singular meta.type variants)
+    "users": "User", "user": "User",
+    "computers": "Computer", "computer": "Computer",
+    "groups": "Group", "group": "Group",
+    "gpos": "GPO", "gpo": "GPO",
+    "ous": "OU", "ou": "OU",
+    "domains": "Domain", "domain": "Domain",
+    "containers": "Container", "container": "Container",
+    "certtemplates": "Certificate Template", "certtemplate": "Certificate Template",
+    "enterprisecas": "Enterprise CA", "enterpriseca": "Enterprise CA",
+    "rootcas": "Root CA", "rootca": "Root CA",
+    "aiacas": "AIA CA", "aiaca": "AIA CA",
+    "ntauthstores": "NTAuth Store", "ntauthstore": "NTAuth Store",
     # AzureHound types (added support)
     "azureusers": "Azure User", "azuregroups": "Azure Group", "azureapplications": "Azure Application",
     "azureserviceprincipals": "Azure Service Principal", "azuretenants": "Azure Tenant",
@@ -271,6 +279,80 @@ def _get_prop_ci(item, keys):
             if k.lower() == key.lower() and v is not None and v != '':
                 return v
     return None
+
+def _extract_node_props(node, is_azure=False):
+    """Return the property bag for a SharpHound/AzureHound object.
+
+    SharpHound uses ``Properties``; some exports use lowercase ``properties``.
+    AzureHound typically nests attributes under ``data``.
+    """
+    if not isinstance(node, dict):
+        return {}
+    if is_azure and isinstance(node.get("data"), dict):
+        return node["data"]
+    for k, v in node.items():
+        if k.lower() == "properties" and isinstance(v, dict):
+            return v
+    # Already-flattened node (tests / partial records)
+    return node
+
+def _type_from_filename(filename: str) -> Optional[str]:
+    """Infer object type from collector filenames like ``20240101_users.json``."""
+    if not filename:
+        return None
+    stem = Path(filename).stem.lower()
+    stem = re.sub(r"^\d+[_\-]?", "", stem)
+    # Longer keys first so azureusers wins over users
+    for key, typ in sorted(TYPE_FROM_META.items(), key=lambda kv: -len(kv[0])):
+        if stem == key or stem.endswith("_" + key) or stem.endswith("-" + key):
+            return typ
+    return None
+
+def _normalize_object_type(raw) -> Optional[str]:
+    """Map a free-form type string to a canonical BloodBash type, or None if unusable."""
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s or s.lower() == "unknown":
+        return None
+    low = s.lower()
+    if low in TYPE_FROM_META:
+        return TYPE_FROM_META[low]
+    # Common props.type values from collectors
+    simple = {
+        "user": "User",
+        "computer": "Computer",
+        "group": "Group",
+        "gpo": "GPO",
+        "ou": "OU",
+        "domain": "Domain",
+        "container": "Container",
+    }
+    if low in simple:
+        return simple[low]
+    return s
+
+def _resolve_object_type(meta_type: str, item: dict, filename: str = "") -> str:
+    """Resolve object type from meta.type, item fields, props, or filename."""
+    mt = (meta_type or "").lower().strip()
+    if mt in TYPE_FROM_META:
+        return TYPE_FROM_META[mt]
+    # Explicit type on the object (various casings / schemas)
+    for key in ("ObjectType", "objectType", "objecttype", "Type", "type", "kind"):
+        if key in item:
+            norm = _normalize_object_type(item.get(key))
+            if norm:
+                return norm
+    props = _extract_node_props(item, is_azure=bool(item.get("IsAzure")))
+    if isinstance(props, dict):
+        for key in ("type", "Type", "objectType", "ObjectType", "kind"):
+            norm = _normalize_object_type(props.get(key))
+            if norm:
+                return norm
+    from_file = _type_from_filename(filename)
+    if from_file:
+        return from_file
+    return "Unknown"
 
 def get_object_id(item):
     data = item.get('data')
@@ -384,7 +466,7 @@ def load_json_dir(directory, debug=False):
                                 if typ:
                                     obj_type = f"Azure {typ.title()}"
                         else:
-                            obj_type = TYPE_FROM_META.get(meta_type, "Unknown")
+                            obj_type = _resolve_object_type(meta_type, item, filename)
                         item['ObjectType'] = obj_type
                         oid = get_object_id(item)
                         nodes[oid] = item
@@ -414,11 +496,23 @@ def build_graph(nodes, db_path=None, debug=False):
     with tqdm(total=len(nodes), desc="Building graph", unit="node") as pbar:
         for oid, node in nodes.items():
             is_azure = node.get('IsAzure', False)
-            # For Azure, props are in node['data']
-            props = node['data'] if is_azure and 'data' in node else node.get('Properties', node)
-            name = props.get('name') or props.get('Name') or props.get('displayName') or oid
-            name_norm = name.upper().split('@')[0]
-            obj_type = node.get('ObjectType') or node.get('Type') or props.get('type') or 'Unknown'
+            # SharpHound: Properties / properties; Azure: data
+            props = _extract_node_props(node, is_azure=is_azure)
+            if not isinstance(props, dict):
+                props = {}
+            name = (
+                props.get('name') or props.get('Name') or props.get('displayName')
+                or node.get('name') or node.get('Name') or oid
+            )
+            name_norm = str(name).upper().split('@')[0]
+            # Prefer non-Unknown types: ObjectType may be "Unknown" when meta was
+            # missing, which is truthy and previously blocked props.type fallback.
+            obj_type = (
+                _normalize_object_type(node.get('ObjectType'))
+                or _normalize_object_type(node.get('Type'))
+                or _normalize_object_type(props.get('type') or props.get('Type'))
+                or 'Unknown'
+            )
             if not oid.startswith('rel_'):
                 G.add_node(oid, name=name, type=obj_type, props=props, is_azure=is_azure)
                 name_to_oid[name_norm] = oid
@@ -978,29 +1072,36 @@ def print_password_in_descriptions(G, domain_filter=None):
 def print_password_never_expires(G, domain_filter=None):
     console.rule("[bold magenta]Users with 'Password Never Expires' Set (AD)[/bold magenta]")
     found = False
+    hits = 0
+    max_display = 50
     for n, d in G.nodes(data=True):
         if d.get('is_azure', False):
             continue
-        if domain_filter and d.get('props', {}).get('domain') != domain_filter:
+        if not _domain_matches(d, domain_filter):
             continue
-        if d['type'].lower() == 'user':
-            props = d.get('props') or {}
-            # SharpHound CE uses pwdneverexpires; also accept UAC DONT_EXPIRE_PASSWORD
-            password_never_expires = get_bool_prop_ci(
-                props, ['passwordneverexpires', 'PasswordNeverExpires', 'pwdneverexpires']
-            )
-            if not password_never_expires:
-                uac_raw = props.get('useraccountcontrol') or props.get('UserAccountControl')
-                try:
-                    password_never_expires = bool(int(uac_raw) & 0x10000)
-                except (TypeError, ValueError):
-                    pass
-            if password_never_expires:
-                found = True
-                uac_raw = props.get('useraccountcontrol') or props.get('UserAccountControl')
-                uac_str = f" | UAC: {decode_uac(uac_raw)}" if uac_raw is not None else ""
+        if str(d.get('type', '')).lower() != 'user':
+            continue
+        props = d.get('props') or {}
+        # SharpHound CE uses pwdneverexpires; also accept UAC DONT_EXPIRE_PASSWORD
+        password_never_expires = get_bool_prop_ci(
+            props, ['passwordneverexpires', 'PasswordNeverExpires', 'pwdneverexpires']
+        )
+        if not password_never_expires:
+            uac_raw = _prop_raw_ci(props, ['useraccountcontrol', 'UserAccountControl'])
+            try:
+                password_never_expires = bool(int(uac_raw) & 0x10000)
+            except (TypeError, ValueError):
+                pass
+        if password_never_expires:
+            found = True
+            hits += 1
+            uac_raw = _prop_raw_ci(props, ['useraccountcontrol', 'UserAccountControl'])
+            uac_str = f" | UAC: {decode_uac(uac_raw)}" if uac_raw is not None else ""
+            if hits <= max_display:
                 console.print(f"[yellow]Password Never Expires enabled[/yellow]: [green]{d['name']}[/green]{uac_str}")
-                add_finding("Password Never Expires", f"User {d['name']} has 'Password Never Expires' set")
+            add_finding("Password Never Expires", f"User {d['name']} has 'Password Never Expires' set")
+    if hits > max_display:
+        console.print(f"  [dim]... and {hits - max_display} more[/dim]")
     if found:
         console.print(Panel("[bold yellow]Impact:[/bold yellow] Passwords may never expire, leading to old/weak passwords persisting indefinitely.\n[bold]Mitigation:[/bold] Review and enforce password policies; consider resetting passwords for affected accounts.\n[bold]Tools:[/bold] Use PowerShell (Get-ADUser) or AD tools to audit.", title="Abuse Suggestions: Password Never Expires", border_style="yellow"))
     else:
@@ -1012,26 +1113,27 @@ def print_password_not_required(G, domain_filter=None):
     for n, d in G.nodes(data=True):
         if d.get('is_azure', False):
             continue
-        if domain_filter and d.get('props', {}).get('domain') != domain_filter:
+        if not _domain_matches(d, domain_filter):
             continue
-        if d['type'].lower() == 'user':
-            props = d.get('props') or {}
-            # SharpHound CE uses passwordnotreqd; also accept UAC PASSWD_NOTREQD
-            password_not_required = get_bool_prop_ci(
-                props, ['passwordnotrequired', 'PasswordNotRequired', 'passwordnotreqd']
-            )
-            if not password_not_required:
-                uac_raw = props.get('useraccountcontrol') or props.get('UserAccountControl')
-                try:
-                    password_not_required = bool(int(uac_raw) & 0x20)
-                except (TypeError, ValueError):
-                    pass
-            if password_not_required:
-                found = True
-                uac_raw = props.get('useraccountcontrol') or props.get('UserAccountControl')
-                uac_str = f" | UAC: {decode_uac(uac_raw)}" if uac_raw is not None else ""
-                console.print(f"[red]Password Not Required enabled[/red]: [green]{d['name']}[/green]{uac_str}")
-                add_finding("Password Not Required", f"User {d['name']} has 'Password Not Required' set")
+        if str(d.get('type', '')).lower() != 'user':
+            continue
+        props = d.get('props') or {}
+        # SharpHound CE uses passwordnotreqd; also accept UAC PASSWD_NOTREQD
+        password_not_required = get_bool_prop_ci(
+            props, ['passwordnotrequired', 'PasswordNotRequired', 'passwordnotreqd']
+        )
+        if not password_not_required:
+            uac_raw = _prop_raw_ci(props, ['useraccountcontrol', 'UserAccountControl'])
+            try:
+                password_not_required = bool(int(uac_raw) & 0x20)
+            except (TypeError, ValueError):
+                pass
+        if password_not_required:
+            found = True
+            uac_raw = _prop_raw_ci(props, ['useraccountcontrol', 'UserAccountControl'])
+            uac_str = f" | UAC: {decode_uac(uac_raw)}" if uac_raw is not None else ""
+            console.print(f"[red]Password Not Required enabled[/red]: [green]{d['name']}[/green]{uac_str}")
+            add_finding("Password Not Required", f"User {d['name']} has 'Password Not Required' set")
     if found:
         console.print(Panel("[bold red]Impact:[/bold red] No password required for login, enabling easy account takeover or unauthorized access.\n[bold]Abuse:[/bold] Log in without a password; escalate privileges if account has rights.\n[bold]Mitigation:[/bold] Enforce passwords; disable or monitor such accounts.\n[bold]Tools:[/bold] ADUC, PowerShell, or BloodHound for auditing.", title="Abuse Suggestions: Password Not Required", border_style="red"))
     else:
@@ -2079,6 +2181,26 @@ def print_dangerous_permissions(G, domain_filter=None, indirect=False):
     else:
         console.print("[green]No dangerous ACLs found on high-value objects[/green]")
 
+def _user_has_spn(props) -> bool:
+    """True if the user is Kerberoastable via hasspn flag or non-empty SPN list.
+
+    Some collections set ``serviceprincipalnames`` without a reliable ``hasspn``
+    bool (partial ObjectProps, older exporters, hand-merged JSON). Counting
+    ``"hasspn": true`` in raw JSON can also miss accounts that only have the list.
+    """
+    if get_bool_prop_ci(props, ['hasspn', 'hasSPN', 'has_spn']):
+        return True
+    spns = _prop_raw_ci(
+        props,
+        ['serviceprincipalnames', 'servicePrincipalNames', 'serviceprincipalname', 'ServicePrincipalNames'],
+    )
+    if isinstance(spns, list):
+        return any(bool(s) for s in spns)
+    if isinstance(spns, str):
+        return bool(spns.strip())
+    return False
+
+
 def print_kerberoastable(G, domain_filter=None):
     console.rule("[bold magenta]Kerberoastable Accounts (AD)[/bold magenta]")
     hits = []
@@ -2086,14 +2208,19 @@ def print_kerberoastable(G, domain_filter=None):
     for n, d in G.nodes(data=True):
         if d.get('is_azure', False):
             continue
-        if domain_filter and d.get('props', {}).get('domain') != domain_filter:
+        if not _domain_matches(d, domain_filter):
             continue
-        if d['type'].lower() != 'user':
+        if str(d.get('type', '')).lower() != 'user':
             continue
-        props = d.get('props', {})
-        hasspn = get_bool_prop_ci(props, ['hasspn', 'hasSPN', 'has_spn'])
-        sensitive = props.get('sensitive', props.get('Sensitive', False))
-        enabled = props.get('enabled', props.get('Enabled', True))
+        props = d.get('props') or {}
+        hasspn = _user_has_spn(props)
+        # Case-insensitive booleans (SharpHound CE uses lowercase keys)
+        sensitive = get_bool_prop_ci(props, ['sensitive', 'Sensitive'], default=False)
+        # Default enabled=True when attribute missing (matches BloodHound semantics)
+        if _prop_raw_ci(props, ['enabled', 'Enabled']) is None:
+            enabled = True
+        else:
+            enabled = get_bool_prop_ci(props, ['enabled', 'Enabled'], default=True)
         # krbtgt always has an SPN but is not a practical Kerberoast target here
         name = d.get('name') or ''
         if name.upper().startswith('KRBTGT@') or name.upper() == 'KRBTGT':
@@ -2102,7 +2229,7 @@ def print_kerberoastable(G, domain_filter=None):
             hits.append(d)
     for i, d in enumerate(hits):
         props = d.get('props') or {}
-        uac_raw = props.get('useraccountcontrol') or props.get('UserAccountControl')
+        uac_raw = _prop_raw_ci(props, ['useraccountcontrol', 'UserAccountControl'])
         uac_str = f" | UAC: {decode_uac(uac_raw)}" if uac_raw is not None else ""
         if i < max_display:
             console.print(f"  • [cyan]{d['name']}[/cyan]{uac_str}")
@@ -2122,19 +2249,22 @@ def print_as_rep_roastable(G, domain_filter=None):
     for n, d in G.nodes(data=True):
         if d.get('is_azure', False):
             continue
-        if domain_filter and d.get('props', {}).get('domain') != domain_filter:
+        if not _domain_matches(d, domain_filter):
             continue
-        if d['type'].lower() != 'user':
+        if str(d.get('type', '')).lower() != 'user':
             continue
-        props = d.get('props', {})
+        props = d.get('props') or {}
         dontreqpreauth = get_bool_prop_ci(props, ['dontreqpreauth', 'dontReqPreauth', 'dont_req_preauth'])
-        sensitive = props.get('sensitive', props.get('Sensitive', False))
-        enabled = props.get('enabled', props.get('Enabled', True))
+        sensitive = get_bool_prop_ci(props, ['sensitive', 'Sensitive'], default=False)
+        if _prop_raw_ci(props, ['enabled', 'Enabled']) is None:
+            enabled = True
+        else:
+            enabled = get_bool_prop_ci(props, ['enabled', 'Enabled'], default=True)
         if dontreqpreauth and not sensitive and enabled:
             hits.append(d)
     for i, d in enumerate(hits):
         props = d.get('props') or {}
-        uac_raw = props.get('useraccountcontrol') or props.get('UserAccountControl')
+        uac_raw = _prop_raw_ci(props, ['useraccountcontrol', 'UserAccountControl'])
         uac_str = f" | UAC: {decode_uac(uac_raw)}" if uac_raw is not None else ""
         if i < max_display:
             console.print(f"  • [cyan]{d['name']}[/cyan]{uac_str}")
@@ -2697,10 +2827,28 @@ def _days_since(ts: Optional[float], now: Optional[float] = None) -> Optional[fl
 
 
 def _domain_matches(d: dict, domain_filter: Optional[str]) -> bool:
+    """Case-insensitive domain / tenant filter.
+
+    SharpHound stores ``domain`` as the DNS name (often mixed/lower case in
+    some collectors); CLI users commonly pass ``CORP.LOCAL``. Exact string
+    equality previously zeroed every property-based check.
+    """
     if not domain_filter:
         return True
     props = d.get("props") or {}
-    return props.get("domain") == domain_filter or props.get("tenantId") == domain_filter
+    df = str(domain_filter).strip().lower()
+    if not df:
+        return True
+    for key in ("domain", "Domain", "tenantId", "tenantid", "TenantId"):
+        val = props.get(key)
+        if val is not None and str(val).strip().lower() == df:
+            return True
+    # Fallback: match UPN / name suffix (USER@CORP.LOCAL)
+    name = d.get("name") or props.get("name") or props.get("Name") or ""
+    if isinstance(name, str) and "@" in name:
+        if name.rsplit("@", 1)[-1].strip().lower() == df:
+            return True
+    return False
 
 
 def _priority_high_value_targets(G, domain_filter=None, limit=5):

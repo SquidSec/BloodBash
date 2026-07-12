@@ -1,0 +1,48 @@
+{
+  "data": [
+    {
+      "ObjectIdentifier": "S-1-5-21-1-2-3-4001",
+      "properties": {
+        "name": "PNEUSER@CONTOSO.COM",
+        "domain": "contoso.com",
+        "type": "User",
+        "pwdneverexpires": true,
+        "enabled": true
+      }
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1-2-3-4002",
+      "properties": {
+        "name": "SVC_SQL@CONTOSO.COM",
+        "domain": "contoso.com",
+        "type": "User",
+        "serviceprincipalnames": [
+          "MSSQLSvc/db.contoso.com:1433"
+        ],
+        "enabled": true,
+        "sensitive": false
+      }
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1-2-3-4003",
+      "properties": {
+        "name": "NORMAL@CONTOSO.COM",
+        "domain": "contoso.com",
+        "type": "User",
+        "pwdneverexpires": false,
+        "enabled": true
+      }
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1-2-3-4004",
+      "properties": {
+        "name": "KRBTGT@CONTOSO.COM",
+        "domain": "contoso.com",
+        "type": "User",
+        "hasspn": true,
+        "enabled": true,
+        "sensitive": false
+      }
+    }
+  ]
+}
