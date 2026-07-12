@@ -1,0 +1,20 @@
+# BloodBash built-in profile: ADCS-focused engagement pack
+name: adcs-heavy
+description: ADCS, privilege paths, and inventory for certificate-focused reviews
+all: false
+fast: false
+verbose: true
+checks:
+  - adcs
+  - dcsync
+  - dangerous-permissions
+  - shadow-credentials
+  - privilege-inventory
+  - inventory
+  - path-break
+  - shortest-paths
+busiest_paths: short
+busiest_paths_top: 10
+path_break_top: 20
+export: html
+report_pack: bloodbash-adcs-report-pack

@@ -4,8 +4,10 @@ import json
 import os
 import sys
 import argparse
+import logging
 import networkx as nx
-from collections import defaultdict
+from collections import defaultdict, Counter
+from datetime import date, datetime, timezone
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
@@ -21,8 +23,10 @@ from pathlib import Path
 import traceback
 import zipfile
 import hashlib
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-__version__ = "1.3.1"
+__version__ = "1.4.0"
+logger = logging.getLogger("bloodbash")
 __org__ = "SquidSec"
 __org_tagline__ = "Open source security tooling by SquidSec"
 __org_url__ = "https://squidoffense.com/"
@@ -40,33 +44,83 @@ SEVERITY_SCORES = {
     "Constrained Delegation": 7, "Unconstrained Delegation": 8, "LAPS": 6,
     "Owned Paths": 9, "Password in Description": 6,
     "Arbitrary Paths": 6, "Trust Abuse": 7, "Deep Group Nesting": 6,
+    "Busiest Paths": 7, "Path Break": 8, "Password Age": 5, "Stale Accounts": 4,
+    "Privilege Inventory": 6, "Owned Inventory": 7,
     # Azure-specific
     "Azure Privileged Roles": 10, "Azure App Secrets": 9, "Azure MFA Bypass": 8,
     "Azure Guest Access": 7, "Azure Service Principal Abuse": 8,
 }
+
+# Password-age and inactivity inventory ladders (days)
+PASSWORD_AGE_BUCKETS = [
+    ("< 1 day", 0, 1),
+    ("< 7 days", 1, 7),
+    ("< 30 days", 7, 30),
+    ("> 6 months", 180, 365),
+    ("> 1 year", 365, 365 * 5),
+    ("> 5 years", 365 * 5, 365 * 10),
+    ("> 10 years", 365 * 10, 365 * 15),
+    ("> 15 years", 365 * 15, 365 * 20),
+    ("> 20 years", 365 * 20, None),
+]
+STALE_ACCOUNT_BUCKETS = [
+    ("Inactive > 6 months", 180, 365),
+    ("Inactive > 12 months", 365, 365 * 5),
+    ("Inactive > 60 months", 365 * 5, 365 * 10),
+    ("Inactive > 120 months", 365 * 10, None),
+]
+PRIVILEGE_GROUP_KEYWORDS = (
+    "domain admins", "enterprise admins", "schema admins", "administrators@",
+    "account operators", "backup operators", "server operators", "print operators",
+    "dnsadmins", "group policy creator owners", "protected users",
+    "enterprise key admins", "key admins@", "cert publishers",
+)
 global_findings = []
 def add_finding(category, details, score=None):
     if score is None:
         score = SEVERITY_SCORES.get(category, 5)
     global_findings.append((score, category, details))
-def print_prioritized_findings():
-    if not global_findings:
-        return
-    console.rule("[bold magenta]Prioritized Findings by Severity[/bold magenta]")
+def print_prioritized_findings(show_all=False):
+    """
+    Print findings summary table at end of run.
+
+    Default: top 20 by severity (skipped when empty).
+    show_all / --all-findings: always print a table of every finding,
+    including an empty-state row when nothing was recorded.
+    """
     sorted_findings = sorted(global_findings, key=lambda x: x[0], reverse=True)
+    if show_all:
+        console.rule("[bold magenta]All Findings by Severity[/bold magenta]")
+        title = f"All Findings · {__org__} ({len(sorted_findings)})"
+        rows = sorted_findings
+    else:
+        if not global_findings:
+            return
+        console.rule("[bold magenta]Prioritized Findings by Severity[/bold magenta]")
+        title = f"Findings Summary · {__org__}"
+        rows = sorted_findings[:20]
     table = Table(
-        title=f"Findings Summary · {__org__}",
+        title=title,
         show_header=True,
         header_style="bold red",
     )
+    table.add_column("#", style="dim", justify="right")
     table.add_column("Severity Score", style="red", justify="right")
     table.add_column("Category", style="cyan")
-    table.add_column("Details", style="yellow")
-    for score, cat, det in sorted_findings[:20]:
-        table.add_row(str(score), cat, det)
+    table.add_column("Details", style="yellow", overflow="fold")
+    if not rows:
+        table.add_row("—", "—", "(none)", "No findings recorded")
+    else:
+        for i, (score, cat, det) in enumerate(rows, 1):
+            table.add_row(str(i), str(score), cat, det)
     console.print(table)
-    if len(sorted_findings) > 20:
-        console.print(f"[dim]... and {len(sorted_findings) - 20} more[/dim]")
+    if not show_all and len(sorted_findings) > 20:
+        console.print(
+            f"[dim]... and {len(sorted_findings) - 20} more "
+            f"(pass --all-findings to list every finding)[/dim]"
+        )
+    elif show_all:
+        console.print(f"[dim]Total findings: {len(sorted_findings)}[/dim]")
 # ────────────────────────────────────────────────
 # Intro Banner
 # ────────────────────────────────────────────────
@@ -982,11 +1036,31 @@ def print_password_not_required(G, domain_filter=None):
     else:
         console.print("[green]No users with 'Password Not Required' found[/green]")
 
+def _is_expected_key_credential_holder(name: str) -> bool:
+    """
+    Principals that legitimately hold AddKeyCredentialLink / key-admin rights
+    in most domains (Windows Hello / Key Admins). Not interesting as shadow-cred
+    attack paths by themselves.
+    """
+    if not name:
+        return False
+    if _is_default_high_priv_name(name):
+        return True
+    nl = str(name).lower()
+    expected = (
+        "key admins@",
+        "enterprise key admins",
+        "key admins ",
+        "msol_",  # Azure AD Connect sync accounts often have broad rights
+    )
+    return any(x in nl for x in expected)
+
+
 def print_shadow_credentials(G, domain_filter=None):
     console.rule("[bold magenta]Shadow Credentials Detection (AD)[/bold magenta]")
     # Primary signal: AddKeyCredentialLink (direct msDS-KeyCredentialLink write).
     # Secondary: GenericAll/WriteDacl/WriteOwner/GenericWrite from *non-default*
-    # principals only (Domain Admins etc. create massive noise otherwise).
+    # principals only (Domain Admins / Key Admins create massive noise otherwise).
     # Existing KeyCredentialLink values are informational (often Windows Hello).
     found_abuse = False
     found_existing = False
@@ -997,6 +1071,10 @@ def print_shadow_credentials(G, domain_filter=None):
         'writeowner',
         'writedacl',
     }
+    # Collect (principal, label, is_primary) -> list of target display names
+    primary_hits = []  # list of (uname, label, tname, ttype)
+    secondary_agg = defaultdict(list)  # (uname, label) -> [tname, ...]
+
     targets = []
     for n, d in G.nodes(data=True):
         if d.get('is_azure', False):
@@ -1006,32 +1084,69 @@ def print_shadow_credentials(G, domain_filter=None):
         if d.get('type', '').lower() not in ('user', 'computer'):
             continue
         targets.append(n)
+
     for tid in targets:
         tname = G.nodes[tid]['name']
         ttype = G.nodes[tid]['type']
         for u, _, edata in G.in_edges(tid, data=True):
             label = edata.get('label') or ''
             ll = label.lower()
-            uname = G.nodes[u]['name']
-            if ll in primary_labels:
-                pass  # always report
-            elif ll in secondary_labels:
-                if _is_default_high_priv_name(uname):
-                    continue
-            else:
+            if ll not in primary_labels and ll not in secondary_labels:
                 continue
-            found_abuse = True
-            score = 8 if ll in primary_labels else 6
+            uname = G.nodes[u]['name']
+            # Skip built-in / key-admin principals for *all* shadow-cred rights
+            if _is_expected_key_credential_holder(uname):
+                continue
+            if ll in primary_labels:
+                primary_hits.append((uname, label, tname, ttype))
+            else:
+                secondary_agg[(uname, label)].append(tname)
+
+    # Primary: one finding per edge (should be rare after noise filter)
+    for uname, label, tname, ttype in primary_hits:
+        found_abuse = True
+        console.print(
+            f"[red]Shadow Credentials abuse right[/red]: "
+            f"[green]{uname}[/green] --[{label}]--> "
+            f"[cyan]{tname}[/cyan] ({ttype})"
+        )
+        add_finding(
+            "Shadow Credentials",
+            f"{uname} has {label} on {tname} (shadow credential path)",
+            score=8,
+        )
+
+    # Secondary: aggregate per principal+right to avoid 100s of near-identical rows
+    max_secondary_detail = 30
+    secondary_items = sorted(
+        secondary_agg.items(),
+        key=lambda kv: len(kv[1]),
+        reverse=True,
+    )
+    for i, ((uname, label), tnames) in enumerate(secondary_items):
+        found_abuse = True
+        n_targets = len(tnames)
+        examples = ", ".join(tnames[:3])
+        extra = f" … +{n_targets - 3} more" if n_targets > 3 else ""
+        if i < max_secondary_detail:
             console.print(
-                f"[red]Shadow Credentials abuse right[/red]: "
+                f"[yellow]Shadow Credentials ACL path[/yellow]: "
                 f"[green]{uname}[/green] --[{label}]--> "
-                f"[cyan]{tname}[/cyan] ({ttype})"
+                f"[cyan]{n_targets}[/cyan] principal(s) "
+                f"[dim]({examples}{extra})[/dim]"
             )
-            add_finding(
-                "Shadow Credentials",
-                f"{uname} has {label} on {tname} (shadow credential path)",
-                score=score,
-            )
+        add_finding(
+            "Shadow Credentials",
+            f"{uname} has {label} on {n_targets} principal(s) "
+            f"(e.g. {examples}{extra}) — possible shadow credential path",
+            score=6,
+        )
+    if len(secondary_items) > max_secondary_detail:
+        console.print(
+            f"[dim]… and {len(secondary_items) - max_secondary_detail} more "
+            f"secondary ACL principal/right pairs (see findings table)[/dim]"
+        )
+
     # Informational: objects that already have key credentials populated
     for n, d in G.nodes(data=True):
         if d.get('is_azure', False):
@@ -1061,7 +1176,7 @@ def print_shadow_credentials(G, domain_filter=None):
         console.print("[green]No Shadow Credentials abuse rights or existing KeyCredentialLink found[/green]")
     elif not found_abuse and found_existing:
         console.print(
-            "[dim]No AddKeyCredentialLink abuse rights found; "
+            "[dim]No non-default AddKeyCredentialLink / ACL abuse rights found; "
             "existing KeyCredentialLink entries listed above are informational only[/dim]"
         )
 
@@ -1965,8 +2080,7 @@ def print_dangerous_permissions(G, domain_filter=None, indirect=False):
 
 def print_kerberoastable(G, domain_filter=None):
     console.rule("[bold magenta]Kerberoastable Accounts (AD)[/bold magenta]")
-    found = False
-    count = 0
+    hits = []
     max_display = 20
     for n, d in G.nodes(data=True):
         if d.get('is_azure', False):
@@ -1979,27 +2093,30 @@ def print_kerberoastable(G, domain_filter=None):
         hasspn = get_bool_prop_ci(props, ['hasspn', 'hasSPN', 'has_spn'])
         sensitive = props.get('sensitive', props.get('Sensitive', False))
         enabled = props.get('enabled', props.get('Enabled', True))
+        # krbtgt always has an SPN but is not a practical Kerberoast target here
+        name = d.get('name') or ''
+        if name.upper().startswith('KRBTGT@') or name.upper() == 'KRBTGT':
+            continue
         if hasspn and not sensitive and enabled:
-            found = True
-            uac_raw = props.get('useraccountcontrol') or props.get('UserAccountControl')
-            uac_str = f" | UAC: {decode_uac(uac_raw)}" if uac_raw is not None else ""
+            hits.append(d)
+    for i, d in enumerate(hits):
+        props = d.get('props') or {}
+        uac_raw = props.get('useraccountcontrol') or props.get('UserAccountControl')
+        uac_str = f" | UAC: {decode_uac(uac_raw)}" if uac_raw is not None else ""
+        if i < max_display:
             console.print(f"  • [cyan]{d['name']}[/cyan]{uac_str}")
-            count += 1
-            if count >= max_display:
-                remaining = sum(1 for n_inner, d_inner in G.nodes(data=True) if d_inner.get('type', '').lower() == 'user' and get_bool_prop_ci(d_inner.get('props', {}), ['hasspn', 'hasSPN', 'has_spn']) and not d_inner.get('props', {}).get('sensitive', d_inner.get('props', {}).get('Sensitive', False)) and d_inner.get('props', {}).get('enabled', d_inner.get('props', {}).get('Enabled', True))) - max_display
-                if remaining > 0:
-                    console.print(f"  [dim]... and {remaining} more[/dim]")
-                break
-    if found:
+        # One findings-table row per account (not a single aggregated count)
+        add_finding("Kerberoastable", f"{d['name']} has SPN (Kerberoastable)", score=5)
+    if len(hits) > max_display:
+        console.print(f"  [dim]... and {len(hits) - max_display} more[/dim]")
+    if hits:
         print_abuse_panel("Kerberoastable")
-        add_finding("Kerberoastable", f"{count} accounts")
     else:
         console.print("[green]None found[/green]")
 
 def print_as_rep_roastable(G, domain_filter=None):
     console.rule("[bold magenta]AS-REP Roastable Accounts (DONT_REQ_PREAUTH) (AD)[/bold magenta]")
-    found = False
-    count = 0
+    hits = []
     max_display = 20
     for n, d in G.nodes(data=True):
         if d.get('is_azure', False):
@@ -2013,19 +2130,22 @@ def print_as_rep_roastable(G, domain_filter=None):
         sensitive = props.get('sensitive', props.get('Sensitive', False))
         enabled = props.get('enabled', props.get('Enabled', True))
         if dontreqpreauth and not sensitive and enabled:
-            found = True
-            uac_raw = props.get('useraccountcontrol') or props.get('UserAccountControl')
-            uac_str = f" | UAC: {decode_uac(uac_raw)}" if uac_raw is not None else ""
+            hits.append(d)
+    for i, d in enumerate(hits):
+        props = d.get('props') or {}
+        uac_raw = props.get('useraccountcontrol') or props.get('UserAccountControl')
+        uac_str = f" | UAC: {decode_uac(uac_raw)}" if uac_raw is not None else ""
+        if i < max_display:
             console.print(f"  • [cyan]{d['name']}[/cyan]{uac_str}")
-            count += 1
-            if count >= max_display:
-                remaining = sum(1 for n_inner, d_inner in G.nodes(data=True) if d_inner.get('type', '').lower() == 'user' and get_bool_prop_ci(d_inner.get('props', {}), ['dontreqpreauth', 'dontReqPreauth', 'dont_req_preauth']) and not d_inner.get('props', {}).get('sensitive', d_inner.get('props', {}).get('Sensitive', False)) and d_inner.get('props', {}).get('enabled', d_inner.get('props', {}).get('Enabled', True))) - max_display
-                if remaining > 0:
-                    console.print(f"  [dim]... and {remaining} more[/dim]")
-                break
-    if found:
+        add_finding(
+            "AS-REP Roastable",
+            f"{d['name']} has DONT_REQ_PREAUTH (AS-REP roastable)",
+            score=5,
+        )
+    if len(hits) > max_display:
+        console.print(f"  [dim]... and {len(hits) - max_display} more[/dim]")
+    if hits:
         print_abuse_panel("AS-REP Roastable")
-        add_finding("AS-REP Roastable", f"{count} accounts")
     else:
         console.print("[green]None found[/green]")
 
@@ -2423,6 +2543,1018 @@ def print_azure_service_principal_abuse(G, domain_filter=None):
         console.print("[green]No Azure service principals with abuse potential detected[/green]")
 
 # ────────────────────────────────────────────────
+# Logging / profiles / inventory / path remediation
+# ────────────────────────────────────────────────
+def setup_run_logging(log_file: Optional[str] = None) -> Optional[str]:
+    """Attach a file handler for run auditability. Returns resolved log path."""
+    if not log_file:
+        return None
+    path = os.path.abspath(log_file)
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    root = logging.getLogger()
+    # Avoid duplicate handlers when tests call setup repeatedly
+    for h in list(root.handlers):
+        if getattr(h, "_bloodbash_run_log", False):
+            root.removeHandler(h)
+            h.close()
+    handler = logging.FileHandler(path, encoding="utf-8")
+    handler._bloodbash_run_log = True  # type: ignore[attr-defined]
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    ))
+    root.setLevel(logging.INFO)
+    logger.setLevel(logging.INFO)
+    root.addHandler(handler)
+    logger.info("BloodBash v%s run log started", __version__)
+    return path
+
+
+def _builtin_profiles_dir() -> Path:
+    try:
+        base = Path(__file__).resolve().parent
+    except NameError:
+        # BloodBash is often exec()'d in tests without __file__
+        base = Path.cwd()
+    return base / "profiles"
+
+
+def load_analysis_profile(profile_path: str) -> dict:
+    """Load a YAML analysis profile (PlumHound TaskList analogue)."""
+    path = Path(profile_path)
+    if not path.is_file():
+        # Allow short names that resolve under profiles/
+        candidate = _builtin_profiles_dir() / profile_path
+        if not candidate.suffix:
+            candidate = candidate.with_suffix(".yaml")
+        if candidate.is_file():
+            path = candidate
+        else:
+            raise FileNotFoundError(f"Profile not found: {profile_path}")
+    with open(path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"Profile must be a YAML mapping: {path}")
+    logger.info("Loaded analysis profile: %s", path)
+    return data
+
+
+def apply_profile_to_args(args, profile: dict):
+    """Merge profile keys into argparse namespace (CLI flags win when already set)."""
+    if not profile:
+        return args
+    check_flags = {
+        "shortest_paths", "dangerous_permissions", "adcs", "gpo_abuse", "dcsync",
+        "rbcd", "sessions", "kerberoastable", "as_rep_roastable", "sid_history",
+        "unconstrained_delegation", "password_descriptions", "password_never_expires",
+        "password_not_required", "shadow_credentials", "gpo_parsing",
+        "constrained_delegation", "laps", "azure_privileged_roles", "azure_app_secrets",
+        "azure_mfa_bypass", "azure_guest_access", "azure_sp_abuse", "deep_analysis",
+        "password_age", "stale_accounts", "privilege_inventory", "owned_inventory",
+        "inventory", "path_break", "busiest_paths",
+    }
+    checks = profile.get("checks") or profile.get("flags") or []
+    if isinstance(checks, list):
+        for raw in checks:
+            key = str(raw).strip().lstrip("-").replace("-", "_")
+            if key in check_flags and not getattr(args, key, False):
+                setattr(args, key, True)
+    for key in check_flags:
+        if key in profile and not getattr(args, key, False):
+            setattr(args, key, profile[key])
+    # Scalar options: profile fills defaults only when CLI left them unset/default
+    scalar_defaults = {
+        "all": False,
+        "fast": False,
+        "verbose": False,
+        "indirect": False,
+        "domain": None,
+        "owned": None,
+        "export": None,
+        "export_bh": False,
+        "dot": None,
+        "db": None,
+        "path_from": None,
+        "path_to": None,
+        "inspect": None,
+        "gpo_content_dir": None,
+        "busiest_paths": None,
+        "busiest_paths_top": 5,
+        "path_break": False,
+        "path_break_top": 15,
+        "inventory": False,
+        "password_age": False,
+        "stale_accounts": False,
+        "privilege_inventory": False,
+        "owned_inventory": False,
+        "report_pack": None,
+        "export_zip": None,
+        "log_file": None,
+        "all_findings": False,
+    }
+    for key, default in scalar_defaults.items():
+        if key not in profile:
+            continue
+        if not hasattr(args, key):
+            continue
+        current = getattr(args, key)
+        if current == default or current is None or current is False:
+            setattr(args, key, profile[key])
+    # Profile-friendly aliases
+    if profile.get("report_pack") and not getattr(args, "report_pack", None):
+        args.report_pack = profile["report_pack"]
+    if profile.get("export_dir") and not getattr(args, "report_pack", None):
+        args.report_pack = profile["export_dir"]
+    if profile.get("zip") and not getattr(args, "export_zip", None):
+        args.export_zip = profile["zip"]
+    return args
+
+
+def parse_ad_timestamp(value) -> Optional[float]:
+    """Parse SharpHound pwdlastset/lastlogon values (unix seconds or Windows FILETIME)."""
+    if value is None:
+        return None
+    try:
+        v = int(value)
+    except (TypeError, ValueError):
+        return None
+    if v in (0, -1):
+        return None
+    # Windows FILETIME (100ns since 1601) is typically >> unix seconds
+    if v > 10_000_000_000:
+        return (v / 10_000_000.0) - 11644473600.0
+    return float(v)
+
+
+def _days_since(ts: Optional[float], now: Optional[float] = None) -> Optional[float]:
+    if ts is None:
+        return None
+    now = time.time() if now is None else now
+    return max(0.0, (now - ts) / 86400.0)
+
+
+def _domain_matches(d: dict, domain_filter: Optional[str]) -> bool:
+    if not domain_filter:
+        return True
+    props = d.get("props") or {}
+    return props.get("domain") == domain_filter or props.get("tenantId") == domain_filter
+
+
+def _priority_high_value_targets(G, domain_filter=None, limit=5):
+    targets = get_high_value_targets(G, domain_filter)
+    priority_kw = (
+        "domain admins", "enterprise admins", "schema admins", "krbtgt",
+        "global admin", "privileged role admin",
+    )
+    prioritized = [t for t in targets if any(k in t[1].lower() for k in priority_kw)]
+    return (prioritized or targets)[:limit]
+
+
+def _edge_label(G, u, v) -> str:
+    edges = G.get_edge_data(u, v)
+    if not edges:
+        return "???"
+    return next(iter(edges.values())).get("label", "???")
+
+
+def _path_edge_keys(G, path) -> List[Tuple[str, str, str]]:
+    keys = []
+    for i in range(len(path) - 1):
+        u, v = path[i], path[i + 1]
+        keys.append((u, v, _edge_label(G, u, v)))
+    return keys
+
+
+def collect_paths_to_high_value(
+    G,
+    domain_filter=None,
+    mode: str = "short",
+    max_targets: int = 3,
+    max_sources: int = 200,
+    cutoff: int = 10,
+    now: Optional[float] = None,
+) -> List[dict]:
+    """Collect attack paths from users to priority high-value targets."""
+    del now  # reserved for future time-aware scoring
+    users = [
+        n for n, d in G.nodes(data=True)
+        if d.get("type", "").lower() in ("user", "azure user") and _domain_matches(d, domain_filter)
+    ]
+    targets = _priority_high_value_targets(G, domain_filter, limit=max_targets)
+    results = []
+    mode = (mode or "short").lower()
+    for tid, tname, ttype in targets:
+        try:
+            lengths = nx.single_source_shortest_path_length(G.reverse(copy=False), tid, cutoff=cutoff)
+        except Exception:
+            lengths = {}
+        candidates = sorted(
+            ((lengths[s], s) for s in users if s in lengths and s != tid),
+            key=lambda x: x[0],
+        )[:max_sources]
+        for _, source in candidates:
+            try:
+                if mode == "all":
+                    paths_iter = list(nx.all_simple_paths(G, source, tid, cutoff=min(cutoff, 8)))
+                    # Cap explosion
+                    paths_iter = paths_iter[:5]
+                else:
+                    paths_iter = [nx.shortest_path(G, source, tid)]
+            except (nx.NetworkXNoPath, nx.NodeNotFound):
+                continue
+            for path in paths_iter:
+                results.append({
+                    "source_id": source,
+                    "source": G.nodes[source]["name"],
+                    "target_id": tid,
+                    "target": tname,
+                    "target_type": ttype,
+                    "length": len(path) - 1,
+                    "path": path,
+                    "path_str": " -> ".join(
+                        f"{G.nodes[n]['name']}" + (
+                            f" -[{_edge_label(G, path[i], path[i+1])}]>" if i < len(path) - 1 else ""
+                        )
+                        for i, n in enumerate(path)
+                    ),
+                })
+    return results
+
+
+def collect_busiest_paths(
+    G,
+    mode: str = "short",
+    top: int = 5,
+    domain_filter=None,
+    fast: bool = False,
+) -> List[dict]:
+    """
+    Rank intermediate principals by how many shortest (or all) paths to high-value
+    targets pass through them (PlumHound/BlueHound-style busiest-path analysis).
+    """
+    max_sources = 80 if fast else 200
+    max_targets = 2 if fast else 3
+    paths = collect_paths_to_high_value(
+        G,
+        domain_filter=domain_filter,
+        mode=mode,
+        max_targets=max_targets,
+        max_sources=max_sources,
+        cutoff=8 if fast else 10,
+    )
+    node_counts = Counter()
+    node_targets = defaultdict(set)
+    target_ids = {p["target_id"] for p in paths}
+    for p in paths:
+        intermediates = p["path"][1:-1]  # exclude source and final target
+        for nid in intermediates:
+            if nid in target_ids:
+                continue
+            node_counts[nid] += 1
+            node_targets[nid].add(p["target"])
+    # Also rank source users by path count (enablers with many routes)
+    source_counts = Counter(p["source_id"] for p in paths)
+    ranked = []
+    for nid, count in node_counts.most_common(top):
+        ranked.append({
+            "kind": "intermediate",
+            "id": nid,
+            "name": G.nodes[nid]["name"],
+            "type": G.nodes[nid].get("type", "?"),
+            "path_count": count,
+            "targets": sorted(node_targets[nid]),
+        })
+    # Fill with top sources if fewer intermediates
+    if len(ranked) < top:
+        for sid, count in source_counts.most_common(top):
+            if any(r["id"] == sid for r in ranked):
+                continue
+            ranked.append({
+                "kind": "source",
+                "id": sid,
+                "name": G.nodes[sid]["name"],
+                "type": G.nodes[sid].get("type", "?"),
+                "path_count": count,
+                "targets": sorted({p["target"] for p in paths if p["source_id"] == sid}),
+            })
+            if len(ranked) >= top:
+                break
+    return ranked[:top]
+
+
+def collect_path_breaks(
+    G,
+    domain_filter=None,
+    top: int = 15,
+    fast: bool = False,
+) -> List[dict]:
+    """
+    Identify edges whose removal would break the most collected attack paths
+    (PlumHound Analyze Path / path-destroyer style remediation hints).
+    """
+    paths = collect_paths_to_high_value(
+        G,
+        domain_filter=domain_filter,
+        mode="short",
+        max_targets=2 if fast else 3,
+        max_sources=60 if fast else 150,
+        cutoff=8 if fast else 10,
+    )
+    edge_paths = defaultdict(set)  # edge_key -> set of source ids broken
+    edge_examples = {}
+    for p in paths:
+        for u, v, label in _path_edge_keys(G, p["path"]):
+            key = (u, v, label)
+            edge_paths[key].add(p["source_id"])
+            if key not in edge_examples:
+                edge_examples[key] = p
+    ranked = []
+    for (u, v, label), sources in sorted(edge_paths.items(), key=lambda kv: len(kv[1]), reverse=True):
+        example = edge_examples[(u, v, label)]
+        ranked.append({
+            "from_id": u,
+            "to_id": v,
+            "from": G.nodes[u]["name"],
+            "to": G.nodes[v]["name"],
+            "relationship": label,
+            "paths_broken": len(sources),
+            "example_source": example["source"],
+            "example_target": example["target"],
+            "recommendation": (
+                f"Remove relationship {label} between {G.nodes[u]['name']} and "
+                f"{G.nodes[v]['name']} (breaks {len(sources)} path(s) toward high-value)"
+            ),
+        })
+        if len(ranked) >= top:
+            break
+    return ranked
+
+
+def print_busiest_paths(G, mode="short", top=5, domain_filter=None, fast=False):
+    console.rule("[bold magenta]Busiest Paths to High-Value Targets[/bold magenta]")
+    ranked = collect_busiest_paths(G, mode=mode, top=top, domain_filter=domain_filter, fast=fast)
+    if not ranked:
+        console.print("[yellow]No busiest paths found (no user paths to high-value targets)[/yellow]")
+        return ranked
+    table = Table(title=f"Top {top} busiest principals ({mode})", show_header=True, header_style="bold red")
+    table.add_column("Rank", justify="right")
+    table.add_column("Principal", style="cyan")
+    table.add_column("Type")
+    table.add_column("Kind")
+    table.add_column("Path count", justify="right", style="red")
+    table.add_column("Targets", style="green")
+    for i, row in enumerate(ranked, 1):
+        table.add_row(
+            str(i),
+            row["name"],
+            str(row["type"]),
+            row["kind"],
+            str(row["path_count"]),
+            ", ".join(row["targets"][:3]),
+        )
+    console.print(table)
+    add_finding("Busiest Paths", f"Top principal {ranked[0]['name']} on {ranked[0]['path_count']} path(s)", score=7)
+    print_abuse_panel("Dangerous Permissions")
+    return ranked
+
+
+def print_path_breaks(G, domain_filter=None, top=15, fast=False):
+    console.rule("[bold magenta]Path Break Remediation (edges to remove)[/bold magenta]")
+    ranked = collect_path_breaks(G, domain_filter=domain_filter, top=top, fast=fast)
+    if not ranked:
+        console.print("[yellow]No path-break recommendations (no attack paths found)[/yellow]")
+        return ranked
+    for i, row in enumerate(ranked, 1):
+        console.print(
+            f"  [bold]{i}.[/bold] Removing [yellow]{row['relationship']}[/yellow] between "
+            f"[cyan]{row['from']}[/cyan] and [cyan]{row['to']}[/cyan] breaks "
+            f"[red]{row['paths_broken']}[/red] path(s) "
+            f"[dim](e.g. {row['example_source']} → {row['example_target']})[/dim]"
+        )
+    add_finding(
+        "Path Break",
+        f"{ranked[0]['relationship']} {ranked[0]['from']} → {ranked[0]['to']} "
+        f"breaks {ranked[0]['paths_broken']} path(s)",
+        score=8,
+    )
+    return ranked
+
+
+def _assign_age_bucket(days: Optional[float], bucket_defs) -> str:
+    if days is None:
+        return "Never set / unknown"
+    for label, lo, hi in bucket_defs:
+        if label.startswith("<"):
+            if hi is not None and lo <= days < hi:
+                return label
+        else:
+            if days > lo and (hi is None or days <= hi):
+                return label
+    if days >= 30:
+        return "30 days – 6 months"
+    return "Other"
+
+
+def collect_password_age_rows(G, domain_filter=None, now: Optional[float] = None) -> List[dict]:
+    now = time.time() if now is None else now
+    rows = []
+    for n, d in G.nodes(data=True):
+        if d.get("is_azure", False) or d.get("type", "").lower() != "user":
+            continue
+        if not _domain_matches(d, domain_filter):
+            continue
+        props = d.get("props") or {}
+        ts = parse_ad_timestamp(_prop_raw_ci(props, ["pwdlastset", "pwdLastSet", "passwordlastset"]))
+        days = _days_since(ts, now)
+        bucket = _assign_age_bucket(days, PASSWORD_AGE_BUCKETS) if days is not None else "Never set / unknown"
+        rows.append({
+            "name": d["name"],
+            "enabled": bool(props.get("enabled", props.get("Enabled", True))),
+            "pwdlastset_unix": ts,
+            "days_old": None if days is None else round(days, 1),
+            "bucket": bucket,
+        })
+    return rows
+
+
+def collect_stale_account_rows(G, domain_filter=None, now: Optional[float] = None) -> List[dict]:
+    now = time.time() if now is None else now
+    rows = []
+    for n, d in G.nodes(data=True):
+        if d.get("is_azure", False) or d.get("type", "").lower() != "user":
+            continue
+        if not _domain_matches(d, domain_filter):
+            continue
+        props = d.get("props") or {}
+        ts = parse_ad_timestamp(
+            _prop_raw_ci(props, ["lastlogontimestamp", "lastLogonTimestamp", "lastlogon", "lastLogon"])
+        )
+        days = _days_since(ts, now)
+        if days is None:
+            bucket = "Never active / unknown"
+        elif days <= 180:
+            bucket = "Active < 6 months"
+        else:
+            bucket = "Inactive > 6 months"
+            for label, lo, hi in STALE_ACCOUNT_BUCKETS:
+                if days > lo and (hi is None or days <= hi):
+                    bucket = label
+        rows.append({
+            "name": d["name"],
+            "enabled": bool(props.get("enabled", props.get("Enabled", True))),
+            "lastlogon_unix": ts,
+            "days_inactive": None if days is None else round(days, 1),
+            "bucket": bucket,
+        })
+    return rows
+
+
+def collect_privilege_inventory(G, domain_filter=None) -> List[dict]:
+    rows = []
+    for n, d in G.nodes(data=True):
+        if d.get("type", "").lower() != "group":
+            continue
+        if not _domain_matches(d, domain_filter):
+            continue
+        name = d.get("name", "")
+        nl = name.lower()
+        if not any(k in nl for k in PRIVILEGE_GROUP_KEYWORDS) and not get_bool_prop_ci(d.get("props") or {}, ["highvalue", "HighValue"]):
+            continue
+        members = []
+        for pred in G.predecessors(n):
+            edge_data = G.get_edge_data(pred, n) or {}
+            if any((ed or {}).get("label") == "MemberOf" for ed in edge_data.values()):
+                members.append(G.nodes[pred]["name"])
+        rows.append({
+            "group": name,
+            "type": d.get("type"),
+            "member_count": len(members),
+            "members": sorted(members),
+            "highvalue": get_bool_prop_ci(d.get("props") or {}, ["highvalue", "HighValue"]),
+        })
+    rows.sort(key=lambda r: (-r["member_count"], r["group"]))
+    return rows
+
+
+def collect_owned_inventory(G, owned_str: str, domain_filter=None) -> List[dict]:
+    if not owned_str:
+        return []
+    owned_list = [o.strip() for o in owned_str.split(",") if o.strip()]
+    owned_oids = []
+    for o in owned_list:
+        for oid, d in G.nodes(data=True):
+            uname = d.get("name", "")
+            if uname.upper().split("@")[0] == o.upper() or uname.upper() == o.upper():
+                if _domain_matches(d, domain_filter):
+                    owned_oids.append(oid)
+                    break
+    rows = []
+    for oid in owned_oids:
+        d = G.nodes[oid]
+        admin_to = []
+        member_of = []
+        for _, v, ed in G.out_edges(oid, data=True):
+            label = (ed or {}).get("label", "")
+            if label in ("AdminTo", "LocalAdmin", "GenericAll"):
+                admin_to.append(f"{G.nodes[v]['name']} [{label}]")
+            if label == "MemberOf":
+                member_of.append(G.nodes[v]["name"])
+        rows.append({
+            "name": d.get("name"),
+            "type": d.get("type"),
+            "admin_to": sorted(admin_to),
+            "member_of": sorted(member_of),
+            "admin_to_count": len(admin_to),
+            "member_of_count": len(member_of),
+        })
+    return rows
+
+
+def collect_structural_inventory(G, domain_filter=None) -> Dict[str, List[dict]]:
+    domains, dcs, trusts, computers, users = [], [], [], [], []
+    for n, d in G.nodes(data=True):
+        if not _domain_matches(d, domain_filter):
+            continue
+        typ = d.get("type", "").lower()
+        props = d.get("props") or {}
+        row = {"name": d.get("name"), "type": d.get("type")}
+        if typ == "domain":
+            domains.append(row)
+        elif typ == "computer":
+            computers.append(row)
+            name = (d.get("name") or "").lower()
+            if "domain controller" in name or get_bool_prop_ci(props, ["isdc", "IsDC"]) or "dc=" in str(props.get("distinguishedname", "")).lower() and "ou=domain controllers" in str(props.get("distinguishedname", "")).lower():
+                dcs.append(row)
+            # Common DC naming / highvalue
+            if get_bool_prop_ci(props, ["highvalue"]) and typ == "computer":
+                if row not in dcs:
+                    dcs.append(row)
+        elif typ == "user":
+            users.append(row)
+    for u, v, ed in G.edges(data=True):
+        label = (ed or {}).get("label", "")
+        if label and "trust" in label.lower():
+            if _domain_matches(G.nodes[u], domain_filter) or _domain_matches(G.nodes[v], domain_filter):
+                trusts.append({
+                    "from": G.nodes[u]["name"],
+                    "to": G.nodes[v]["name"],
+                    "type": label,
+                })
+    # Domain Trusts[] prop edges may already be graph edges from build_graph
+    return {
+        "domains": domains,
+        "domain_controllers": dcs,
+        "trusts": trusts,
+        "users_count": [{"count": len(users)}],
+        "computers_count": [{"count": len(computers)}],
+    }
+
+
+def print_password_age_inventory(G, domain_filter=None, now: Optional[float] = None):
+    console.rule("[bold magenta]Password Age Inventory (AD)[/bold magenta]")
+    rows = collect_password_age_rows(G, domain_filter=domain_filter, now=now)
+    if not rows:
+        console.print("[yellow]No user objects for password-age inventory[/yellow]")
+        return rows
+    counts = Counter(r["bucket"] for r in rows)
+    table = Table(title="Password age buckets", show_header=True, header_style="bold magenta")
+    table.add_column("Bucket", style="cyan")
+    table.add_column("Count", justify="right")
+    for label, _, _ in PASSWORD_AGE_BUCKETS:
+        table.add_row(label, str(counts.get(label, 0)))
+    table.add_row("Never set / unknown", str(counts.get("Never set / unknown", 0)))
+    table.add_row("30 days – 6 months", str(counts.get("30 days – 6 months", 0)))
+    console.print(table)
+    interesting = sum(counts[b] for b in counts if b.startswith(">") or b == "Never set / unknown")
+    if interesting:
+        add_finding("Password Age", f"{interesting} users with old/unknown passwords", score=5)
+        # show a few oldest
+        old = [r for r in rows if r.get("days_old") is not None]
+        old.sort(key=lambda r: r["days_old"], reverse=True)
+        for r in old[:10]:
+            console.print(f"  • [cyan]{r['name']}[/cyan] — {r['days_old']} days ({r['bucket']})")
+    else:
+        console.print("[green]No extreme password-age outliers in ladders[/green]")
+    return rows
+
+
+def print_stale_account_inventory(G, domain_filter=None, now: Optional[float] = None):
+    console.rule("[bold magenta]Stale / Inactive Account Inventory (AD)[/bold magenta]")
+    rows = collect_stale_account_rows(G, domain_filter=domain_filter, now=now)
+    if not rows:
+        console.print("[yellow]No user objects for stale-account inventory[/yellow]")
+        return rows
+    counts = Counter(r["bucket"] for r in rows)
+    table = Table(title="Inactivity buckets", show_header=True, header_style="bold magenta")
+    table.add_column("Bucket", style="cyan")
+    table.add_column("Count", justify="right")
+    for label in ["Active < 6 months", "Never active / unknown"] + [b[0] for b in STALE_ACCOUNT_BUCKETS]:
+        table.add_row(label, str(counts.get(label, 0)))
+    console.print(table)
+    stale = sum(v for k, v in counts.items() if k.startswith("Inactive") or k.startswith("Never"))
+    if stale:
+        add_finding("Stale Accounts", f"{stale} inactive/never-active users", score=4)
+        show = [r for r in rows if r["bucket"] != "Active < 6 months"][:15]
+        for r in show:
+            days = r["days_inactive"] if r["days_inactive"] is not None else "?"
+            console.print(f"  • [cyan]{r['name']}[/cyan] — {days} days inactive ({r['bucket']})")
+    else:
+        console.print("[green]No stale accounts detected in ladders[/green]")
+    return rows
+
+
+def print_privilege_inventory(G, domain_filter=None):
+    console.rule("[bold magenta]Privilege Group Inventory[/bold magenta]")
+    rows = collect_privilege_inventory(G, domain_filter=domain_filter)
+    if not rows:
+        console.print("[yellow]No privilege groups matched[/yellow]")
+        return rows
+    for r in rows:
+        console.print(
+            f"  • [cyan]{r['group']}[/cyan] — [red]{r['member_count']}[/red] members"
+            + (" [yellow](highvalue)[/yellow]" if r["highvalue"] else "")
+        )
+        for m in r["members"][:8]:
+            console.print(f"      - [green]{m}[/green]")
+        if r["member_count"] > 8:
+            console.print(f"      [dim]... and {r['member_count'] - 8} more[/dim]")
+    add_finding("Privilege Inventory", f"{len(rows)} privileged groups inventoried", score=6)
+    return rows
+
+
+def print_owned_inventory(G, owned_str, domain_filter=None):
+    console.rule("[bold magenta]Owned Principal Inventory[/bold magenta]")
+    rows = collect_owned_inventory(G, owned_str, domain_filter=domain_filter)
+    if not rows:
+        console.print("[yellow]No owned principals resolved for inventory[/yellow]")
+        return rows
+    for r in rows:
+        console.print(f"  [bold cyan]{r['name']}[/bold cyan] ({r['type']})")
+        console.print(f"    AdminTo/control: {r['admin_to_count']}")
+        for a in r["admin_to"][:10]:
+            console.print(f"      - [yellow]{a}[/yellow]")
+        console.print(f"    MemberOf: {r['member_of_count']}")
+        for m in r["member_of"][:10]:
+            console.print(f"      - [green]{m}[/green]")
+    add_finding("Owned Inventory", f"Inventory for {len(rows)} owned principal(s)", score=7)
+    return rows
+
+
+def print_structural_inventory(G, domain_filter=None):
+    console.rule("[bold magenta]Structural Inventory[/bold magenta]")
+    data = collect_structural_inventory(G, domain_filter=domain_filter)
+    console.print(f"  Domains: [cyan]{len(data['domains'])}[/cyan]")
+    for d in data["domains"][:20]:
+        console.print(f"    • {d['name']}")
+    console.print(f"  Domain Controllers (heuristic): [cyan]{len(data['domain_controllers'])}[/cyan]")
+    for d in data["domain_controllers"][:20]:
+        console.print(f"    • {d['name']}")
+    console.print(f"  Trust edges: [cyan]{len(data['trusts'])}[/cyan]")
+    for t in data["trusts"][:20]:
+        console.print(f"    • {t['from']} -[{t['type']}]-> {t['to']}")
+    return data
+
+
+# ────────────────────────────────────────────────
+# Multi-report HTML suite / CSV sections / zip pack
+# ────────────────────────────────────────────────
+HTML_TABLE_SORT_JS = """
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  document.querySelectorAll('table.sortable').forEach(function (table) {
+    const heads = table.querySelectorAll('th');
+    heads.forEach(function (th, colIdx) {
+      th.style.cursor = 'pointer';
+      th.title = 'Click to sort';
+      th.addEventListener('click', function () {
+        const tbody = table.tBodies[0];
+        if (!tbody) return;
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+        const asc = th.getAttribute('data-sort') !== 'asc';
+        heads.forEach(h => h.removeAttribute('data-sort'));
+        th.setAttribute('data-sort', asc ? 'asc' : 'desc');
+        rows.sort(function (a, b) {
+          const ta = (a.children[colIdx] && a.children[colIdx].innerText || '').trim();
+          const tb = (b.children[colIdx] && b.children[colIdx].innerText || '').trim();
+          const na = parseFloat(ta), nb = parseFloat(tb);
+          let cmp;
+          if (!isNaN(na) && !isNaN(nb) && ta !== '' && tb !== '') cmp = na - nb;
+          else cmp = ta.localeCompare(tb, undefined, {numeric: true, sensitivity: 'base'});
+          return asc ? cmp : -cmp;
+        });
+        rows.forEach(r => tbody.appendChild(r));
+      });
+    });
+  });
+});
+</script>
+"""
+
+HTML_REPORT_CSS = """
+:root { --bg: #0f1419; --card: #1a2332; --text: #e7ecf3; --muted: #9aa7b8; --accent: #3dbbdb; --border: #2c3a4f; --danger: #ff6b6b; }
+* { box-sizing: border-box; }
+body { font-family: Segoe UI, system-ui, sans-serif; margin: 0; background: var(--bg); color: var(--text); }
+header, footer { background: var(--card); border-bottom: 1px solid var(--border); padding: 1rem 1.5rem; }
+footer { border-top: 1px solid var(--border); border-bottom: none; margin-top: 2rem; color: var(--muted); font-size: 0.9rem; }
+main { padding: 1.5rem; max-width: 1200px; margin: 0 auto; }
+h1, h2 { color: var(--accent); }
+a { color: var(--accent); }
+.meta { color: var(--muted); margin-bottom: 1rem; }
+.cards { display: flex; flex-wrap: wrap; gap: 0.75rem; margin: 1rem 0; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem 1rem; min-width: 160px; }
+.card strong { display: block; font-size: 1.4rem; color: var(--danger); }
+table { width: 100%; border-collapse: collapse; background: var(--card); margin: 1rem 0; }
+th, td { border: 1px solid var(--border); padding: 0.45rem 0.6rem; text-align: left; vertical-align: top; }
+th { background: #243044; position: sticky; top: 0; }
+tr:nth-child(even) { background: rgba(255,255,255,0.02); }
+.nav a { margin-right: 0.75rem; }
+.badge { display: inline-block; background: #243044; border-radius: 999px; padding: 0.1rem 0.5rem; font-size: 0.85rem; color: var(--muted); }
+"""
+
+
+def render_html_page(title: str, body_html: str, nav_links: Optional[List[Tuple[str, str]]] = None) -> str:
+    nav = ""
+    if nav_links:
+        links = " ".join(f'<a href="{escape(href)}">{escape(label)}</a>' for label, href in nav_links)
+        nav = f'<div class="nav">{links}</div>'
+    today = date.today().isoformat()
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>{escape(title)} — BloodBash / {escape(__org__)}</title>
+  <style>{HTML_REPORT_CSS}</style>
+</head>
+<body>
+<header>
+  <div class="badge">{escape(__org__)} open source</div>
+  <h1>{escape(title)}</h1>
+  <div class="meta">BloodBash v{escape(__version__)} · {escape(today)} ·
+    <a href="{escape(__org_url__)}">{escape(__org_url__)}</a>
+  </div>
+  {nav}
+</header>
+<main>
+{body_html}
+</main>
+<footer>
+  Generated by BloodBash ({escape(__org__)}) · {escape(__project_url__)} · For authorized security testing only.
+</footer>
+{HTML_TABLE_SORT_JS}
+</body>
+</html>
+"""
+
+
+def _html_table(headers: Sequence[str], rows: Sequence[Sequence[Any]], sortable: bool = True) -> str:
+    cls = "sortable" if sortable else ""
+    thead = "".join(f"<th>{escape(str(h))}</th>" for h in headers)
+    body_rows = []
+    if not rows:
+        body_rows.append(f"<tr><td colspan='{len(headers)}'>(none)</td></tr>")
+    else:
+        for row in rows:
+            tds = "".join(f"<td>{escape(str(c) if c is not None else '')}</td>" for c in row)
+            body_rows.append(f"<tr>{tds}</tr>")
+    return f"<table class=\"{cls}\"><thead><tr>{thead}</tr></thead><tbody>{''.join(body_rows)}</tbody></table>"
+
+
+def write_csv_file(path: str, headers: Sequence[str], rows: Sequence[Sequence[Any]]) -> str:
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(list(headers))
+        for row in rows:
+            w.writerow(list(row))
+    return path
+
+
+def build_inventory_export_data(
+    G,
+    domain_filter=None,
+    owned: Optional[str] = None,
+    busiest_mode: str = "short",
+    busiest_top: int = 5,
+    path_break_top: int = 15,
+    fast: bool = False,
+    include_paths: bool = True,
+) -> dict:
+    """Aggregate inventory + path remediation datasets for report packs."""
+    data = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "password_age": collect_password_age_rows(G, domain_filter),
+        "stale_accounts": collect_stale_account_rows(G, domain_filter),
+        "privilege_inventory": collect_privilege_inventory(G, domain_filter),
+        "structural": collect_structural_inventory(G, domain_filter),
+        "owned_inventory": collect_owned_inventory(G, owned or "", domain_filter) if owned else [],
+        "busiest_paths": [],
+        "path_breaks": [],
+        "findings": [
+            {"score": s, "category": c, "details": d}
+            for s, c, d in sorted(global_findings, key=lambda x: x[0], reverse=True)
+        ],
+        "high_value": [
+            {"name": name, "type": typ}
+            for _, name, typ in get_high_value_targets(G, domain_filter)
+        ],
+        "nodes": G.number_of_nodes(),
+        "edges": G.number_of_edges(),
+    }
+    if include_paths:
+        data["busiest_paths"] = collect_busiest_paths(
+            G, mode=busiest_mode, top=busiest_top, domain_filter=domain_filter, fast=fast
+        )
+        data["path_breaks"] = collect_path_breaks(
+            G, domain_filter=domain_filter, top=path_break_top, fast=fast
+        )
+    return data
+
+
+def export_report_pack(
+    G,
+    export_dir: str,
+    domain_filter=None,
+    owned: Optional[str] = None,
+    busiest_mode: str = "short",
+    busiest_top: int = 5,
+    path_break_top: int = 15,
+    fast: bool = False,
+    include_paths: bool = True,
+) -> List[str]:
+    """
+    Write a multi-page HTML report suite + per-section CSVs + index.html.
+    Returns list of written file paths.
+    """
+    export_dir = os.path.abspath(export_dir)
+    os.makedirs(export_dir, exist_ok=True)
+    csv_dir = os.path.join(export_dir, "csv")
+    os.makedirs(csv_dir, exist_ok=True)
+    data = build_inventory_export_data(
+        G,
+        domain_filter=domain_filter,
+        owned=owned,
+        busiest_mode=busiest_mode,
+        busiest_top=busiest_top,
+        path_break_top=path_break_top,
+        fast=fast,
+        include_paths=include_paths,
+    )
+    written: List[str] = []
+    pages = [
+        ("index.html", "Report Index"),
+        ("findings.html", "Prioritized Findings"),
+        ("high_value.html", "High-Value Targets"),
+        ("password_age.html", "Password Age Inventory"),
+        ("stale_accounts.html", "Stale Accounts"),
+        ("privilege_inventory.html", "Privilege Inventory"),
+        ("structural.html", "Structural Inventory"),
+        ("owned_inventory.html", "Owned Inventory"),
+        ("busiest_paths.html", "Busiest Paths"),
+        ("path_breaks.html", "Path Break Remediation"),
+    ]
+    nav = [(label, href) for href, label in pages]
+
+    def write_page(filename: str, title: str, body: str):
+        path = os.path.join(export_dir, filename)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(render_html_page(title, body, nav_links=nav))
+        written.append(path)
+
+    # Index
+    cards = f"""
+    <div class="cards">
+      <div class="card"><span>Nodes</span><strong>{data['nodes']}</strong></div>
+      <div class="card"><span>Edges</span><strong>{data['edges']}</strong></div>
+      <div class="card"><span>Findings</span><strong>{len(data['findings'])}</strong></div>
+      <div class="card"><span>High-value</span><strong>{len(data['high_value'])}</strong></div>
+      <div class="card"><span>Busiest paths</span><strong>{len(data['busiest_paths'])}</strong></div>
+      <div class="card"><span>Path breaks</span><strong>{len(data['path_breaks'])}</strong></div>
+    </div>
+    <h2>Reports</h2>
+    <ul>
+      {''.join(f'<li><a href="{escape(h)}">{escape(t)}</a></li>' for h, t in pages if h != 'index.html')}
+      <li><a href="csv/">CSV exports</a></li>
+    </ul>
+    """
+    write_page("index.html", "BloodBash Report Index", cards)
+
+    # Findings
+    f_rows = [[f["score"], f["category"], f["details"]] for f in data["findings"]]
+    write_page("findings.html", "Prioritized Findings", _html_table(["Severity", "Category", "Details"], f_rows))
+    written.append(write_csv_file(os.path.join(csv_dir, "findings.csv"), ["Severity", "Category", "Details"], f_rows))
+
+    hv_rows = [[h["name"], h["type"]] for h in data["high_value"]]
+    write_page("high_value.html", "High-Value Targets", _html_table(["Name", "Type"], hv_rows))
+    written.append(write_csv_file(os.path.join(csv_dir, "high_value.csv"), ["Name", "Type"], hv_rows))
+
+    pa_rows = [[r["name"], r["enabled"], r["days_old"], r["bucket"]] for r in data["password_age"]]
+    write_page("password_age.html", "Password Age Inventory", _html_table(["User", "Enabled", "Days old", "Bucket"], pa_rows))
+    written.append(write_csv_file(os.path.join(csv_dir, "password_age.csv"), ["User", "Enabled", "Days old", "Bucket"], pa_rows))
+
+    sa_rows = [[r["name"], r["enabled"], r["days_inactive"], r["bucket"]] for r in data["stale_accounts"]]
+    write_page("stale_accounts.html", "Stale Accounts", _html_table(["User", "Enabled", "Days inactive", "Bucket"], sa_rows))
+    written.append(write_csv_file(os.path.join(csv_dir, "stale_accounts.csv"), ["User", "Enabled", "Days inactive", "Bucket"], sa_rows))
+
+    priv_rows = [[r["group"], r["member_count"], "; ".join(r["members"][:50]), r["highvalue"]] for r in data["privilege_inventory"]]
+    write_page(
+        "privilege_inventory.html",
+        "Privilege Inventory",
+        _html_table(["Group", "Members", "Member list", "HighValue"], priv_rows),
+    )
+    written.append(write_csv_file(
+        os.path.join(csv_dir, "privilege_inventory.csv"),
+        ["Group", "Members", "Member list", "HighValue"],
+        priv_rows,
+    ))
+
+    st = data["structural"]
+    struct_body = (
+        "<h2>Domains</h2>" + _html_table(["Name", "Type"], [[x["name"], x["type"]] for x in st["domains"]])
+        + "<h2>Domain Controllers</h2>" + _html_table(["Name", "Type"], [[x["name"], x["type"]] for x in st["domain_controllers"]])
+        + "<h2>Trusts</h2>" + _html_table(["From", "To", "Type"], [[x["from"], x["to"], x["type"]] for x in st["trusts"]])
+    )
+    write_page("structural.html", "Structural Inventory", struct_body)
+    written.append(write_csv_file(
+        os.path.join(csv_dir, "domains.csv"),
+        ["Name", "Type"],
+        [[x["name"], x["type"]] for x in st["domains"]],
+    ))
+
+    owned_rows = [[
+        r["name"], r["type"], r["admin_to_count"], "; ".join(r["admin_to"][:30]),
+        r["member_of_count"], "; ".join(r["member_of"][:30]),
+    ] for r in data["owned_inventory"]]
+    write_page(
+        "owned_inventory.html",
+        "Owned Inventory",
+        _html_table(["Name", "Type", "AdminTo#", "AdminTo", "MemberOf#", "MemberOf"], owned_rows),
+    )
+    written.append(write_csv_file(
+        os.path.join(csv_dir, "owned_inventory.csv"),
+        ["Name", "Type", "AdminTo#", "AdminTo", "MemberOf#", "MemberOf"],
+        owned_rows,
+    ))
+
+    bp_rows = [[r.get("kind"), r.get("name"), r.get("type"), r.get("path_count"), ", ".join(r.get("targets") or [])] for r in data["busiest_paths"]]
+    write_page("busiest_paths.html", "Busiest Paths", _html_table(["Kind", "Principal", "Type", "Path count", "Targets"], bp_rows))
+    written.append(write_csv_file(
+        os.path.join(csv_dir, "busiest_paths.csv"),
+        ["Kind", "Principal", "Type", "Path count", "Targets"],
+        bp_rows,
+    ))
+
+    pb_rows = [[r["relationship"], r["from"], r["to"], r["paths_broken"], r["recommendation"]] for r in data["path_breaks"]]
+    write_page(
+        "path_breaks.html",
+        "Path Break Remediation",
+        _html_table(["Relationship", "From", "To", "Paths broken", "Recommendation"], pb_rows),
+    )
+    written.append(write_csv_file(
+        os.path.join(csv_dir, "path_breaks.csv"),
+        ["Relationship", "From", "To", "Paths broken", "Recommendation"],
+        pb_rows,
+    ))
+
+    # Manifest for zip tooling
+    manifest_path = os.path.join(export_dir, "manifest.json")
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump({
+            "tool": "BloodBash",
+            "version": __version__,
+            "organization": __org__,
+            "files": [os.path.relpath(p, export_dir) for p in written if p.startswith(export_dir)],
+            "generated_at": data["generated_at"],
+        }, f, indent=2)
+    written.append(manifest_path)
+    console.print(f"[green]Report pack written:[/green] {export_dir} ({len(written)} files)")
+    logger.info("Report pack written to %s (%d files)", export_dir, len(written))
+    return written
+
+
+def export_zip_pack(source_dir: str, zip_path: str) -> str:
+    """Zip a report pack directory into a single deliverable archive."""
+    source_dir = os.path.abspath(source_dir)
+    zip_path = os.path.abspath(zip_path)
+    parent = os.path.dirname(zip_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for root, _, files in os.walk(source_dir):
+            for name in files:
+                full = os.path.join(root, name)
+                arc = os.path.relpath(full, source_dir)
+                zf.write(full, arcname=arc)
+    console.print(f"[green]Exported report zip:[/green] {zip_path}")
+    logger.info("Exported report zip %s", zip_path)
+    return zip_path
+
+
+# ────────────────────────────────────────────────
 # Export
 # ────────────────────────────────────────────────
 def build_export_report(G, domain_filter=None):
@@ -2480,37 +3612,16 @@ def export_results(G, output_prefix="bloodbash", format_type="md", domain_filter
         console.print(f"[green]Exported JSON:[/green] {path}")
     elif format_type == "html":
         path = f"{output_prefix}.html"
-        html = (
-            "<html><head><title>BloodBash Report — SquidSec</title>"
-            "<style>body { font-family: Arial; } table { border-collapse: collapse; } "
-            "th, td { border: 1px solid black; padding: 5px; }</style></head><body>"
-            f"<h1>BloodBash Report</h1>"
-            f"<p><strong>{escape(__org__)}</strong> open source · BloodBash v{escape(__version__)}<br>"
-            f"<a href=\"{escape(__org_url__)}\">{escape(__org_url__)}</a><br>"
-            f"<a href=\"{escape(__project_url__)}\">{escape(__project_url__)}</a></p>"
-            f"<p>Nodes: {report['nodes']} | Edges: {report['edges']}</p>"
-            "<h2>High-Value Targets</h2><ul>"
+        f_rows = [[f["score"], f["category"], f["details"]] for f in report["findings"]]
+        hv_rows = [[h["name"], h["type"]] for h in report["high_value"]]
+        body = (
+            f"<p class='meta'>Nodes: {report['nodes']} | Edges: {report['edges']}</p>"
+            "<h2>High-Value Targets</h2>"
+            + _html_table(["Name", "Type"], hv_rows)
+            + "<h2>Prioritized Findings</h2>"
+            + _html_table(["Severity", "Category", "Details"], f_rows)
         )
-
-        if report["high_value"]:
-            for hv in report["high_value"]:
-                html += f"<li>{escape(hv['name'])} ({escape(hv['type'])})</li>"
-        else:
-            html += "<li>(none)</li>"
-        html += (
-            "</ul><h2>Prioritized Findings</h2>"
-            "<table><tr><th>Severity</th><th>Category</th><th>Details</th></tr>"
-        )
-        if report["findings"]:
-            for finding in report["findings"]:
-                html += (
-                    f"<tr><td>{finding['score']}</td>"
-                    f"<td>{escape(finding['category'])}</td>"
-                    f"<td>{escape(finding['details'])}</td></tr>"
-                )
-        else:
-            html += "<tr><td colspan='3'>(none)</td></tr>"
-        html += "</table></body></html>"
+        html = render_html_page("BloodBash Report", body)
         with open(path, "w", encoding="utf-8") as f:
             f.write(html)
         console.print(f"[green]Exported HTML:[/green] {path}")
@@ -2570,61 +3681,356 @@ def export_to_dot(G, dot_path, domain_filter=None):
     console.print(f"[dim]Render with: dot -Tpng {dot_path} -o graph.png[/dim]")
 
 # ────────────────────────────────────────────────
-# Main execution
+# Structured CLI help (Rich tables)
 # ────────────────────────────────────────────────
-def main():
-    parser = argparse.ArgumentParser(
+HELP_TABLE_SECTIONS = [
+    (
+        "Input",
+        [
+            ("directory", "SharpHound / AzureHound JSON directory or .zip", "positional; default: ."),
+        ],
+    ),
+    (
+        "Run mode",
+        [
+            ("--all", "Run every analysis module", "recommended for full reviews"),
+            ("--profile FILE|name", "YAML analysis profile", "quick, adcs-heavy, hygiene, or path"),
+            ("--fast", "Limit heavy pathfinding", "top DA/EA-style targets only"),
+            ("--verbose", "Print verbose graph summary", ""),
+            ("--debug", "Verbose parse/build logging", "troubleshooting"),
+            ("--all-findings", "End with a full findings table (every row)", "always prints, even if empty"),
+            ("-h, --help", "Show this structured help", ""),
+        ],
+    ),
+    (
+        "AD privilege & abuse checks",
+        [
+            ("--dcsync", "GetChanges + GetChangesAll DCSync rights", ""),
+            ("--dangerous-permissions", "Dangerous ACLs on high-value objects", ""),
+            ("--rbcd", "Resource-based constrained delegation (AllowedToAct)", ""),
+            ("--gpo-abuse", "Weak / abusable GPO permissions", ""),
+            ("--sid-history", "SID history abuse candidates", ""),
+            ("--unconstrained-delegation", "Unconstrained delegation principals", "DCs noted separately"),
+            ("--constrained-delegation", "Constrained delegation (S4U)", ""),
+            ("--sessions", "LocalAdmin / RDP / DCOM / session summary", ""),
+            ("--laps", "LAPS deployment via haslaps", ""),
+            ("--shadow-credentials", "AddKeyCredentialLink / shadow cred paths", ""),
+        ],
+    ),
+    (
+        "AD credentials",
+        [
+            ("--kerberoastable", "Users with SPNs (Kerberoast)", ""),
+            ("--as-rep-roastable", "DONT_REQ_PREAUTH users (AS-REP roast)", ""),
+            ("--password-descriptions", "Passwords / secrets in descriptions", ""),
+            ("--password-never-expires", "PasswordNeverExpires users", ""),
+            ("--password-not-required", "PasswordNotRequired users", ""),
+        ],
+    ),
+    (
+        "ADCS & GPO content",
+        [
+            ("--adcs", "Certificate template ESC1–ESC8 (+ESC9/13 when present)", ""),
+            ("--gpo-parsing", "GPO metadata / linked GPO signals", ""),
+            ("--gpo-content-dir DIR", "Parse GPO XML (tasks, scripts, cPassword)", "SYSVOL export dir"),
+        ],
+    ),
+    (
+        "Azure / Entra",
+        [
+            ("--azure-privileged-roles", "Privileged directory roles", ""),
+            ("--azure-app-secrets", "App / SP credential control paths", ""),
+            ("--azure-mfa-bypass", "Explicit MFA disable signals", ""),
+            ("--azure-guest-access", "Guest user exposure", ""),
+            ("--azure-sp-abuse", "Service principal abuse rights", ""),
+        ],
+    ),
+    (
+        "Paths & remediation",
+        [
+            ("--shortest-paths", "Shortest paths to high-value targets", ""),
+            ("--busiest-paths [short|all]", "Rank principals on the most paths to HV", "default mode: short"),
+            ("--busiest-paths-top N", "How many busiest principals to show", "default: 5"),
+            ("--path-break", "Edges to remove to break the most paths", "remediation hints"),
+            ("--path-break-top N", "How many path-break edges to show", "default: 15"),
+            ("--owned a,b", "Shortest paths involving owned principals", "comma-separated"),
+            ("--path-from SRC", "Arbitrary path sources", "use with --path-to"),
+            ("--path-to DST", "Arbitrary path targets", "use with --path-from"),
+            ("--indirect", "Include group-mediated paths/rights", ""),
+            ("--deep-analysis", "Slow group nesting + cycle detection", ""),
+        ],
+    ),
+    (
+        "Inventory",
+        [
+            ("--inventory", "Structural + password-age + stale + privilege", "ops inventory pack"),
+            ("--password-age", "Password age bucket inventory", "<1d … >20y ladders"),
+            ("--stale-accounts", "Inactive / never-active account inventory", ""),
+            ("--privilege-inventory", "Privileged group membership tables", ""),
+            ("--owned-inventory", "AdminTo / MemberOf for --owned principals", "requires --owned"),
+        ],
+    ),
+    (
+        "Export & deliverables",
+        [
+            ("--export [fmt]", "Write findings report", "md|json|html|csv|yaml (default md)"),
+            ("--export-bh", "BloodHound-compatible full graph JSON", ""),
+            ("--dot [FILE]", "Graphviz DOT export", "default: bloodbash.dot"),
+            ("--report-pack DIR", "Multi-page HTML suite + CSVs + index.html", ""),
+            ("--export-zip [FILE]", "Zip the report pack", "default: bloodbash-reports.zip"),
+            ("--all-findings", "Print complete findings table at end of run", "not limited to top 20"),
+            ("--log-file [FILE]", "Write a run audit log", "default: bloodbash.log"),
+        ],
+    ),
+    (
+        "Filters & utilities",
+        [
+            ("--domain X", "Filter to one AD domain or Azure tenantId", ""),
+            ("--db FILE", "Load/save graph in SQLite", "skip re-ingest"),
+            ("--inspect NODE", "Dump props + edges for node(s)", "comma-separated"),
+        ],
+    ),
+]
+
+HELP_EXAMPLES = [
+    ("Full analysis", "python3 BloodBash.py ./sharpout --all"),
+    ("Quick profile pack", "python3 BloodBash.py ./sharpout --profile quick"),
+    ("Critical checks only", "python3 BloodBash.py ./sharpout --dcsync --adcs --dangerous-permissions"),
+    ("Paths + remediation", "python3 BloodBash.py ./sharpout --busiest-paths short --path-break --fast"),
+    ("Inventory report pack", "python3 BloodBash.py ./sharpout --inventory --report-pack ./reports --export-zip"),
+    ("Owned paths", "python3 BloodBash.py ./sharpout --owned alice,bob --owned-inventory --shortest-paths"),
+    ("Export findings", "python3 BloodBash.py ./sharpout --all --export=html --export-bh"),
+    ("Full findings table", "python3 BloodBash.py ./sharpout --dcsync --adcs --all-findings"),
+]
+
+
+def print_structured_help(prog: Optional[str] = None) -> None:
+    """Print categorized Rich-table help instead of default argparse layout."""
+    prog = prog or (os.path.basename(sys.argv[0]) if sys.argv else "BloodBash.py")
+    console.print(
+        Panel(
+            f"[bold cyan]BloodBash v{__version__}[/bold cyan]  ·  [bold]{__org__}[/bold]\n"
+            f"[dim]Offline SharpHound & AzureHound analyzer — no Neo4j required[/dim]\n"
+            f"[dim]{__org_url__}[/dim]\n"
+            f"[dim]{__project_url__}[/dim]",
+            title="Help",
+            border_style="bright_blue",
+        )
+    )
+    console.print(
+        f"[bold]Usage[/bold]:  [cyan]{prog}[/cyan] "
+        f"[yellow]\\[options][/yellow] [green]\\[directory][/green]\n"
+    )
+    console.print(
+        "[dim]With no check flags, BloodBash runs a default pass "
+        "(verbose summary + common checks). Use --all for everything.[/dim]\n"
+    )
+
+    for title, rows in HELP_TABLE_SECTIONS:
+        table = Table(
+            title=title,
+            show_header=True,
+            header_style="bold magenta",
+            border_style="bright_blue",
+            expand=True,
+            pad_edge=False,
+        )
+        table.add_column("Flag / argument", style="cyan", no_wrap=True, overflow="fold")
+        table.add_column("Description", style="white", overflow="fold")
+        table.add_column("Notes / values", style="dim", overflow="fold")
+        for flag, desc, notes in rows:
+            table.add_row(flag, desc, notes or "—")
+        console.print(table)
+        console.print()
+
+    examples = Table(
+        title="Examples",
+        show_header=True,
+        header_style="bold green",
+        border_style="green",
+        expand=True,
+    )
+    examples.add_column("Scenario", style="green", no_wrap=True)
+    examples.add_column("Command", style="cyan", overflow="fold")
+    for scenario, cmd in HELP_EXAMPLES:
+        examples.add_row(scenario, cmd)
+    console.print(examples)
+    console.print(
+        f"\n[dim]For authorized security testing / red teaming only. "
+        f"BloodBash by {__org__}.[/dim]"
+    )
+
+
+class StructuredHelpArgumentParser(argparse.ArgumentParser):
+    """ArgumentParser that renders --help as categorized Rich tables."""
+
+    def print_help(self, file=None):
+        print_structured_help(prog=self.prog)
+
+    def format_help(self):
+        # Used by some callers; return a plain-text hint (tables go to console).
+        return (
+            f"BloodBash v{__version__} structured help — run with --help "
+            f"for Rich tables. {__org_url__}\n"
+        )
+
+    def error(self, message):
+        console.print(f"[bold red]error:[/bold red] {message}\n")
+        self.print_help()
+        self.exit(2)
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = StructuredHelpArgumentParser(
+        prog="BloodBash.py",
         description=(
             f"BloodBash v{__version__} by {__org__} — offline SharpHound & AzureHound analyzer "
             f"({__org_url__})"
-        )
+        ),
+        add_help=True,
     )
 
-    parser.add_argument('directory', nargs='?', default='.', help='Path to SharpHound & AzureHound JSON files or zip archive.')
-    parser.add_argument('--shortest-paths', action='store_true')
-    parser.add_argument('--dangerous-permissions', action='store_true')
-    parser.add_argument('--adcs', action='store_true')
-    parser.add_argument('--gpo-abuse', action='store_true')
-    parser.add_argument('--dcsync', action='store_true')
-    parser.add_argument('--rbcd', action='store_true')
-    parser.add_argument('--sessions', action='store_true')
-    parser.add_argument('--kerberoastable', action='store_true')
-    parser.add_argument('--as-rep-roastable', action='store_true')
-    parser.add_argument('--sid-history', action='store_true')
-    parser.add_argument('--unconstrained-delegation', action='store_true')
-    parser.add_argument('--password-descriptions', action='store_true')
-    parser.add_argument('--password-never-expires', action='store_true')
-    parser.add_argument('--password-not-required', action='store_true')
-    parser.add_argument('--shadow-credentials', action='store_true')
-    parser.add_argument('--gpo-parsing', action='store_true')
-    parser.add_argument("--gpo-content-dir", type=str, default=None, help="Directory containing GPO XML reports for full content analysis")
-    parser.add_argument('--constrained-delegation', action='store_true')
-    parser.add_argument('--laps', action='store_true')
-    parser.add_argument('--azure-privileged-roles', action='store_true')
-    parser.add_argument('--azure-app-secrets', action='store_true')
-    parser.add_argument('--azure-mfa-bypass', action='store_true')
-    parser.add_argument('--azure-guest-access', action='store_true')
-    parser.add_argument('--azure-sp-abuse', action='store_true')
-    parser.add_argument('--verbose', action='store_true')
-    parser.add_argument('--all', action='store_true')
-    parser.add_argument('--export', nargs='?', const='md', choices=['md', 'json', 'html', 'csv', 'yaml'], help='Export results')
-    parser.add_argument('--export-bh', action='store_true', help='Export full graph in BloodHound-compatible JSON format')
-    parser.add_argument('--dot', nargs='?', const='bloodbash.dot', help='Export key subgraphs to Graphviz DOT file')
-    parser.add_argument('--fast', action='store_true', help='Fast mode (skip heavy pathfinding)')
-    parser.add_argument('--domain', help='Filter by domain (AD) or tenantId (Azure)')
-    parser.add_argument('--indirect', action='store_true', help='Include indirect paths/permissions')
-    parser.add_argument('--db', help='SQLite DB path for persistence (save/load graph)')
-    parser.add_argument('--owned', help='Comma-separated owned principals (find paths to them)')
-    parser.add_argument('--path-from', help='Comma-separated source principals for arbitrary paths')
-    parser.add_argument('--path-to', help='Comma-separated target principals for arbitrary paths')
-    parser.add_argument('--inspect', help='Comma-separated nodes to inspect (full props + edges)')
-    parser.add_argument('--deep-analysis', action='store_true', help='Enable full (slow) group cycle detection')
-    parser.add_argument('--debug', action='store_true', help='Enable verbose debug output for troubleshooting')
+    parser.add_argument(
+        "directory",
+        nargs="?",
+        default=".",
+        help="Path to SharpHound & AzureHound JSON files or zip archive.",
+    )
+    parser.add_argument("--shortest-paths", action="store_true", help="Shortest paths to high-value targets")
+    parser.add_argument("--dangerous-permissions", action="store_true", help="Dangerous ACLs on high-value objects")
+    parser.add_argument("--adcs", action="store_true", help="ADCS ESC template vulnerabilities")
+    parser.add_argument("--gpo-abuse", action="store_true", help="Weak / abusable GPO permissions")
+    parser.add_argument("--dcsync", action="store_true", help="DCSync GetChanges+GetChangesAll rights")
+    parser.add_argument("--rbcd", action="store_true", help="Resource-based constrained delegation")
+    parser.add_argument("--sessions", action="store_true", help="LocalAdmin / RDP / DCOM / session summary")
+    parser.add_argument("--kerberoastable", action="store_true", help="Kerberoastable accounts")
+    parser.add_argument("--as-rep-roastable", action="store_true", help="AS-REP roastable accounts")
+    parser.add_argument("--sid-history", action="store_true", help="SID history abuse candidates")
+    parser.add_argument("--unconstrained-delegation", action="store_true", help="Unconstrained delegation")
+    parser.add_argument("--password-descriptions", action="store_true", help="Passwords in descriptions")
+    parser.add_argument("--password-never-expires", action="store_true", help="PasswordNeverExpires users")
+    parser.add_argument("--password-not-required", action="store_true", help="PasswordNotRequired users")
+    parser.add_argument("--shadow-credentials", action="store_true", help="Shadow credential paths")
+    parser.add_argument("--gpo-parsing", action="store_true", help="GPO metadata analysis")
+    parser.add_argument(
+        "--gpo-content-dir",
+        type=str,
+        default=None,
+        help="Directory containing GPO XML reports for full content analysis",
+    )
+    parser.add_argument("--constrained-delegation", action="store_true", help="Constrained delegation")
+    parser.add_argument("--laps", action="store_true", help="LAPS deployment status")
+    parser.add_argument("--azure-privileged-roles", action="store_true", help="Azure privileged roles")
+    parser.add_argument("--azure-app-secrets", action="store_true", help="Azure app/SP secrets control")
+    parser.add_argument("--azure-mfa-bypass", action="store_true", help="Azure MFA bypass signals")
+    parser.add_argument("--azure-guest-access", action="store_true", help="Azure guest access")
+    parser.add_argument("--azure-sp-abuse", action="store_true", help="Azure service principal abuse")
+    parser.add_argument("--verbose", action="store_true", help="Verbose graph summary")
+    parser.add_argument("--all", action="store_true", help="Run every analysis module")
+    parser.add_argument(
+        "--all-findings",
+        action="store_true",
+        help="At end of run, print a table of every finding (always shown, even if empty)",
+    )
+    parser.add_argument(
+        "--export",
+        nargs="?",
+        const="md",
+        choices=["md", "json", "html", "csv", "yaml"],
+        help="Export results (md|json|html|csv|yaml)",
+    )
+    parser.add_argument("--export-bh", action="store_true", help="Export BloodHound-compatible graph JSON")
+    parser.add_argument("--dot", nargs="?", const="bloodbash.dot", help="Export Graphviz DOT file")
+    parser.add_argument("--fast", action="store_true", help="Fast mode (limit heavy pathfinding)")
+    parser.add_argument("--domain", help="Filter by domain (AD) or tenantId (Azure)")
+    parser.add_argument("--indirect", action="store_true", help="Include indirect paths/permissions")
+    parser.add_argument("--db", help="SQLite DB path for persistence (save/load graph)")
+    parser.add_argument("--owned", help="Comma-separated owned principals (find paths to them)")
+    parser.add_argument("--path-from", help="Comma-separated source principals for arbitrary paths")
+    parser.add_argument("--path-to", help="Comma-separated target principals for arbitrary paths")
+    parser.add_argument("--inspect", help="Comma-separated nodes to inspect (full props + edges)")
+    parser.add_argument("--deep-analysis", action="store_true", help="Enable full (slow) group cycle detection")
+    parser.add_argument("--debug", action="store_true", help="Enable verbose debug output for troubleshooting")
+    parser.add_argument(
+        "--busiest-paths",
+        nargs="?",
+        const="short",
+        choices=["short", "all"],
+        help="Rank principals on the most paths to high-value targets (short|all)",
+    )
+    parser.add_argument("--busiest-paths-top", type=int, default=5, help="Top N busiest principals (default 5)")
+    parser.add_argument(
+        "--path-break",
+        action="store_true",
+        help="Recommend edges to remove to break the most attack paths",
+    )
+    parser.add_argument("--path-break-top", type=int, default=15, help="Top N path-break edges (default 15)")
+    parser.add_argument("--password-age", action="store_true", help="Password age inventory ladders")
+    parser.add_argument("--stale-accounts", action="store_true", help="Inactive / never-active account inventory")
+    parser.add_argument("--privilege-inventory", action="store_true", help="Privileged group membership inventory")
+    parser.add_argument(
+        "--owned-inventory",
+        action="store_true",
+        help="Inventory AdminTo/MemberOf for --owned principals",
+    )
+    parser.add_argument(
+        "--inventory",
+        action="store_true",
+        help="Run structural + password-age + stale + privilege inventories",
+    )
+    parser.add_argument(
+        "--report-pack",
+        metavar="DIR",
+        help="Write multi-page HTML report suite + per-section CSVs + index.html",
+    )
+    parser.add_argument(
+        "--export-zip",
+        nargs="?",
+        const="bloodbash-reports.zip",
+        metavar="FILE",
+        help="Zip the report pack into a single deliverable (default bloodbash-reports.zip)",
+    )
+    parser.add_argument(
+        "--profile",
+        metavar="FILE",
+        help="YAML analysis profile (path or built-in name under profiles/)",
+    )
+    parser.add_argument(
+        "--log-file",
+        nargs="?",
+        const="bloodbash.log",
+        metavar="FILE",
+        help="Write a run log file (default bloodbash.log)",
+    )
+    return parser
+
+
+# ────────────────────────────────────────────────
+# Main execution
+# ────────────────────────────────────────────────
+def main():
+    parser = build_arg_parser()
     args = parser.parse_args()
+
+    if args.profile:
+        try:
+            profile = load_analysis_profile(args.profile)
+            apply_profile_to_args(args, profile)
+            console.print(f"[green]Loaded profile:[/green] {args.profile}")
+        except Exception as e:
+            console.print(f"[red]Failed to load profile {args.profile}: {e}[/red]")
+            sys.exit(2)
+
+    log_path = setup_run_logging(args.log_file)
+    if log_path:
+        console.print(f"[dim]Run log:[/dim] {log_path}")
+
     DEBUG = args.debug
     if DEBUG:
         console.print("[bold blue]=== DEBUG MODE ENABLED ===[/bold blue]")
     start_time = time.time()
+    logger.info("Starting analysis directory=%s", args.directory)
+
     if args.db and os.path.exists(args.db):
         G, name_to_oid = load_graph_from_db(args.db)
     else:
@@ -2633,6 +4039,13 @@ def main():
             console.print("[red]No objects loaded. Exiting.[/red]")
             sys.exit(1)
         G, name_to_oid = build_graph(nodes, args.db if args.db else None, debug=DEBUG)
+
+    run_inventory = bool(args.inventory)
+    if run_inventory:
+        args.password_age = True
+        args.stale_accounts = True
+        args.privilege_inventory = True
+
     selected_checks = any([
         args.shortest_paths, args.dangerous_permissions, args.adcs, args.gpo_abuse,
         args.dcsync, args.rbcd, args.sessions, args.kerberoastable, args.as_rep_roastable,
@@ -2642,7 +4055,9 @@ def main():
         args.azure_privileged_roles, args.azure_app_secrets, args.azure_mfa_bypass,
         args.azure_guest_access, args.azure_sp_abuse, args.owned, args.path_from,
         args.path_to, args.inspect, args.export_bh, args.dot, args.deep_analysis,
-        args.gpo_content_dir,
+        args.gpo_content_dir, args.busiest_paths, args.path_break, args.password_age,
+        args.stale_accounts, args.privilege_inventory, args.owned_inventory,
+        args.inventory, args.report_pack, args.export_zip,
     ])
     run_all = args.all or not selected_checks
 
@@ -2712,6 +4127,40 @@ def main():
             inspect_node(G, ident, args.domain)
     if args.gpo_content_dir:
         print_gpo_content_analysis(G, args.gpo_content_dir, args.domain)
+
+    # Inventory + path remediation (also included on --all / default full runs)
+    if args.password_age or run_all or run_inventory:
+        print_password_age_inventory(G, args.domain)
+    if args.stale_accounts or run_all or run_inventory:
+        print_stale_account_inventory(G, args.domain)
+    if args.privilege_inventory or run_all or run_inventory:
+        print_privilege_inventory(G, args.domain)
+    if run_inventory or run_all:
+        print_structural_inventory(G, args.domain)
+    if args.owned_inventory and args.owned:
+        print_owned_inventory(G, args.owned, args.domain)
+    elif args.owned_inventory and not args.owned:
+        console.print("[yellow]--owned-inventory requires --owned[/yellow]")
+
+    busiest_mode = args.busiest_paths if args.busiest_paths else ("short" if run_all else None)
+    if busiest_mode is True:
+        busiest_mode = "short"
+    if busiest_mode:
+        print_busiest_paths(
+            G,
+            mode=busiest_mode,
+            top=args.busiest_paths_top,
+            domain_filter=args.domain,
+            fast=args.fast,
+        )
+    if args.path_break or run_all:
+        print_path_breaks(
+            G,
+            domain_filter=args.domain,
+            top=args.path_break_top,
+            fast=args.fast,
+        )
+
     # Trust / group nesting / stats only on --all or default full run (run_all),
     # not when the user selected a narrow check set.
     if run_all:
@@ -2722,12 +4171,36 @@ def main():
         print_group_analysis(G, args.domain, deep_analysis=True)
     if args.export:
         export_results(G, format_type=args.export, domain_filter=args.domain)
+
+    report_dir = args.report_pack
+    if args.export_zip and not report_dir:
+        report_dir = os.path.join(os.getcwd(), "bloodbash-report-pack")
+    if report_dir:
+        export_report_pack(
+            G,
+            report_dir,
+            domain_filter=args.domain,
+            owned=args.owned,
+            busiest_mode=busiest_mode or "short",
+            busiest_top=args.busiest_paths_top,
+            path_break_top=args.path_break_top,
+            fast=args.fast,
+            include_paths=True,
+        )
+    if args.export_zip:
+        zip_target = args.export_zip
+        if report_dir:
+            export_zip_pack(report_dir, zip_target)
+        else:
+            console.print("[yellow]--export-zip requires a report pack directory[/yellow]")
+
     if args.export_bh:
         export_bloodhound_compatible(G)
     if args.dot:
         export_to_dot(G, args.dot, args.domain)
-    print_prioritized_findings()
+    print_prioritized_findings(show_all=bool(getattr(args, "all_findings", False)))
     elapsed = time.time() - start_time
+    logger.info("Completed in %.2f seconds with %d findings", elapsed, len(global_findings))
     console.print(f"\n[italic green]Completed in {elapsed:.2f} seconds[/italic green]")
     console.rule(
         f"[bold cyan]BloodBash by {__org__}[/bold cyan]  ·  [dim]{__org_url__}[/dim]",
