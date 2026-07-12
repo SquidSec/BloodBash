@@ -3591,94 +3591,327 @@ def export_to_dot(G, dot_path, domain_filter=None):
     console.print(f"[dim]Render with: dot -Tpng {dot_path} -o graph.png[/dim]")
 
 # ────────────────────────────────────────────────
-# Main execution
+# Structured CLI help (Rich tables)
 # ────────────────────────────────────────────────
-def main():
-    parser = argparse.ArgumentParser(
+HELP_TABLE_SECTIONS = [
+    (
+        "Input",
+        [
+            ("directory", "SharpHound / AzureHound JSON directory or .zip", "positional; default: ."),
+        ],
+    ),
+    (
+        "Run mode",
+        [
+            ("--all", "Run every analysis module", "recommended for full reviews"),
+            ("--profile FILE|name", "YAML analysis profile", "quick, adcs-heavy, hygiene, or path"),
+            ("--fast", "Limit heavy pathfinding", "top DA/EA-style targets only"),
+            ("--verbose", "Print verbose graph summary", ""),
+            ("--debug", "Verbose parse/build logging", "troubleshooting"),
+            ("-h, --help", "Show this structured help", ""),
+        ],
+    ),
+    (
+        "AD privilege & abuse checks",
+        [
+            ("--dcsync", "GetChanges + GetChangesAll DCSync rights", ""),
+            ("--dangerous-permissions", "Dangerous ACLs on high-value objects", ""),
+            ("--rbcd", "Resource-based constrained delegation (AllowedToAct)", ""),
+            ("--gpo-abuse", "Weak / abusable GPO permissions", ""),
+            ("--sid-history", "SID history abuse candidates", ""),
+            ("--unconstrained-delegation", "Unconstrained delegation principals", "DCs noted separately"),
+            ("--constrained-delegation", "Constrained delegation (S4U)", ""),
+            ("--sessions", "LocalAdmin / RDP / DCOM / session summary", ""),
+            ("--laps", "LAPS deployment via haslaps", ""),
+            ("--shadow-credentials", "AddKeyCredentialLink / shadow cred paths", ""),
+        ],
+    ),
+    (
+        "AD credentials",
+        [
+            ("--kerberoastable", "Users with SPNs (Kerberoast)", ""),
+            ("--as-rep-roastable", "DONT_REQ_PREAUTH users (AS-REP roast)", ""),
+            ("--password-descriptions", "Passwords / secrets in descriptions", ""),
+            ("--password-never-expires", "PasswordNeverExpires users", ""),
+            ("--password-not-required", "PasswordNotRequired users", ""),
+        ],
+    ),
+    (
+        "ADCS & GPO content",
+        [
+            ("--adcs", "Certificate template ESC1–ESC8 (+ESC9/13 when present)", ""),
+            ("--gpo-parsing", "GPO metadata / linked GPO signals", ""),
+            ("--gpo-content-dir DIR", "Parse GPO XML (tasks, scripts, cPassword)", "SYSVOL export dir"),
+        ],
+    ),
+    (
+        "Azure / Entra",
+        [
+            ("--azure-privileged-roles", "Privileged directory roles", ""),
+            ("--azure-app-secrets", "App / SP credential control paths", ""),
+            ("--azure-mfa-bypass", "Explicit MFA disable signals", ""),
+            ("--azure-guest-access", "Guest user exposure", ""),
+            ("--azure-sp-abuse", "Service principal abuse rights", ""),
+        ],
+    ),
+    (
+        "Paths & remediation",
+        [
+            ("--shortest-paths", "Shortest paths to high-value targets", ""),
+            ("--busiest-paths [short|all]", "Rank principals on the most paths to HV", "default mode: short"),
+            ("--busiest-paths-top N", "How many busiest principals to show", "default: 5"),
+            ("--path-break", "Edges to remove to break the most paths", "remediation hints"),
+            ("--path-break-top N", "How many path-break edges to show", "default: 15"),
+            ("--owned a,b", "Shortest paths involving owned principals", "comma-separated"),
+            ("--path-from SRC", "Arbitrary path sources", "use with --path-to"),
+            ("--path-to DST", "Arbitrary path targets", "use with --path-from"),
+            ("--indirect", "Include group-mediated paths/rights", ""),
+            ("--deep-analysis", "Slow group nesting + cycle detection", ""),
+        ],
+    ),
+    (
+        "Inventory",
+        [
+            ("--inventory", "Structural + password-age + stale + privilege", "ops inventory pack"),
+            ("--password-age", "Password age bucket inventory", "<1d … >20y ladders"),
+            ("--stale-accounts", "Inactive / never-active account inventory", ""),
+            ("--privilege-inventory", "Privileged group membership tables", ""),
+            ("--owned-inventory", "AdminTo / MemberOf for --owned principals", "requires --owned"),
+        ],
+    ),
+    (
+        "Export & deliverables",
+        [
+            ("--export [fmt]", "Write findings report", "md|json|html|csv|yaml (default md)"),
+            ("--export-bh", "BloodHound-compatible full graph JSON", ""),
+            ("--dot [FILE]", "Graphviz DOT export", "default: bloodbash.dot"),
+            ("--report-pack DIR", "Multi-page HTML suite + CSVs + index.html", ""),
+            ("--export-zip [FILE]", "Zip the report pack", "default: bloodbash-reports.zip"),
+            ("--log-file [FILE]", "Write a run audit log", "default: bloodbash.log"),
+        ],
+    ),
+    (
+        "Filters & utilities",
+        [
+            ("--domain X", "Filter to one AD domain or Azure tenantId", ""),
+            ("--db FILE", "Load/save graph in SQLite", "skip re-ingest"),
+            ("--inspect NODE", "Dump props + edges for node(s)", "comma-separated"),
+        ],
+    ),
+]
+
+HELP_EXAMPLES = [
+    ("Full analysis", "python3 BloodBash.py ./sharpout --all"),
+    ("Quick profile pack", "python3 BloodBash.py ./sharpout --profile quick"),
+    ("Critical checks only", "python3 BloodBash.py ./sharpout --dcsync --adcs --dangerous-permissions"),
+    ("Paths + remediation", "python3 BloodBash.py ./sharpout --busiest-paths short --path-break --fast"),
+    ("Inventory report pack", "python3 BloodBash.py ./sharpout --inventory --report-pack ./reports --export-zip"),
+    ("Owned paths", "python3 BloodBash.py ./sharpout --owned alice,bob --owned-inventory --shortest-paths"),
+    ("Export findings", "python3 BloodBash.py ./sharpout --all --export=html --export-bh"),
+]
+
+
+def print_structured_help(prog: Optional[str] = None) -> None:
+    """Print categorized Rich-table help instead of default argparse layout."""
+    prog = prog or (os.path.basename(sys.argv[0]) if sys.argv else "BloodBash.py")
+    console.print(
+        Panel(
+            f"[bold cyan]BloodBash v{__version__}[/bold cyan]  ·  [bold]{__org__}[/bold]\n"
+            f"[dim]Offline SharpHound & AzureHound analyzer — no Neo4j required[/dim]\n"
+            f"[dim]{__org_url__}[/dim]\n"
+            f"[dim]{__project_url__}[/dim]",
+            title="Help",
+            border_style="bright_blue",
+        )
+    )
+    console.print(
+        f"[bold]Usage[/bold]:  [cyan]{prog}[/cyan] "
+        f"[yellow]\\[options][/yellow] [green]\\[directory][/green]\n"
+    )
+    console.print(
+        "[dim]With no check flags, BloodBash runs a default pass "
+        "(verbose summary + common checks). Use --all for everything.[/dim]\n"
+    )
+
+    for title, rows in HELP_TABLE_SECTIONS:
+        table = Table(
+            title=title,
+            show_header=True,
+            header_style="bold magenta",
+            border_style="bright_blue",
+            expand=True,
+            pad_edge=False,
+        )
+        table.add_column("Flag / argument", style="cyan", no_wrap=True, overflow="fold")
+        table.add_column("Description", style="white", overflow="fold")
+        table.add_column("Notes / values", style="dim", overflow="fold")
+        for flag, desc, notes in rows:
+            table.add_row(flag, desc, notes or "—")
+        console.print(table)
+        console.print()
+
+    examples = Table(
+        title="Examples",
+        show_header=True,
+        header_style="bold green",
+        border_style="green",
+        expand=True,
+    )
+    examples.add_column("Scenario", style="green", no_wrap=True)
+    examples.add_column("Command", style="cyan", overflow="fold")
+    for scenario, cmd in HELP_EXAMPLES:
+        examples.add_row(scenario, cmd)
+    console.print(examples)
+    console.print(
+        f"\n[dim]For authorized security testing / red teaming only. "
+        f"BloodBash by {__org__}.[/dim]"
+    )
+
+
+class StructuredHelpArgumentParser(argparse.ArgumentParser):
+    """ArgumentParser that renders --help as categorized Rich tables."""
+
+    def print_help(self, file=None):
+        print_structured_help(prog=self.prog)
+
+    def format_help(self):
+        # Used by some callers; return a plain-text hint (tables go to console).
+        return (
+            f"BloodBash v{__version__} structured help — run with --help "
+            f"for Rich tables. {__org_url__}\n"
+        )
+
+    def error(self, message):
+        console.print(f"[bold red]error:[/bold red] {message}\n")
+        self.print_help()
+        self.exit(2)
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = StructuredHelpArgumentParser(
+        prog="BloodBash.py",
         description=(
             f"BloodBash v{__version__} by {__org__} — offline SharpHound & AzureHound analyzer "
             f"({__org_url__})"
-        )
+        ),
+        add_help=True,
     )
 
-    parser.add_argument('directory', nargs='?', default='.', help='Path to SharpHound & AzureHound JSON files or zip archive.')
-    parser.add_argument('--shortest-paths', action='store_true')
-    parser.add_argument('--dangerous-permissions', action='store_true')
-    parser.add_argument('--adcs', action='store_true')
-    parser.add_argument('--gpo-abuse', action='store_true')
-    parser.add_argument('--dcsync', action='store_true')
-    parser.add_argument('--rbcd', action='store_true')
-    parser.add_argument('--sessions', action='store_true')
-    parser.add_argument('--kerberoastable', action='store_true')
-    parser.add_argument('--as-rep-roastable', action='store_true')
-    parser.add_argument('--sid-history', action='store_true')
-    parser.add_argument('--unconstrained-delegation', action='store_true')
-    parser.add_argument('--password-descriptions', action='store_true')
-    parser.add_argument('--password-never-expires', action='store_true')
-    parser.add_argument('--password-not-required', action='store_true')
-    parser.add_argument('--shadow-credentials', action='store_true')
-    parser.add_argument('--gpo-parsing', action='store_true')
-    parser.add_argument("--gpo-content-dir", type=str, default=None, help="Directory containing GPO XML reports for full content analysis")
-    parser.add_argument('--constrained-delegation', action='store_true')
-    parser.add_argument('--laps', action='store_true')
-    parser.add_argument('--azure-privileged-roles', action='store_true')
-    parser.add_argument('--azure-app-secrets', action='store_true')
-    parser.add_argument('--azure-mfa-bypass', action='store_true')
-    parser.add_argument('--azure-guest-access', action='store_true')
-    parser.add_argument('--azure-sp-abuse', action='store_true')
-    parser.add_argument('--verbose', action='store_true')
-    parser.add_argument('--all', action='store_true')
-    parser.add_argument('--export', nargs='?', const='md', choices=['md', 'json', 'html', 'csv', 'yaml'], help='Export results')
-    parser.add_argument('--export-bh', action='store_true', help='Export full graph in BloodHound-compatible JSON format')
-    parser.add_argument('--dot', nargs='?', const='bloodbash.dot', help='Export key subgraphs to Graphviz DOT file')
-    parser.add_argument('--fast', action='store_true', help='Fast mode (skip heavy pathfinding)')
-    parser.add_argument('--domain', help='Filter by domain (AD) or tenantId (Azure)')
-    parser.add_argument('--indirect', action='store_true', help='Include indirect paths/permissions')
-    parser.add_argument('--db', help='SQLite DB path for persistence (save/load graph)')
-    parser.add_argument('--owned', help='Comma-separated owned principals (find paths to them)')
-    parser.add_argument('--path-from', help='Comma-separated source principals for arbitrary paths')
-    parser.add_argument('--path-to', help='Comma-separated target principals for arbitrary paths')
-    parser.add_argument('--inspect', help='Comma-separated nodes to inspect (full props + edges)')
-    parser.add_argument('--deep-analysis', action='store_true', help='Enable full (slow) group cycle detection')
-    parser.add_argument('--debug', action='store_true', help='Enable verbose debug output for troubleshooting')
-    # PlumHound-inspired reporting / path remediation / inventory
     parser.add_argument(
-        '--busiest-paths', nargs='?', const='short', choices=['short', 'all'],
-        help='Rank principals on the most paths to high-value targets (short|all)',
+        "directory",
+        nargs="?",
+        default=".",
+        help="Path to SharpHound & AzureHound JSON files or zip archive.",
     )
-    parser.add_argument('--busiest-paths-top', type=int, default=5, help='Top N busiest principals (default 5)')
+    parser.add_argument("--shortest-paths", action="store_true", help="Shortest paths to high-value targets")
+    parser.add_argument("--dangerous-permissions", action="store_true", help="Dangerous ACLs on high-value objects")
+    parser.add_argument("--adcs", action="store_true", help="ADCS ESC template vulnerabilities")
+    parser.add_argument("--gpo-abuse", action="store_true", help="Weak / abusable GPO permissions")
+    parser.add_argument("--dcsync", action="store_true", help="DCSync GetChanges+GetChangesAll rights")
+    parser.add_argument("--rbcd", action="store_true", help="Resource-based constrained delegation")
+    parser.add_argument("--sessions", action="store_true", help="LocalAdmin / RDP / DCOM / session summary")
+    parser.add_argument("--kerberoastable", action="store_true", help="Kerberoastable accounts")
+    parser.add_argument("--as-rep-roastable", action="store_true", help="AS-REP roastable accounts")
+    parser.add_argument("--sid-history", action="store_true", help="SID history abuse candidates")
+    parser.add_argument("--unconstrained-delegation", action="store_true", help="Unconstrained delegation")
+    parser.add_argument("--password-descriptions", action="store_true", help="Passwords in descriptions")
+    parser.add_argument("--password-never-expires", action="store_true", help="PasswordNeverExpires users")
+    parser.add_argument("--password-not-required", action="store_true", help="PasswordNotRequired users")
+    parser.add_argument("--shadow-credentials", action="store_true", help="Shadow credential paths")
+    parser.add_argument("--gpo-parsing", action="store_true", help="GPO metadata analysis")
     parser.add_argument(
-        '--path-break', action='store_true',
-        help='Recommend edges to remove to break the most attack paths',
+        "--gpo-content-dir",
+        type=str,
+        default=None,
+        help="Directory containing GPO XML reports for full content analysis",
     )
-    parser.add_argument('--path-break-top', type=int, default=15, help='Top N path-break edges (default 15)')
-    parser.add_argument('--password-age', action='store_true', help='Password age inventory ladders')
-    parser.add_argument('--stale-accounts', action='store_true', help='Inactive / never-active account inventory')
-    parser.add_argument('--privilege-inventory', action='store_true', help='Privileged group membership inventory')
+    parser.add_argument("--constrained-delegation", action="store_true", help="Constrained delegation")
+    parser.add_argument("--laps", action="store_true", help="LAPS deployment status")
+    parser.add_argument("--azure-privileged-roles", action="store_true", help="Azure privileged roles")
+    parser.add_argument("--azure-app-secrets", action="store_true", help="Azure app/SP secrets control")
+    parser.add_argument("--azure-mfa-bypass", action="store_true", help="Azure MFA bypass signals")
+    parser.add_argument("--azure-guest-access", action="store_true", help="Azure guest access")
+    parser.add_argument("--azure-sp-abuse", action="store_true", help="Azure service principal abuse")
+    parser.add_argument("--verbose", action="store_true", help="Verbose graph summary")
+    parser.add_argument("--all", action="store_true", help="Run every analysis module")
     parser.add_argument(
-        '--owned-inventory', action='store_true',
-        help='Inventory AdminTo/MemberOf for --owned principals',
+        "--export",
+        nargs="?",
+        const="md",
+        choices=["md", "json", "html", "csv", "yaml"],
+        help="Export results (md|json|html|csv|yaml)",
+    )
+    parser.add_argument("--export-bh", action="store_true", help="Export BloodHound-compatible graph JSON")
+    parser.add_argument("--dot", nargs="?", const="bloodbash.dot", help="Export Graphviz DOT file")
+    parser.add_argument("--fast", action="store_true", help="Fast mode (limit heavy pathfinding)")
+    parser.add_argument("--domain", help="Filter by domain (AD) or tenantId (Azure)")
+    parser.add_argument("--indirect", action="store_true", help="Include indirect paths/permissions")
+    parser.add_argument("--db", help="SQLite DB path for persistence (save/load graph)")
+    parser.add_argument("--owned", help="Comma-separated owned principals (find paths to them)")
+    parser.add_argument("--path-from", help="Comma-separated source principals for arbitrary paths")
+    parser.add_argument("--path-to", help="Comma-separated target principals for arbitrary paths")
+    parser.add_argument("--inspect", help="Comma-separated nodes to inspect (full props + edges)")
+    parser.add_argument("--deep-analysis", action="store_true", help="Enable full (slow) group cycle detection")
+    parser.add_argument("--debug", action="store_true", help="Enable verbose debug output for troubleshooting")
+    parser.add_argument(
+        "--busiest-paths",
+        nargs="?",
+        const="short",
+        choices=["short", "all"],
+        help="Rank principals on the most paths to high-value targets (short|all)",
+    )
+    parser.add_argument("--busiest-paths-top", type=int, default=5, help="Top N busiest principals (default 5)")
+    parser.add_argument(
+        "--path-break",
+        action="store_true",
+        help="Recommend edges to remove to break the most attack paths",
+    )
+    parser.add_argument("--path-break-top", type=int, default=15, help="Top N path-break edges (default 15)")
+    parser.add_argument("--password-age", action="store_true", help="Password age inventory ladders")
+    parser.add_argument("--stale-accounts", action="store_true", help="Inactive / never-active account inventory")
+    parser.add_argument("--privilege-inventory", action="store_true", help="Privileged group membership inventory")
+    parser.add_argument(
+        "--owned-inventory",
+        action="store_true",
+        help="Inventory AdminTo/MemberOf for --owned principals",
     )
     parser.add_argument(
-        '--inventory', action='store_true',
-        help='Run structural + password-age + stale + privilege inventories',
+        "--inventory",
+        action="store_true",
+        help="Run structural + password-age + stale + privilege inventories",
     )
     parser.add_argument(
-        '--report-pack', metavar='DIR',
-        help='Write multi-page HTML report suite + per-section CSVs + index.html',
+        "--report-pack",
+        metavar="DIR",
+        help="Write multi-page HTML report suite + per-section CSVs + index.html",
     )
     parser.add_argument(
-        '--export-zip', nargs='?', const='bloodbash-reports.zip', metavar='FILE',
-        help='Zip the report pack into a single deliverable (default bloodbash-reports.zip)',
+        "--export-zip",
+        nargs="?",
+        const="bloodbash-reports.zip",
+        metavar="FILE",
+        help="Zip the report pack into a single deliverable (default bloodbash-reports.zip)",
     )
     parser.add_argument(
-        '--profile', metavar='FILE',
-        help='YAML analysis profile (path or built-in name under profiles/)',
+        "--profile",
+        metavar="FILE",
+        help="YAML analysis profile (path or built-in name under profiles/)",
     )
     parser.add_argument(
-        '--log-file', nargs='?', const='bloodbash.log', metavar='FILE',
-        help='Write a run log file (default bloodbash.log)',
+        "--log-file",
+        nargs="?",
+        const="bloodbash.log",
+        metavar="FILE",
+        help="Write a run log file (default bloodbash.log)",
     )
+    return parser
+
+
+# ────────────────────────────────────────────────
+# Main execution
+# ────────────────────────────────────────────────
+def main():
+    parser = build_arg_parser()
     args = parser.parse_args()
 
     if args.profile:

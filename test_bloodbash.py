@@ -1590,8 +1590,25 @@ class TestBloodBash(unittest.TestCase):
             check=False,
         )
         self.assertEqual(result.returncode, 0)
-        self.assertIn("--azure-privileged-roles", result.stdout)
-        self.assertIn("--export", result.stdout)
+        out = result.stdout
+        # Structured Rich-table help (sections + key flags)
+        self.assertIn("--azure-privileged-roles", out)
+        self.assertIn("--export", out)
+        self.assertIn("Flag / argument", out)
+        self.assertIn("Description", out)
+        self.assertIn("Notes / values", out)
+        self.assertIn("Paths & remediation", out)
+        self.assertIn("Export & deliverables", out)
+        self.assertIn("Examples", out)
+        self.assertIn("--busiest-paths", out)
+        self.assertIn("--report-pack", out)
+
+    def test_print_structured_help_callable(self):
+        out = self._capture_output(bloodbash_globals["print_structured_help"], "BloodBash.py")
+        clean = self._strip_ansi(out)
+        self.assertIn("Usage", clean)
+        self.assertIn("Inventory", clean)
+        self.assertIn("--path-break", clean)
 
     def test_severity_scores_defaults(self):
         scores = bloodbash_globals['SEVERITY_SCORES']
