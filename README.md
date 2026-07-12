@@ -144,6 +144,33 @@ Findings are scored and summarized in a **Prioritized Findings** table. Abuse pa
 | `--profile FILE\|name` | YAML analysis profile (`profiles/quick.yaml`, `adcs-heavy`, `hygiene`, or custom) |
 | `--log-file [FILE]` | Append-friendly run log (default `bloodbash.log`) |
 | `--all-findings` | End of run: print a table of **every** finding (always shown, even if empty; not limited to top 20) |
+| `--from-user` / `--compromise USER` | **Compromise dossier** for a foothold principal: nested groups, outbound AdminTo/RDP/ACL counts, paths to high-value |
+| `--from-user-export [DIR]` | Export dossier as txt/csv/json lists (default `compromise-<user>/`) |
+
+#### Compromise dossier (engagement foothold view)
+
+When you land a user and want “everything this principal can do”:
+
+```bash
+# Console dossier only
+python3 BloodBash.py ./sharpout --from-user alice
+
+# Console + export pack (membership/rights/paths as .txt + .csv + dossier.json)
+python3 BloodBash.py ./sharpout --compromise 'alice@corp.local' --from-user-export
+
+# Multiple footholds
+python3 BloodBash.py ./sharpout --from-user alice,bob --from-user-export ./footholds
+```
+
+Export layout (per principal):
+
+- `summary.md` / `README.txt` / `counts.csv` — high-level numbers  
+- `membership_direct.txt` / `membership_effective.txt` — direct + nested groups  
+- `rights/<Right>.txt` + `.csv` — AdminTo, CanRDP, LocalAdmin, GenericAll, etc.  
+- `paths_to_high_value.txt` / `.csv` — outbound attack paths to HV targets  
+- `dossier.json` — full machine-readable dump  
+
+Note: `--owned` still means **paths to** owned principals (inbound). Use `--from-user` for **outbound** capability analysis.
 
 HTML exports use branded templates with **sortable tables**. Example:
 

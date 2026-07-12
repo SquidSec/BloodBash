@@ -5,6 +5,7 @@ import os
 import sys
 import argparse
 import logging
+import re
 import networkx as nx
 from collections import defaultdict, Counter
 from datetime import date, datetime, timezone
@@ -45,7 +46,7 @@ SEVERITY_SCORES = {
     "Owned Paths": 9, "Password in Description": 6,
     "Arbitrary Paths": 6, "Trust Abuse": 7, "Deep Group Nesting": 6,
     "Busiest Paths": 7, "Path Break": 8, "Password Age": 5, "Stale Accounts": 4,
-    "Privilege Inventory": 6, "Owned Inventory": 7,
+    "Privilege Inventory": 6, "Owned Inventory": 7, "Compromise Dossier": 8,
     # Azure-specific
     "Azure Privileged Roles": 10, "Azure App Secrets": 9, "Azure MFA Bypass": 8,
     "Azure Guest Access": 7, "Azure Service Principal Abuse": 8,
@@ -3218,6 +3219,554 @@ def print_structural_inventory(G, domain_filter=None):
 
 
 # ────────────────────────────────────────────────
+# Compromise dossier (--from-user / --compromise)
+# ────────────────────────────────────────────────
+# Outbound edge labels of interest for foothold capability analysis
+COMPROMISE_RIGHT_LABELS = (
+    "AdminTo", "LocalAdmin", "CanRDP", "ExecuteDCOM", "GenericAll", "GenericWrite",
+    "WriteDacl", "WriteOwner", "Owns", "ForceChangePassword", "ResetPassword",
+    "AddMember", "AddKeyCredentialLink", "AllowedToAct", "HasSession",
+    "GetChanges", "GetChangesAll", "AllExtendedRights", "WriteProperty",
+    "MemberOf",  # membership handled separately but kept for completeness
+)
+# Rights shown in the high-level summary counts (order preserved)
+COMPROMISE_SUMMARY_RIGHTS = (
+    "LocalAdmin", "AdminTo", "CanRDP", "ExecuteDCOM", "GenericAll", "GenericWrite",
+    "WriteDacl", "WriteOwner", "ForceChangePassword", "ResetPassword", "AddMember",
+    "HasSession", "AllowedToAct", "AddKeyCredentialLink", "GetChanges", "GetChangesAll",
+)
+
+
+def resolve_principal_oid(G, identifier: str, domain_filter=None) -> Optional[str]:
+    """Resolve a user/computer/group name or object id to a graph node id."""
+    if not identifier:
+        return None
+    ident = identifier.strip()
+    ident_u = ident.upper()
+    ident_short = ident_u.split("@")[0]
+    # Exact OID
+    if ident in G:
+        return ident
+    candidates = []
+    for oid, d in G.nodes(data=True):
+        if not _domain_matches(d, domain_filter):
+            continue
+        name = d.get("name") or ""
+        name_u = name.upper()
+        short = name_u.split("@")[0]
+        if name_u == ident_u or short == ident_short or oid.upper() == ident_u:
+            candidates.append(oid)
+    if not candidates:
+        # Fuzzy: substring match (prefer User type)
+        for oid, d in G.nodes(data=True):
+            if not _domain_matches(d, domain_filter):
+                continue
+            name_u = (d.get("name") or "").upper()
+            if ident_short and ident_short in name_u.split("@")[0]:
+                candidates.append(oid)
+    if not candidates:
+        return None
+    # Prefer User > Computer > Group
+    type_rank = {"user": 0, "azure user": 0, "computer": 1, "group": 2, "azure group": 2}
+
+    def rank(oid):
+        t = (G.nodes[oid].get("type") or "").lower()
+        return (type_rank.get(t, 9), G.nodes[oid].get("name") or "")
+
+    candidates.sort(key=rank)
+    return candidates[0]
+
+
+def collect_nested_groups(G, start_oid: str, max_depth: int = 25) -> Dict[str, Any]:
+    """
+    Walk outbound MemberOf edges from start_oid to collect effective group membership.
+    Returns direct groups, effective groups (incl. nested), and depth map.
+    """
+    direct = []
+    effective = []
+    depth_map = {start_oid: 0}
+    seen = {start_oid}
+    queue = [(start_oid, 0)]
+    while queue:
+        cur, depth = queue.pop(0)
+        if depth >= max_depth:
+            continue
+        for _, v, ed in G.out_edges(cur, data=True):
+            if (ed or {}).get("label") != "MemberOf":
+                continue
+            if v in seen:
+                continue
+            seen.add(v)
+            depth_map[v] = depth + 1
+            gname = G.nodes[v].get("name", v)
+            gtype = G.nodes[v].get("type", "?")
+            entry = {"id": v, "name": gname, "type": gtype, "depth": depth + 1}
+            if depth == 0:
+                direct.append(entry)
+            effective.append(entry)
+            # Continue nesting through groups
+            if (gtype or "").lower() in ("group", "azure group"):
+                queue.append((v, depth + 1))
+    direct.sort(key=lambda x: x["name"].lower())
+    effective.sort(key=lambda x: (x["depth"], x["name"].lower()))
+    return {
+        "direct": direct,
+        "effective": effective,
+        "direct_count": len(direct),
+        "effective_count": len(effective),
+        "depth_map": depth_map,
+    }
+
+
+def collect_outbound_rights_for_principals(
+    G,
+    principal_oids: Sequence[str],
+    include_labels: Optional[Sequence[str]] = None,
+) -> Dict[str, List[dict]]:
+    """
+    Collect outbound edges of interest from a set of principals (user + nested groups).
+    Returns mapping right_label -> list of {target, target_type, via, via_name}.
+    """
+    labels = set(include_labels or COMPROMISE_RIGHT_LABELS)
+    labels.discard("MemberOf")  # membership handled separately
+    by_right: Dict[str, List[dict]] = defaultdict(list)
+    seen = set()  # (label, target, via)
+    for src in principal_oids:
+        if src not in G:
+            continue
+        src_name = G.nodes[src].get("name", src)
+        for _, tgt, ed in G.out_edges(src, data=True):
+            lab = (ed or {}).get("label") or ""
+            if lab not in labels:
+                # case-insensitive match for safety
+                if lab.lower() not in {x.lower() for x in labels}:
+                    continue
+                # normalize to canonical casing if possible
+                for canon in labels:
+                    if canon.lower() == lab.lower():
+                        lab = canon
+                        break
+            key = (lab, tgt, src)
+            if key in seen:
+                continue
+            seen.add(key)
+            by_right[lab].append({
+                "target_id": tgt,
+                "target": G.nodes[tgt].get("name", tgt),
+                "target_type": G.nodes[tgt].get("type", "?"),
+                "via_id": src,
+                "via": src_name,
+                "relationship": lab,
+            })
+    for lab in by_right:
+        by_right[lab].sort(key=lambda r: (r["target"].lower(), r["via"].lower()))
+    return dict(by_right)
+
+
+def collect_paths_from_principal(
+    G,
+    source_oid: str,
+    domain_filter=None,
+    max_targets: int = 15,
+    max_paths_per_target: int = 5,
+    cutoff: int = 12,
+    fast: bool = False,
+) -> List[dict]:
+    """Shortest paths from a compromised principal to high-value targets (outbound)."""
+    if source_oid not in G:
+        return []
+    targets = _priority_high_value_targets(
+        G, domain_filter, limit=3 if fast else max_targets
+    )
+    # Also include remaining high-value if not fast
+    if not fast:
+        all_hv = get_high_value_targets(G, domain_filter)
+        seen_t = {t[0] for t in targets}
+        for t in all_hv:
+            if t[0] not in seen_t:
+                targets.append(t)
+            if len(targets) >= max_targets:
+                break
+    results = []
+    src_name = G.nodes[source_oid].get("name", source_oid)
+    for tid, tname, ttype in targets:
+        if tid == source_oid:
+            continue
+        try:
+            if not nx.has_path(G, source_oid, tid):
+                continue
+            path = nx.shortest_path(G, source_oid, tid)
+        except (nx.NetworkXNoPath, nx.NodeNotFound):
+            continue
+        if len(path) - 1 > cutoff:
+            continue
+        hop_labels = []
+        for i in range(len(path) - 1):
+            hop_labels.append(_edge_label(G, path[i], path[i + 1]))
+        path_str = " -> ".join(
+            f"{G.nodes[path[i]]['name']}"
+            + (f" -[{hop_labels[i]}]>" if i < len(path) - 1 else "")
+            for i in range(len(path))
+        )
+        results.append({
+            "source": src_name,
+            "source_id": source_oid,
+            "target": tname,
+            "target_id": tid,
+            "target_type": ttype,
+            "length": len(path) - 1,
+            "path": path,
+            "path_str": path_str,
+            "relationships": hop_labels,
+        })
+        if fast and len(results) >= max_paths_per_target:
+            break
+    results.sort(key=lambda r: (r["length"], r["target"].lower()))
+    return results[: max_targets * max_paths_per_target]
+
+
+def build_compromise_dossier(
+    G,
+    principal: str,
+    domain_filter=None,
+    fast: bool = False,
+    max_path_targets: int = 15,
+) -> Optional[dict]:
+    """
+    Build a full compromise dossier for one principal:
+    identity, membership (direct+nested), outbound rights, paths to HV, summary counts.
+    """
+    oid = resolve_principal_oid(G, principal, domain_filter)
+    if not oid:
+        return None
+    d = G.nodes[oid]
+    membership = collect_nested_groups(G, oid)
+    # Effective principals for rights = self + all nested groups
+    principal_oids = [oid] + [g["id"] for g in membership["effective"]]
+    rights = collect_outbound_rights_for_principals(G, principal_oids)
+    paths = collect_paths_from_principal(
+        G,
+        oid,
+        domain_filter=domain_filter,
+        max_targets=5 if fast else max_path_targets,
+        max_paths_per_target=3 if fast else 5,
+        cutoff=8 if fast else 12,
+        fast=fast,
+    )
+    counts = {
+        "direct_groups": membership["direct_count"],
+        "effective_groups": membership["effective_count"],
+        "paths_to_high_value": len(paths),
+    }
+    for lab in COMPROMISE_SUMMARY_RIGHTS:
+        counts[lab] = len(rights.get(lab, []))
+    # Any other rights found
+    for lab, rows in rights.items():
+        if lab not in counts:
+            counts[lab] = len(rows)
+
+    props = d.get("props") or {}
+    return {
+        "query": principal,
+        "resolved_id": oid,
+        "name": d.get("name"),
+        "type": d.get("type"),
+        "domain": props.get("domain") or props.get("tenantId"),
+        "is_azure": bool(d.get("is_azure")),
+        "enabled": props.get("enabled", props.get("Enabled")),
+        "highvalue": get_bool_prop_ci(props, ["highvalue", "HighValue"]),
+        "membership": membership,
+        "rights": rights,
+        "paths_to_high_value": paths,
+        "counts": counts,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "tool": "BloodBash",
+        "version": __version__,
+        "organization": __org__,
+    }
+
+
+def print_compromise_dossier(dossier: dict, detail_limit: int = 25) -> None:
+    """Structured console report for a compromise dossier."""
+    if not dossier:
+        console.print("[yellow]No compromise dossier to print[/yellow]")
+        return
+    name = dossier.get("name") or dossier.get("query")
+    console.rule(f"[bold magenta]Compromise Dossier: {name}[/bold magenta]")
+    console.print(
+        f"[bold cyan]{name}[/bold cyan]  ({dossier.get('type')})  "
+        f"[dim]id={dossier.get('resolved_id')} domain={dossier.get('domain')}[/dim]"
+    )
+    if dossier.get("enabled") is False:
+        console.print("[yellow]Account appears disabled[/yellow]")
+    if dossier.get("highvalue"):
+        console.print("[red]Marked highvalue in collector data[/red]")
+
+    # ── Summary counts ──
+    counts = dossier.get("counts") or {}
+    table = Table(
+        title="Capability summary (outbound)",
+        show_header=True,
+        header_style="bold red",
+    )
+    table.add_column("Metric", style="cyan")
+    table.add_column("Count", justify="right", style="red")
+    table.add_row("Direct group membership", str(counts.get("direct_groups", 0)))
+    table.add_row("Effective groups (nested)", str(counts.get("effective_groups", 0)))
+    table.add_row("Paths to high-value", str(counts.get("paths_to_high_value", 0)))
+    for lab in COMPROMISE_SUMMARY_RIGHTS:
+        n = counts.get(lab, 0)
+        if n:
+            table.add_row(lab, str(n))
+    # Extra rights not in summary list
+    for lab, n in sorted(counts.items()):
+        if lab in ("direct_groups", "effective_groups", "paths_to_high_value"):
+            continue
+        if lab in COMPROMISE_SUMMARY_RIGHTS:
+            continue
+        if n:
+            table.add_row(lab, str(n))
+    console.print(table)
+
+    # ── Membership ──
+    mem = dossier.get("membership") or {}
+    console.print("\n[bold]Direct group membership[/bold]")
+    direct = mem.get("direct") or []
+    if not direct:
+        console.print("  [dim](none)[/dim]")
+    for g in direct[:detail_limit]:
+        console.print(f"  • [green]{g['name']}[/green] ({g.get('type')})")
+    if len(direct) > detail_limit:
+        console.print(f"  [dim]... and {len(direct) - detail_limit} more[/dim]")
+
+    console.print("\n[bold]Effective / nested groups[/bold]")
+    effective = mem.get("effective") or []
+    nested_only = [g for g in effective if g.get("depth", 1) > 1]
+    if not nested_only and effective:
+        console.print("  [dim](no nested groups beyond direct membership)[/dim]")
+    for g in nested_only[:detail_limit]:
+        console.print(
+            f"  • [cyan]depth {g['depth']}[/cyan] [green]{g['name']}[/green] ({g.get('type')})"
+        )
+    if len(nested_only) > detail_limit:
+        console.print(f"  [dim]... and {len(nested_only) - detail_limit} more[/dim]")
+
+    # ── Rights breakdown ──
+    rights = dossier.get("rights") or {}
+    console.print("\n[bold]Outbound rights breakdown[/bold]")
+    if not rights:
+        console.print("  [dim](no outbound AdminTo/RDP/ACL rights found)[/dim]")
+    for lab in list(COMPROMISE_SUMMARY_RIGHTS) + sorted(
+        set(rights.keys()) - set(COMPROMISE_SUMMARY_RIGHTS)
+    ):
+        rows = rights.get(lab) or []
+        if not rows:
+            continue
+        console.print(f"  [yellow]{lab}[/yellow] ([red]{len(rows)}[/red])")
+        for r in rows[:detail_limit]:
+            via = r.get("via") or ""
+            via_note = f" [dim]via {via}[/dim]" if via and via != dossier.get("name") else ""
+            console.print(
+                f"    → [cyan]{r['target']}[/cyan] ({r.get('target_type')}){via_note}"
+            )
+        if len(rows) > detail_limit:
+            console.print(f"    [dim]... and {len(rows) - detail_limit} more[/dim]")
+
+    # ── Paths to HV ──
+    paths = dossier.get("paths_to_high_value") or []
+    console.print("\n[bold]Attack paths to high-value targets[/bold]")
+    if not paths:
+        console.print("  [dim](no path to high-value targets found within limits)[/dim]")
+    for p in paths[:detail_limit]:
+        console.print(
+            f"  [dim]len {p['length']}[/dim] → [bold red]{p['target']}[/bold red] "
+            f"({p.get('target_type')})"
+        )
+        console.print(f"    {p.get('path_str')}")
+    if len(paths) > detail_limit:
+        console.print(f"  [dim]... and {len(paths) - detail_limit} more paths[/dim]")
+
+    add_finding(
+        "Compromise Dossier",
+        f"{name}: {counts.get('effective_groups', 0)} groups, "
+        f"{counts.get('LocalAdmin', 0) + counts.get('AdminTo', 0)} admin rights, "
+        f"{counts.get('CanRDP', 0)} RDP, {counts.get('paths_to_high_value', 0)} HV paths",
+        score=8,
+    )
+
+
+def export_compromise_dossier(dossier: dict, export_dir: str) -> List[str]:
+    """
+    Write a per-principal compromise pack:
+      summary.md, counts.csv, membership_*.txt, rights/*.txt, paths_*.txt/csv, dossier.json
+    """
+    if not dossier:
+        return []
+    export_dir = os.path.abspath(export_dir)
+    os.makedirs(export_dir, exist_ok=True)
+    rights_dir = os.path.join(export_dir, "rights")
+    os.makedirs(rights_dir, exist_ok=True)
+    written: List[str] = []
+    name = dossier.get("name") or dossier.get("query") or "principal"
+    counts = dossier.get("counts") or {}
+    mem = dossier.get("membership") or {}
+    rights = dossier.get("rights") or {}
+    paths = dossier.get("paths_to_high_value") or []
+
+    # summary.md
+    summary_path = os.path.join(export_dir, "summary.md")
+    lines = [
+        f"# Compromise Dossier: {name}",
+        "",
+        f"- **Resolved:** `{dossier.get('name')}` ({dossier.get('type')})",
+        f"- **Object ID:** `{dossier.get('resolved_id')}`",
+        f"- **Domain / tenant:** `{dossier.get('domain')}`",
+        f"- **Generated:** {dossier.get('generated_at')}",
+        f"- **Tool:** BloodBash v{dossier.get('version', __version__)} ({dossier.get('organization', __org__)})",
+        "",
+        "## Summary counts",
+        "",
+        "| Metric | Count |",
+        "|--------|------:|",
+        f"| Direct groups | {counts.get('direct_groups', 0)} |",
+        f"| Effective groups (nested) | {counts.get('effective_groups', 0)} |",
+        f"| Paths to high-value | {counts.get('paths_to_high_value', 0)} |",
+    ]
+    for lab in COMPROMISE_SUMMARY_RIGHTS:
+        n = counts.get(lab, 0)
+        if n:
+            lines.append(f"| {lab} | {n} |")
+    for lab, n in sorted(counts.items()):
+        if lab in COMPROMISE_SUMMARY_RIGHTS or lab in (
+            "direct_groups", "effective_groups", "paths_to_high_value",
+        ):
+            continue
+        if n:
+            lines.append(f"| {lab} | {n} |")
+    lines += ["", "## Files", "", "- `membership_direct.txt`", "- `membership_effective.txt`",
+              "- `rights/*.txt`", "- `paths_to_high_value.txt`", "- `paths_to_high_value.csv`",
+              "- `counts.csv`", "- `dossier.json`", ""]
+    with open(summary_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    written.append(summary_path)
+
+    # counts.csv
+    counts_path = os.path.join(export_dir, "counts.csv")
+    write_csv_file(counts_path, ["Metric", "Count"], [[k, v] for k, v in sorted(counts.items())])
+    written.append(counts_path)
+
+    # membership lists
+    direct_path = os.path.join(export_dir, "membership_direct.txt")
+    with open(direct_path, "w", encoding="utf-8") as f:
+        for g in mem.get("direct") or []:
+            f.write(f"{g['name']}\t{g.get('type', '')}\tdepth={g.get('depth', 1)}\n")
+    written.append(direct_path)
+
+    effective_path = os.path.join(export_dir, "membership_effective.txt")
+    with open(effective_path, "w", encoding="utf-8") as f:
+        for g in mem.get("effective") or []:
+            f.write(f"{g['name']}\t{g.get('type', '')}\tdepth={g.get('depth', 1)}\n")
+    written.append(effective_path)
+
+    # rights per label
+    for lab, rows in sorted(rights.items()):
+        safe = re.sub(r"[^A-Za-z0-9._-]+", "_", lab)
+        rpath = os.path.join(rights_dir, f"{safe}.txt")
+        with open(rpath, "w", encoding="utf-8") as f:
+            for r in rows:
+                f.write(
+                    f"{r['target']}\t{r.get('target_type', '')}\t"
+                    f"via={r.get('via', '')}\t{r.get('relationship', lab)}\n"
+                )
+        written.append(rpath)
+        # also CSV per right
+        cpath = os.path.join(rights_dir, f"{safe}.csv")
+        write_csv_file(
+            cpath,
+            ["Target", "TargetType", "Via", "Relationship"],
+            [[r["target"], r.get("target_type"), r.get("via"), r.get("relationship")] for r in rows],
+        )
+        written.append(cpath)
+
+    # paths
+    paths_txt = os.path.join(export_dir, "paths_to_high_value.txt")
+    with open(paths_txt, "w", encoding="utf-8") as f:
+        if not paths:
+            f.write("(none)\n")
+        for p in paths:
+            f.write(f"[{p['length']}] {p['source']} => {p['target']} ({p.get('target_type')})\n")
+            f.write(f"  {p.get('path_str')}\n\n")
+    written.append(paths_txt)
+
+    paths_csv = os.path.join(export_dir, "paths_to_high_value.csv")
+    write_csv_file(
+        paths_csv,
+        ["Length", "Source", "Target", "TargetType", "Path"],
+        [[p["length"], p["source"], p["target"], p.get("target_type"), p.get("path_str")] for p in paths],
+    )
+    written.append(paths_csv)
+
+    # full JSON (drop non-serializable path node id lists ok - they're strings)
+    json_path = os.path.join(export_dir, "dossier.json")
+    serializable = dict(dossier)
+    # path lists of node ids are fine as JSON
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(serializable, f, indent=2, default=str)
+    written.append(json_path)
+
+    # plain README for operators who want txt only
+    readme = os.path.join(export_dir, "README.txt")
+    with open(readme, "w", encoding="utf-8") as f:
+        f.write(f"Compromise dossier for {name}\n")
+        f.write(f"Generated by BloodBash v{__version__} ({__org__})\n\n")
+        f.write("Quick counts:\n")
+        for k, v in sorted(counts.items()):
+            if v:
+                f.write(f"  {k}: {v}\n")
+        f.write("\nSee summary.md and rights/ for full lists.\n")
+    written.append(readme)
+
+    console.print(f"[green]Compromise dossier exported:[/green] {export_dir} ({len(written)} files)")
+    logger.info("Compromise dossier for %s written to %s", name, export_dir)
+    return written
+
+
+def run_compromise_dossiers(
+    G,
+    principals: str,
+    domain_filter=None,
+    export_dir: Optional[str] = None,
+    fast: bool = False,
+) -> List[dict]:
+    """
+    Build/print/export dossiers for one or more comma-separated principals.
+    """
+    names = [p.strip() for p in (principals or "").split(",") if p.strip()]
+    if not names:
+        console.print("[yellow]No principal provided for compromise dossier[/yellow]")
+        return []
+    dossiers = []
+    for name in names:
+        dossier = build_compromise_dossier(
+            G, name, domain_filter=domain_filter, fast=fast
+        )
+        if not dossier:
+            console.print(f"[red]Principal not found:[/red] {name}")
+            continue
+        print_compromise_dossier(dossier)
+        if export_dir is not None:
+            # Per-principal subdir when multiple names or explicit export root
+            safe = re.sub(r"[^A-Za-z0-9._@-]+", "_", dossier.get("name") or name)
+            if len(names) == 1 and export_dir:
+                out = export_dir
+            else:
+                out = os.path.join(export_dir or "compromise-dossiers", safe)
+            export_compromise_dossier(dossier, out)
+        dossiers.append(dossier)
+    return dossiers
+
+
+# ────────────────────────────────────────────────
 # Multi-report HTML suite / CSV sections / zip pack
 # ────────────────────────────────────────────────
 HTML_TABLE_SORT_JS = """
@@ -3753,7 +4302,9 @@ HELP_TABLE_SECTIONS = [
             ("--busiest-paths-top N", "How many busiest principals to show", "default: 5"),
             ("--path-break", "Edges to remove to break the most paths", "remediation hints"),
             ("--path-break-top N", "How many path-break edges to show", "default: 15"),
-            ("--owned a,b", "Shortest paths involving owned principals", "comma-separated"),
+            ("--owned a,b", "Shortest paths *to* owned principals", "inbound to foothold"),
+            ("--from-user / --compromise USER", "Compromise dossier for USER (outbound)", "membership, rights, HV paths"),
+            ("--from-user-export [DIR]", "Export dossier lists (txt/csv/json)", "default: compromise-<user>/"),
             ("--path-from SRC", "Arbitrary path sources", "use with --path-to"),
             ("--path-to DST", "Arbitrary path targets", "use with --path-from"),
             ("--indirect", "Include group-mediated paths/rights", ""),
@@ -3799,6 +4350,7 @@ HELP_EXAMPLES = [
     ("Paths + remediation", "python3 BloodBash.py ./sharpout --busiest-paths short --path-break --fast"),
     ("Inventory report pack", "python3 BloodBash.py ./sharpout --inventory --report-pack ./reports --export-zip"),
     ("Owned paths", "python3 BloodBash.py ./sharpout --owned alice,bob --owned-inventory --shortest-paths"),
+    ("Compromise dossier", "python3 BloodBash.py ./sharpout --from-user alice --from-user-export"),
     ("Export findings", "python3 BloodBash.py ./sharpout --all --export=html --export-bh"),
     ("Full findings table", "python3 BloodBash.py ./sharpout --dcsync --adcs --all-findings"),
 ]
@@ -3945,7 +4497,27 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--domain", help="Filter by domain (AD) or tenantId (Azure)")
     parser.add_argument("--indirect", action="store_true", help="Include indirect paths/permissions")
     parser.add_argument("--db", help="SQLite DB path for persistence (save/load graph)")
-    parser.add_argument("--owned", help="Comma-separated owned principals (find paths to them)")
+    parser.add_argument("--owned", help="Comma-separated owned principals (find paths *to* them)")
+    parser.add_argument(
+        "--from-user",
+        "--compromise",
+        dest="from_user",
+        metavar="USER",
+        help=(
+            "Compromise dossier for USER (outbound): membership, nested groups, "
+            "AdminTo/RDP/ACL counts, paths to high-value. Comma-separated for multiple."
+        ),
+    )
+    parser.add_argument(
+        "--from-user-export",
+        nargs="?",
+        const="",
+        metavar="DIR",
+        help=(
+            "Export compromise dossier to DIR (txt/csv/json lists). "
+            "If DIR omitted, writes compromise-<user>/ under the cwd."
+        ),
+    )
     parser.add_argument("--path-from", help="Comma-separated source principals for arbitrary paths")
     parser.add_argument("--path-to", help="Comma-separated target principals for arbitrary paths")
     parser.add_argument("--inspect", help="Comma-separated nodes to inspect (full props + edges)")
@@ -4057,11 +4629,43 @@ def main():
         args.path_to, args.inspect, args.export_bh, args.dot, args.deep_analysis,
         args.gpo_content_dir, args.busiest_paths, args.path_break, args.password_age,
         args.stale_accounts, args.privilege_inventory, args.owned_inventory,
-        args.inventory, args.report_pack, args.export_zip,
+        args.inventory, args.report_pack, args.export_zip, args.from_user,
+        getattr(args, "from_user_export", None) is not None,
     ])
     run_all = args.all or not selected_checks
+    # Pure compromise-dossier run should not pull in default "run everything"
+    if args.from_user and not args.all:
+        # If only from-user (+ export/log/domain/fast) selected, skip run_all bulk checks
+        only_dossier = not any([
+            args.shortest_paths, args.dangerous_permissions, args.adcs, args.gpo_abuse,
+            args.dcsync, args.rbcd, args.sessions, args.kerberoastable, args.as_rep_roastable,
+            args.sid_history, args.unconstrained_delegation, args.password_descriptions,
+            args.password_never_expires, args.password_not_required, args.shadow_credentials,
+            args.gpo_parsing, args.constrained_delegation, args.laps,
+            args.azure_privileged_roles, args.azure_app_secrets, args.azure_mfa_bypass,
+            args.azure_guest_access, args.azure_sp_abuse, args.owned, args.path_from,
+            args.path_to, args.inspect, args.export_bh, args.dot, args.deep_analysis,
+            args.gpo_content_dir, args.busiest_paths, args.path_break, args.password_age,
+            args.stale_accounts, args.privilege_inventory, args.owned_inventory,
+            args.inventory, args.report_pack,
+        ])
+        if only_dossier:
+            run_all = False
 
-    if args.all:
+    if args.from_user and not args.all and not any([
+        args.shortest_paths, args.dangerous_permissions, args.adcs, args.gpo_abuse,
+        args.dcsync, args.rbcd, args.sessions, args.kerberoastable, args.as_rep_roastable,
+        args.sid_history, args.unconstrained_delegation, args.password_descriptions,
+        args.password_never_expires, args.password_not_required, args.shadow_credentials,
+        args.gpo_parsing, args.constrained_delegation, args.laps,
+        args.azure_privileged_roles, args.azure_app_secrets, args.azure_mfa_bypass,
+        args.azure_guest_access, args.azure_sp_abuse, args.owned, args.path_from,
+        args.inspect, args.export_bh, args.dot, args.deep_analysis, args.gpo_content_dir,
+        args.busiest_paths, args.path_break, args.password_age, args.stale_accounts,
+        args.privilege_inventory, args.owned_inventory, args.inventory, args.report_pack,
+    ]):
+        mode_str = f"Compromise dossier (--from-user {args.from_user})"
+    elif args.all:
         mode_str = "Full analysis (AD + Azure) (--all)"
     elif selected_checks:
         mode_str = "Selected checks (including AD and Azure features)"
@@ -4120,6 +4724,25 @@ def main():
         print_azure_service_principal_abuse(G, args.domain)
     if args.owned:
         print_paths_to_owned(G, args.owned, args.domain)
+    if args.from_user:
+        export_root = None
+        if args.from_user_export is not None:
+            if args.from_user_export == "":
+                # Default directory derived from first principal
+                first = args.from_user.split(",")[0].strip()
+                safe = re.sub(r"[^A-Za-z0-9._@-]+", "_", first) or "principal"
+                export_root = os.path.join(os.getcwd(), f"compromise-{safe}")
+            else:
+                export_root = args.from_user_export
+        run_compromise_dossiers(
+            G,
+            args.from_user,
+            domain_filter=args.domain,
+            export_dir=export_root,
+            fast=args.fast,
+        )
+    elif args.from_user_export is not None and not args.from_user:
+        console.print("[yellow]--from-user-export requires --from-user / --compromise[/yellow]")
     if args.path_from and args.path_to:
         print_arbitrary_paths(G, args.path_from, args.path_to, args.domain)
     if args.inspect:
