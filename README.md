@@ -355,7 +355,9 @@ Ingest understands modern collector output: group `Members`, `AllowedToAct` (RBC
 
 ## Metasploit module
 
-Wraps the SquidSec BloodBash CLI and reports findings into the Metasploit DB.
+Wraps the SquidSec BloodBash CLI (v1.4+) and reports findings into the Metasploit DB.
+Options track the CLI: AD/Azure checks, inventory, busiest-paths / path-break,
+`--from-user` compromise dossiers, profiles, report packs, exports, and `--db`.
 
 ```bash
 cp modules/auxiliary/analyzer/bloodbash_analyzer.rb \
@@ -371,8 +373,19 @@ set ALL_CHECKS true
 run
 ```
 
-Set `PYTHON` if `python3` is not on `PATH`. Options mirror the CLI (Azure checks, exports, paths, `--db`, etc.).
+```text
+# Foothold dossier + hygiene (parity with CLI examples)
+set FROM_USER alice
+set FROM_USER_EXPORT
+set PASSWORD_NEVER_EXPIRES true
+set KERBEROASTABLE true
+set ALL_FINDINGS true
+run
+```
 
+Set `PYTHON` if `python3` is not on `PATH`. Point `BLOODBASH_PATH` at a standalone
+binary (non-`.py`) to skip the Python interpreter. Domain filtering is case-insensitive
+(matches CLI).
 ## Development
 
 ```bash
