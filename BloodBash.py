@@ -80,24 +80,47 @@ def add_finding(category, details, score=None):
     if score is None:
         score = SEVERITY_SCORES.get(category, 5)
     global_findings.append((score, category, details))
-def print_prioritized_findings():
-    if not global_findings:
-        return
-    console.rule("[bold magenta]Prioritized Findings by Severity[/bold magenta]")
+def print_prioritized_findings(show_all=False):
+    """
+    Print findings summary table at end of run.
+
+    Default: top 20 by severity (skipped when empty).
+    show_all / --all-findings: always print a table of every finding,
+    including an empty-state row when nothing was recorded.
+    """
     sorted_findings = sorted(global_findings, key=lambda x: x[0], reverse=True)
+    if show_all:
+        console.rule("[bold magenta]All Findings by Severity[/bold magenta]")
+        title = f"All Findings · {__org__} ({len(sorted_findings)})"
+        rows = sorted_findings
+    else:
+        if not global_findings:
+            return
+        console.rule("[bold magenta]Prioritized Findings by Severity[/bold magenta]")
+        title = f"Findings Summary · {__org__}"
+        rows = sorted_findings[:20]
     table = Table(
-        title=f"Findings Summary · {__org__}",
+        title=title,
         show_header=True,
         header_style="bold red",
     )
+    table.add_column("#", style="dim", justify="right")
     table.add_column("Severity Score", style="red", justify="right")
     table.add_column("Category", style="cyan")
-    table.add_column("Details", style="yellow")
-    for score, cat, det in sorted_findings[:20]:
-        table.add_row(str(score), cat, det)
+    table.add_column("Details", style="yellow", overflow="fold")
+    if not rows:
+        table.add_row("—", "—", "(none)", "No findings recorded")
+    else:
+        for i, (score, cat, det) in enumerate(rows, 1):
+            table.add_row(str(i), str(score), cat, det)
     console.print(table)
-    if len(sorted_findings) > 20:
-        console.print(f"[dim]... and {len(sorted_findings) - 20} more[/dim]")
+    if not show_all and len(sorted_findings) > 20:
+        console.print(
+            f"[dim]... and {len(sorted_findings) - 20} more "
+            f"(pass --all-findings to list every finding)[/dim]"
+        )
+    elif show_all:
+        console.print(f"[dim]Total findings: {len(sorted_findings)}[/dim]")
 # ────────────────────────────────────────────────
 # Intro Banner
 # ────────────────────────────────────────────────
@@ -2563,6 +2586,7 @@ def apply_profile_to_args(args, profile: dict):
         "report_pack": None,
         "export_zip": None,
         "log_file": None,
+        "all_findings": False,
     }
     for key, default in scalar_defaults.items():
         if key not in profile:
@@ -3608,6 +3632,7 @@ HELP_TABLE_SECTIONS = [
             ("--fast", "Limit heavy pathfinding", "top DA/EA-style targets only"),
             ("--verbose", "Print verbose graph summary", ""),
             ("--debug", "Verbose parse/build logging", "troubleshooting"),
+            ("--all-findings", "End with a full findings table (every row)", "always prints, even if empty"),
             ("-h, --help", "Show this structured help", ""),
         ],
     ),
@@ -3687,6 +3712,7 @@ HELP_TABLE_SECTIONS = [
             ("--dot [FILE]", "Graphviz DOT export", "default: bloodbash.dot"),
             ("--report-pack DIR", "Multi-page HTML suite + CSVs + index.html", ""),
             ("--export-zip [FILE]", "Zip the report pack", "default: bloodbash-reports.zip"),
+            ("--all-findings", "Print complete findings table at end of run", "not limited to top 20"),
             ("--log-file [FILE]", "Write a run audit log", "default: bloodbash.log"),
         ],
     ),
@@ -3708,6 +3734,7 @@ HELP_EXAMPLES = [
     ("Inventory report pack", "python3 BloodBash.py ./sharpout --inventory --report-pack ./reports --export-zip"),
     ("Owned paths", "python3 BloodBash.py ./sharpout --owned alice,bob --owned-inventory --shortest-paths"),
     ("Export findings", "python3 BloodBash.py ./sharpout --all --export=html --export-bh"),
+    ("Full findings table", "python3 BloodBash.py ./sharpout --dcsync --adcs --all-findings"),
 ]
 
 
@@ -3834,6 +3861,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--azure-sp-abuse", action="store_true", help="Azure service principal abuse")
     parser.add_argument("--verbose", action="store_true", help="Verbose graph summary")
     parser.add_argument("--all", action="store_true", help="Run every analysis module")
+    parser.add_argument(
+        "--all-findings",
+        action="store_true",
+        help="At end of run, print a table of every finding (always shown, even if empty)",
+    )
     parser.add_argument(
         "--export",
         nargs="?",
@@ -4100,7 +4132,7 @@ def main():
         export_bloodhound_compatible(G)
     if args.dot:
         export_to_dot(G, args.dot, args.domain)
-    print_prioritized_findings()
+    print_prioritized_findings(show_all=bool(getattr(args, "all_findings", False)))
     elapsed = time.time() - start_time
     logger.info("Completed in %.2f seconds with %d findings", elapsed, len(global_findings))
     console.print(f"\n[italic green]Completed in {elapsed:.2f} seconds[/italic green]")

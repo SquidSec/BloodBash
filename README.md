@@ -143,6 +143,7 @@ Findings are scored and summarized in a **Prioritized Findings** table. Abuse pa
 | `--export-zip [FILE]` | Zip a report pack into one engagement deliverable |
 | `--profile FILE\|name` | YAML analysis profile (`profiles/quick.yaml`, `adcs-heavy`, `hygiene`, or custom) |
 | `--log-file [FILE]` | Append-friendly run log (default `bloodbash.log`) |
+| `--all-findings` | End of run: print a table of **every** finding (always shown, even if empty; not limited to top 20) |
 
 HTML exports use branded templates with **sortable tables**. Example:
 

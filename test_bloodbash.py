@@ -1609,6 +1609,38 @@ class TestBloodBash(unittest.TestCase):
         self.assertIn("Usage", clean)
         self.assertIn("Inventory", clean)
         self.assertIn("--path-break", clean)
+        self.assertIn("--all-findings", clean)
+
+    def test_all_findings_table_empty(self):
+        """--all-findings always prints a table, even with zero findings."""
+        bloodbash_globals["global_findings"] = []
+        out = self._capture_output(bloodbash_globals["print_prioritized_findings"], show_all=True)
+        clean = self._strip_ansi(out)
+        self.assertIn("All Findings", clean)
+        self.assertIn("No findings recorded", clean)
+        self.assertIn("Total findings: 0", clean)
+
+    def test_all_findings_table_lists_every_row(self):
+        """--all-findings prints more than the default top-20 cap."""
+        bloodbash_globals["global_findings"] = []
+        for i in range(25):
+            bloodbash_globals["add_finding"]("Kerberoastable", f"user{i}@lab.local", score=5)
+        bloodbash_globals["add_finding"]("DCSync", "attacker can DCSync", score=10)
+        out_all = self._capture_output(bloodbash_globals["print_prioritized_findings"], show_all=True)
+        clean_all = self._strip_ansi(out_all)
+        self.assertIn("All Findings", clean_all)
+        self.assertIn("Total findings: 26", clean_all)
+        self.assertIn("attacker can DCSync", clean_all)
+        self.assertIn("user24@lab.local", clean_all)
+        # default mode still caps at 20
+        bloodbash_globals["global_findings"] = []
+        for i in range(25):
+            bloodbash_globals["add_finding"]("Kerberoastable", f"user{i}@lab.local", score=5)
+        out_default = self._capture_output(bloodbash_globals["print_prioritized_findings"])
+        clean_default = self._strip_ansi(out_default)
+        self.assertIn("Prioritized Findings", clean_default)
+        self.assertIn("--all-findings", clean_default)
+        self.assertIn("and 5 more", clean_default)
 
     def test_severity_scores_defaults(self):
         scores = bloodbash_globals['SEVERITY_SCORES']
