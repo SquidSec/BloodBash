@@ -1663,8 +1663,18 @@ class TestBloodBash(unittest.TestCase):
         self.assertIn("Paths & remediation", out)
         self.assertIn("Export & deliverables", out)
         self.assertIn("Examples", out)
+        self.assertIn("compromise dossier", out.lower())
+        self.assertIn("--from-user", out)
+        self.assertIn("--from-user-export", out)
         self.assertIn("--busiest-paths", out)
         self.assertIn("--report-pack", out)
+        # Plenty of categorized examples
+        self.assertIn("Examples — basics", out)
+        self.assertIn("Examples — compromise dossier", out)
+        self.assertIn("Examples — attack paths", out)
+        self.assertIn("Examples — selective AD", out)
+        self.assertIn("Examples — inventory", out)
+        self.assertIn("Examples — Azure", out)
 
     def test_print_structured_help_callable(self):
         out = self._capture_output(bloodbash_globals["print_structured_help"], "BloodBash.py")

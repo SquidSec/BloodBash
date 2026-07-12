@@ -4343,16 +4343,94 @@ HELP_TABLE_SECTIONS = [
     ),
 ]
 
-HELP_EXAMPLES = [
-    ("Full analysis", "python3 BloodBash.py ./sharpout --all"),
-    ("Quick profile pack", "python3 BloodBash.py ./sharpout --profile quick"),
-    ("Critical checks only", "python3 BloodBash.py ./sharpout --dcsync --adcs --dangerous-permissions"),
-    ("Paths + remediation", "python3 BloodBash.py ./sharpout --busiest-paths short --path-break --fast"),
-    ("Inventory report pack", "python3 BloodBash.py ./sharpout --inventory --report-pack ./reports --export-zip"),
-    ("Owned paths", "python3 BloodBash.py ./sharpout --owned alice,bob --owned-inventory --shortest-paths"),
-    ("Compromise dossier", "python3 BloodBash.py ./sharpout --from-user alice --from-user-export"),
-    ("Export findings", "python3 BloodBash.py ./sharpout --all --export=html --export-bh"),
-    ("Full findings table", "python3 BloodBash.py ./sharpout --dcsync --adcs --all-findings"),
+# Categorized example commands shown in --help (and mirrored in README).
+# Use {prog} as a placeholder for the executable name.
+HELP_EXAMPLE_SECTIONS = [
+    (
+        "Examples — basics",
+        [
+            ("Show this help", "{prog} --help"),
+            ("Full analysis (AD + Azure)", "{prog} ./sharpout --all"),
+            ("Full analysis, large env (faster paths)", "{prog} ./sharpout --all --fast"),
+            ("Default pass (no flags)", "{prog} ./sharpout"),
+            ("Quiet-ish: one domain only", "{prog} ./sharpout --all --domain CORP.LOCAL"),
+            ("Zip input", "{prog} ./2024-collection.zip --all --fast"),
+            ("Sample AD lab data", "{prog} SampleSharphoundADData --all --fast"),
+            ("Sample Azure data", "{prog} SampleAzurehoundData --azure-privileged-roles --azure-guest-access"),
+        ],
+    ),
+    (
+        "Examples — compromise dossier (foothold / newly owned user)",
+        [
+            ("Dossier: what can alice do?", "{prog} ./sharpout --from-user alice"),
+            ("Alias --compromise", "{prog} ./sharpout --compromise alice@corp.local"),
+            ("Dossier + export pack (txt/csv/json)", "{prog} ./sharpout --from-user alice --from-user-export"),
+            ("Export to custom directory", "{prog} ./sharpout --from-user alice --from-user-export ./alice-dossier"),
+            ("Multiple footholds", "{prog} ./sharpout --from-user alice,bob,svc_backup --from-user-export ./footholds"),
+            ("Dossier + full findings table", "{prog} ./sharpout --from-user alice --all-findings"),
+            ("Dossier + domain filter", "{prog} ./sharpout --from-user alice --domain CORP.LOCAL --from-user-export"),
+            ("Dossier on sample data", "{prog} SampleSharphoundADData --from-user SCOTT --from-user-export ./scott-out --fast"),
+            ("Inbound paths TO owned loot (not outbound)", "{prog} ./sharpout --owned alice --owned-inventory"),
+            ("Contrast: path from alice to DA", "{prog} ./sharpout --path-from alice --path-to 'domain admins'"),
+        ],
+    ),
+    (
+        "Examples — attack paths & remediation",
+        [
+            ("Shortest paths to high-value", "{prog} ./sharpout --shortest-paths"),
+            ("Busiest paths (short)", "{prog} ./sharpout --busiest-paths short --busiest-paths-top 10"),
+            ("Busiest paths (all lengths)", "{prog} ./sharpout --busiest-paths all --busiest-paths-top 5"),
+            ("Path-break remediation", "{prog} ./sharpout --path-break --path-break-top 20"),
+            ("Paths + remediation pack", "{prog} ./sharpout --busiest-paths short --path-break --fast --report-pack ./path-reports"),
+            ("Custom source → target", "{prog} ./sharpout --path-from helpdesk --path-to 'domain admins@corp.local'"),
+            ("Indirect / group-mediated edges", "{prog} ./sharpout --shortest-paths --indirect"),
+            ("Deep group nesting + cycles", "{prog} ./sharpout --deep-analysis"),
+            ("Inspect one node", "{prog} ./sharpout --inspect alice@corp.local"),
+        ],
+    ),
+    (
+        "Examples — selective AD checks",
+        [
+            ("Critical trio", "{prog} ./sharpout --dcsync --adcs --dangerous-permissions"),
+            ("Credential abuse", "{prog} ./sharpout --kerberoastable --as-rep-roastable --password-descriptions"),
+            ("Delegation suite", "{prog} ./sharpout --unconstrained-delegation --constrained-delegation --rbcd"),
+            ("Shadow credentials", "{prog} ./sharpout --shadow-credentials"),
+            ("Password hygiene", "{prog} ./sharpout --password-never-expires --password-not-required --password-age"),
+            ("Sessions / local admin surface", "{prog} ./sharpout --sessions"),
+            ("LAPS coverage", "{prog} ./sharpout --laps"),
+            ("GPO abuse + XML content", "{prog} ./sharpout --gpo-abuse --gpo-content-dir ./sysvol-gpo-xml"),
+            ("SID history", "{prog} ./sharpout --sid-history"),
+            ("All findings table (no top-20 cap)", "{prog} ./sharpout --dcsync --adcs --all-findings"),
+        ],
+    ),
+    (
+        "Examples — inventory, profiles, deliverables",
+        [
+            ("Full inventory", "{prog} ./sharpout --inventory"),
+            ("Stale + password-age only", "{prog} ./sharpout --stale-accounts --password-age"),
+            ("Privilege group inventory", "{prog} ./sharpout --privilege-inventory"),
+            ("Built-in profile: quick", "{prog} ./sharpout --profile quick"),
+            ("Built-in profile: ADCS-heavy", "{prog} ./sharpout --profile adcs-heavy"),
+            ("Built-in profile: hygiene", "{prog} ./sharpout --profile hygiene"),
+            ("Custom profile file", "{prog} ./sharpout --profile ./my-engagement.yaml"),
+            ("HTML report pack + zip", "{prog} ./sharpout --inventory --busiest-paths short --path-break --report-pack ./reports --export-zip bloodbash-reports.zip"),
+            ("Markdown / HTML / CSV export", "{prog} ./sharpout --all --export=html"),
+            ("JSON export + BH graph + DOT", "{prog} ./sharpout --all --export=json --export-bh --dot graph.dot"),
+            ("SQLite cache re-use", "{prog} ./sharpout --all --db bloodbash.db"),
+            ("Re-open from SQLite (skip JSON)", "{prog} . --db bloodbash.db --from-user alice --from-user-export"),
+            ("Run log", "{prog} ./sharpout --all --log-file ./bloodbash.log"),
+        ],
+    ),
+    (
+        "Examples — Azure / Entra",
+        [
+            ("Privileged roles", "{prog} ./azureout --azure-privileged-roles"),
+            ("App secrets / SP control paths", "{prog} ./azureout --azure-app-secrets --azure-sp-abuse"),
+            ("MFA + guests", "{prog} ./azureout --azure-mfa-bypass --azure-guest-access"),
+            ("All Azure checks", "{prog} ./azureout --azure-privileged-roles --azure-app-secrets --azure-mfa-bypass --azure-guest-access --azure-sp-abuse --all-findings"),
+            ("Sample AzureHound file", "{prog} SampleAzurehoundData --azure-privileged-roles --azure-guest-access --all-findings"),
+        ],
+    ),
 ]
 
 
@@ -4375,7 +4453,9 @@ def print_structured_help(prog: Optional[str] = None) -> None:
     )
     console.print(
         "[dim]With no check flags, BloodBash runs a default pass "
-        "(verbose summary + common checks). Use --all for everything.[/dim]\n"
+        "(verbose summary + common checks). Use --all for everything.\n"
+        "Engagement foothold? Use [cyan]--from-user USER[/cyan] (outbound dossier). "
+        "[cyan]--owned[/cyan] is inbound paths *to* a principal.[/dim]\n"
     )
 
     for title, rows in HELP_TABLE_SECTIONS:
@@ -4395,20 +4475,27 @@ def print_structured_help(prog: Optional[str] = None) -> None:
         console.print(table)
         console.print()
 
-    examples = Table(
-        title="Examples",
-        show_header=True,
-        header_style="bold green",
-        border_style="green",
-        expand=True,
-    )
-    examples.add_column("Scenario", style="green", no_wrap=True)
-    examples.add_column("Command", style="cyan", overflow="fold")
-    for scenario, cmd in HELP_EXAMPLES:
-        examples.add_row(scenario, cmd)
-    console.print(examples)
+    for title, rows in HELP_EXAMPLE_SECTIONS:
+        examples = Table(
+            title=title,
+            show_header=True,
+            header_style="bold green",
+            border_style="green",
+            expand=True,
+        )
+        examples.add_column("Scenario", style="green", no_wrap=False, max_width=36, overflow="fold")
+        examples.add_column("Command", style="cyan", overflow="fold")
+        for scenario, cmd in rows:
+            examples.add_row(scenario, cmd.format(prog=prog))
+        console.print(examples)
+        console.print()
+
     console.print(
-        f"\n[dim]For authorized security testing / red teaming only. "
+        "[dim]Tip: --from-user = what the foothold can do (outbound). "
+        "--owned = who can reach that principal (inbound).[/dim]"
+    )
+    console.print(
+        f"[dim]For authorized security testing / red teaming only. "
         f"BloodBash by {__org__}.[/dim]"
     )
 
