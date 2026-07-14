@@ -24,6 +24,7 @@ from pathlib import Path
 import traceback
 import zipfile
 import hashlib
+import tempfile
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 __version__ = "1.4.0"
@@ -287,6 +288,7 @@ def _extract_node_props(node, is_azure=False):
 
     SharpHound uses ``Properties``; some exports use lowercase ``properties``.
     AzureHound typically nests attributes under ``data``.
+    Never returns the raw node object (avoids shared mutable state with Aces/Members).
     """
     if not isinstance(node, dict):
         return {}
@@ -295,8 +297,19 @@ def _extract_node_props(node, is_azure=False):
     for k, v in node.items():
         if k.lower() == "properties" and isinstance(v, dict):
             return v
-    # Already-flattened node (tests / partial records)
-    return node
+    # Already-flattened node (tests / partial records): copy scalar-ish props only
+    structural = {
+        "aces", "members", "memberof", "sessions", "privilegedsessions",
+        "registrysessions", "localgroups", "links", "containedby", "childobjects",
+        "trusts", "allowedtoact", "allowedtodelegate", "hassidhistory",
+        "objectidentifier", "isdeleted", "isaclprotected", "primarygroupsid",
+        "objecttype", "isazure", "kind", "data", "start", "end", "from", "to",
+        "source", "target", "label", "relationship", "relationships",
+    }
+    return {
+        k: v for k, v in node.items()
+        if k.lower() not in structural and not isinstance(v, (list, dict))
+    }
 
 def _type_from_filename(filename: str) -> Optional[str]:
     """Infer object type from collector filenames like ``20240101_users.json``."""
@@ -380,15 +393,17 @@ def _safe_extract_zip(zip_path, extract_to):
     extract_to.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(zip_path, 'r') as zip_ref:
         for info in zip_ref.infolist():
-            # Skip directory entries (trailing slash)
-            name = info.filename
+            # Normalize separators so Windows-style ..\\ paths cannot slip on any OS
+            name = (info.filename or "").replace("\\", "/")
             if not name or name.endswith('/'):
-                # Still create nested dirs when needed via file members
                 continue
             # Reject absolute paths and Windows drive letters in member names
-            if name.startswith(('/', '\\')) or (len(name) > 1 and name[1] == ':'):
+            if name.startswith('/') or (len(name) > 1 and name[1] == ':'):
                 raise ValueError(f"Zip entry has absolute path: {name!r}")
-            dest = (extract_to / name).resolve()
+            parts = [p for p in name.split('/') if p not in ('', '.')]
+            if any(p == '..' for p in parts):
+                raise ValueError(f"Zip entry escapes extract dir (Zip Slip): {name!r}")
+            dest = (extract_to.joinpath(*parts)).resolve()
             try:
                 dest.relative_to(extract_to)
             except ValueError:
@@ -404,11 +419,9 @@ def load_json_dir(directory, debug=False):
         if path_obj.suffix.lower() == '.zip':
             if debug:
                 print(f"Extracting {path_obj.name}...")
-            
-            extract_to = path_obj.parent / path_obj.stem
-            
+            # Fresh temp dir avoids merging stale JSON from a previous extract of the same stem
+            extract_to = Path(tempfile.mkdtemp(prefix="bloodbash-zip-"))
             _safe_extract_zip(path_obj, extract_to)
-                
             directory = str(extract_to)
         files = [f for f in os.listdir(directory) if f.lower().endswith('.json')]
     except FileNotFoundError:
@@ -675,7 +688,6 @@ def build_graph(nodes, db_path=None, debug=False):
                 props.get('name') or props.get('Name') or props.get('displayName')
                 or node.get('name') or node.get('Name') or oid
             )
-            name_norm = str(name).upper().split('@')[0]
             # Prefer non-Unknown types: ObjectType may be "Unknown" when meta was
             # missing, which is truthy and previously blocked props.type fallback.
             obj_type = (
@@ -686,7 +698,7 @@ def build_graph(nodes, db_path=None, debug=False):
             )
             if not oid.startswith('rel_'):
                 G.add_node(oid, name=name, type=obj_type, props=props, is_azure=is_azure)
-                name_to_oid[name_norm] = oid
+                _register_name_map(name_to_oid, name, oid)
             # Check for standalone relationships (various formats)
             if 'start' in node and 'end' in node and 'label' in node:
                 relationship_edges.append((node['start'], node['end'], node['label']))
@@ -713,21 +725,18 @@ def build_graph(nodes, db_path=None, debug=False):
                     target = rel.get('ObjectIdentifier') if isinstance(rel, dict) else rel
                     if not target:
                         continue
-                    if target not in G.nodes:
-                        G.add_node(
-                            target,
-                            name=str(target),
-                            type='Unknown',
-                            props={},
-                            is_azure=False,
+                    rel_type = 'Unknown'
+                    if isinstance(rel, dict):
+                        rel_type = (
+                            _normalize_object_type(rel.get('ObjectType') or rel.get('objectType'))
+                            or 'Unknown'
                         )
-                        if target not in nodes:
-                            name_to_oid[str(target).upper().split('@')[0]] = target
+                    _ensure_graph_node(G, nodes, name_to_oid, target, name=str(target), typ=rel_type)
                     if key.lower() == 'allowedtoact':
                         # principal (listed) → AllowedToAct → resource (this node)
-                        G.add_edge(target, oid, label=key)
+                        _add_unique_edge(G, target, oid, key)
                     else:
-                        G.add_edge(oid, target, label=key)
+                        _add_unique_edge(G, oid, target, key)
             # SharpHound CE stores group membership on groups as Members
             # (not MemberOf on users). Emit member → MemberOf → group edges.
             members = None
@@ -740,6 +749,7 @@ def build_graph(nodes, db_path=None, debug=False):
                     members = [members] if members else []
                 for rel in members:
                     member_id = None
+                    member_type = 'Unknown'
                     if isinstance(rel, dict):
                         member_id = (
                             rel.get('ObjectIdentifier')
@@ -747,23 +757,40 @@ def build_graph(nodes, db_path=None, debug=False):
                             or rel.get('ObjectId')
                             or rel.get('id')
                         )
+                        member_type = (
+                            _normalize_object_type(rel.get('ObjectType') or rel.get('objectType'))
+                            or 'Unknown'
+                        )
                     else:
                         member_id = rel
                     if member_id:
-                        if member_id not in G.nodes:
-                            G.add_node(
-                                member_id,
-                                name=str(member_id),
-                                type='Unknown',
-                                props={},
-                                is_azure=False,
-                            )
-                            if member_id not in nodes:
-                                name_to_oid[str(member_id).upper().split('@')[0]] = member_id
-                        G.add_edge(member_id, oid, label='MemberOf')
+                        _ensure_graph_node(
+                            G, nodes, name_to_oid, member_id,
+                            name=str(member_id), typ=member_type,
+                        )
+                        _add_unique_edge(G, member_id, oid, 'MemberOf')
+            # PrimaryGroupSID is often not listed in group Members; still a MemberOf edge
+            primary_group = None
+            for nk in node.keys():
+                if nk.lower() == 'primarygroupsid':
+                    primary_group = node[nk]
+                    break
+            if not primary_group and isinstance(props, dict):
+                primary_group = (
+                    props.get('primarygroupsid')
+                    or props.get('PrimaryGroupSID')
+                    or props.get('primaryGroupSID')
+                )
+            if primary_group:
+                _ensure_graph_node(
+                    G, nodes, name_to_oid, primary_group,
+                    name=str(primary_group), typ='Group',
+                )
+                _add_unique_edge(G, oid, primary_group, 'MemberOf')
             # SharpHound CE nested session collections:
             # {Results: [{UserSID, ComputerSID}], Collected, FailureReason}
-            # BloodHound edge: Computer -HasSession-> User
+            # BloodHound edge: Computer -HasSession-> User (dedupe across collections)
+            session_users = set()
             for session_key in ('Sessions', 'PrivilegedSessions', 'RegistrySessions'):
                 block = None
                 for nk in node.keys():
@@ -786,17 +813,13 @@ def build_graph(nodes, db_path=None, debug=False):
                         or entry.get('objectid')
                     )
                     if user_sid:
-                        if user_sid not in G.nodes:
-                            G.add_node(
-                                user_sid,
-                                name=str(user_sid),
-                                type='Unknown',
-                                props={},
-                                is_azure=False,
-                            )
-                            if user_sid not in nodes:
-                                name_to_oid[str(user_sid).upper().split('@')[0]] = user_sid
-                        G.add_edge(oid, user_sid, label='HasSession')
+                        session_users.add(user_sid)
+            for user_sid in session_users:
+                _ensure_graph_node(
+                    G, nodes, name_to_oid, user_sid,
+                    name=str(user_sid), typ='User',
+                )
+                _add_unique_edge(G, oid, user_sid, 'HasSession')
             # SharpHound CE LocalGroups: list of local groups with Results members.
             # Map well-known RIDs to BloodHound-style edges (principal → right → computer).
             local_groups = None
@@ -825,6 +848,7 @@ def build_graph(nodes, db_path=None, debug=False):
                         members = [members] if members else []
                     for member in members:
                         mid = None
+                        mid_type = 'Unknown'
                         if isinstance(member, dict):
                             mid = (
                                 member.get('ObjectIdentifier')
@@ -832,38 +856,110 @@ def build_graph(nodes, db_path=None, debug=False):
                                 or member.get('ObjectId')
                                 or member.get('id')
                             )
+                            mid_type = (
+                                _normalize_object_type(
+                                    member.get('ObjectType') or member.get('objectType')
+                                )
+                                or 'Unknown'
+                            )
                         else:
                             mid = member
                         if mid:
-                            if mid not in G.nodes:
-                                G.add_node(
-                                    mid,
-                                    name=str(mid),
-                                    type='Unknown',
-                                    props={},
-                                    is_azure=False,
-                                )
-                                if mid not in nodes:
-                                    name_to_oid[str(mid).upper().split('@')[0]] = mid
-                            G.add_edge(mid, oid, label=label)
-            aces = node.get('Aces', [])
+                            _ensure_graph_node(
+                                G, nodes, name_to_oid, mid,
+                                name=str(mid), typ=mid_type,
+                            )
+                            _add_unique_edge(G, mid, oid, label)
+            # ACLs (case-insensitive key; tolerate null / non-dict entries)
+            aces = None
+            for nk in node.keys():
+                if nk.lower() == 'aces':
+                    aces = node[nk]
+                    break
+            if aces is None:
+                aces = []
+            if not isinstance(aces, list):
+                aces = [aces] if aces else []
             for ace in aces:
-                principal = ace.get('PrincipalSID') or ace.get('PrincipalObjectIdentifier')
-                right = ace.get('RightName')
+                if not isinstance(ace, dict):
+                    continue
+                principal = (
+                    ace.get('PrincipalSID')
+                    or ace.get('PrincipalObjectIdentifier')
+                    or ace.get('principalsid')
+                )
+                right = ace.get('RightName') or ace.get('rightName') or ace.get('Right')
                 if principal and right:
-                    if principal not in G.nodes:
-                        G.add_node(
-                            principal,
-                            name=str(principal),
-                            type='Unknown',
-                            props={},
-                            is_azure=False,
+                    ptype = (
+                        _normalize_object_type(
+                            ace.get('PrincipalType') or ace.get('principalType')
                         )
-                        if principal not in nodes:
-                            name_to_oid[str(principal).upper().split('@')[0]] = principal
-                    G.add_edge(principal, oid, label=right)
-            # Azure relationships (case-insensitive, expanded)
-            azure_rels = ['MemberOf', 'HasRole', 'Owns', 'CanRead', 'CanWrite', 'CanDelete', 'Execute', 'AddMembers', 'ResetPassword', 'AddSecret', 'AddCertificate', 'AddOwner', 'GetChanges', 'GetChangesAll', 'GenericAll', 'GenericWrite', 'WriteDacl', 'WriteOwner']
+                        or 'Unknown'
+                    )
+                    _ensure_graph_node(
+                        G, nodes, name_to_oid, principal,
+                        name=str(principal), typ=ptype,
+                    )
+                    _add_unique_edge(G, principal, oid, right)
+            # GPO Links on domains/OUs: container -GPLink→ GPO (BloodHound direction)
+            links = None
+            for nk in node.keys():
+                if nk.lower() == 'links':
+                    links = node[nk]
+                    break
+            if isinstance(links, list):
+                for link in links:
+                    if not isinstance(link, dict):
+                        continue
+                    gpo_guid = (
+                        link.get('GUID')
+                        or link.get('Guid')
+                        or link.get('ObjectIdentifier')
+                        or link.get('objectid')
+                    )
+                    if not gpo_guid:
+                        continue
+                    _ensure_graph_node(
+                        G, nodes, name_to_oid, gpo_guid,
+                        name=str(gpo_guid), typ='GPO',
+                    )
+                    enforced = link.get('IsEnforced')
+                    if enforced is None:
+                        enforced = link.get('isEnforced')
+                    _add_unique_edge(
+                        G, oid, gpo_guid, 'GPLink',
+                        is_enforced=bool(enforced) if enforced is not None else None,
+                    )
+            # Containment: ContainedBy {ObjectIdentifier} → parent -Contains→ child
+            contained_by = None
+            for nk in node.keys():
+                if nk.lower() == 'containedby':
+                    contained_by = node[nk]
+                    break
+            if isinstance(contained_by, dict):
+                parent_id = (
+                    contained_by.get('ObjectIdentifier')
+                    or contained_by.get('objectid')
+                    or contained_by.get('ObjectId')
+                )
+                if parent_id:
+                    parent_type = (
+                        _normalize_object_type(
+                            contained_by.get('ObjectType') or contained_by.get('objectType')
+                        )
+                        or 'Unknown'
+                    )
+                    _ensure_graph_node(
+                        G, nodes, name_to_oid, parent_id,
+                        name=str(parent_id), typ=parent_type,
+                    )
+                    _add_unique_edge(G, parent_id, oid, 'Contains')
+            # Azure relationships (case-insensitive). Skip MemberOf — already handled in ad_rels.
+            azure_rels = [
+                'HasRole', 'Owns', 'CanRead', 'CanWrite', 'CanDelete', 'Execute',
+                'AddMembers', 'ResetPassword', 'AddSecret', 'AddCertificate', 'AddOwner',
+                'GetChanges', 'GetChangesAll', 'GenericAll', 'GenericWrite', 'WriteDacl', 'WriteOwner',
+            ]
             for key in azure_rels:
                 rels = None
                 for nk in node.keys():
@@ -878,17 +974,11 @@ def build_graph(nodes, db_path=None, debug=False):
                     target = (rel.get('ObjectIdentifier') or rel.get('id')) if isinstance(rel, dict) else rel
                     if not target:
                         continue
-                    if target not in G.nodes:
-                        G.add_node(
-                            target,
-                            name=str(target),
-                            type='Unknown',
-                            props={},
-                            is_azure=False,
-                        )
-                        if target not in nodes:
-                            name_to_oid[str(target).upper().split('@')[0]] = target
-                    G.add_edge(oid, target, label=key)
+                    _ensure_graph_node(
+                        G, nodes, name_to_oid, target,
+                        name=str(target), typ='Unknown', is_azure=True,
+                    )
+                    _add_unique_edge(G, oid, target, key)
             # Handle Azure 'Relationships' property if present
             if is_azure:
                 rels_prop = None
@@ -901,8 +991,12 @@ def build_graph(nodes, db_path=None, debug=False):
                         if isinstance(rel, dict):
                             rel_type = rel.get('RelationshipType') or rel.get('relationshipType') or rel.get('type')
                             target = rel.get('TargetObjectId') or rel.get('targetObjectId') or rel.get('target')
-                            if rel_type and target and target in nodes:
-                                G.add_edge(oid, target, label=rel_type)
+                            if rel_type and target:
+                                _ensure_graph_node(
+                                    G, nodes, name_to_oid, target,
+                                    name=str(target), typ='Unknown', is_azure=True,
+                                )
+                                _add_unique_edge(G, oid, target, rel_type)
             # SharpHound domain Trusts[] → TrustedDomain edges for trust abuse detection
             if str(obj_type).lower() == 'domain' or (isinstance(props, dict) and props.get('domain') and 'Trusts' in node):
                 trusts = None
@@ -948,7 +1042,12 @@ def build_graph(nodes, db_path=None, debug=False):
                         label = f"TrustedDomain:{direction}"
                         if ttype:
                             label = f"{label}:{ttype}"
-                        G.add_edge(oid, target_oid, label=label, sid_filtering=sid_filtering)
+                        _add_unique_edge(G, oid, target_oid, label, sid_filtering=sid_filtering)
+                        dir_l = str(direction).lower()
+                        if dir_l in ('bidirectional', 'both', '2', 'inbound,outbound'):
+                            _add_unique_edge(
+                                G, target_oid, oid, label, sid_filtering=sid_filtering,
+                            )
             # SID History property list → HasSIDHistory edges when not already present
             raw_sidhist = None
             if isinstance(props, dict):
@@ -964,15 +1063,11 @@ def build_graph(nodes, db_path=None, debug=False):
                     sid_val = sh.get('ObjectIdentifier') if isinstance(sh, dict) else sh
                     if not sid_val:
                         continue
-                    if sid_val not in G.nodes:
-                        G.add_node(
-                            sid_val,
-                            name=str(sid_val),
-                            type='Unknown',
-                            props={},
-                            is_azure=False,
-                        )
-                    G.add_edge(oid, sid_val, label='HasSIDHistory')
+                    _ensure_graph_node(
+                        G, nodes, name_to_oid, sid_val,
+                        name=str(sid_val), typ='Unknown',
+                    )
+                    _add_unique_edge(G, oid, sid_val, 'HasSIDHistory')
             pbar.update(1)
     if debug:
         console.print(f"[blue]DEBUG: Main graph build complete - {G.number_of_nodes()} nodes, {G.number_of_edges()} edges[/blue]")
@@ -980,33 +1075,43 @@ def build_graph(nodes, db_path=None, debug=False):
     added = 0
     placeholders_added = 0
     for start, end, label in relationship_edges:
-        start_norm = start.upper().split('@')[0]
-        end_norm = end.upper().split('@')[0]
+        start = str(start) if start is not None else ""
+        end = str(end) if end is not None else ""
+        if not start or not end:
+            continue
+        start_u = start.upper()
+        end_u = end.upper()
+        start_norm = start_u.split('@')[0].split('\\')[-1]
+        end_norm = end_u.split('@')[0].split('\\')[-1]
         start_oid = None
         if start in G.nodes:
             start_oid = start
+        elif start_u in name_to_oid:
+            start_oid = name_to_oid[start_u]
         elif start_norm in name_to_oid:
             start_oid = name_to_oid[start_norm]
         else:
             start_oid = f"placeholder_{placeholder_counter}"
             placeholder_counter += 1
             G.add_node(start_oid, name=start, type='Unknown', props={}, is_azure=False)
-            name_to_oid[start_norm] = start_oid
+            _register_name_map(name_to_oid, start, start_oid)
             placeholders_added += 1
         end_oid = None
         if end in G.nodes:
             end_oid = end
+        elif end_u in name_to_oid:
+            end_oid = name_to_oid[end_u]
         elif end_norm in name_to_oid:
             end_oid = name_to_oid[end_norm]
         else:
             end_oid = f"placeholder_{placeholder_counter}"
             placeholder_counter += 1
             G.add_node(end_oid, name=end, type='Unknown', props={}, is_azure=False)
-            name_to_oid[end_norm] = end_oid
+            _register_name_map(name_to_oid, end, end_oid)
             placeholders_added += 1
         if start_oid and end_oid:
-            G.add_edge(start_oid, end_oid, label=label)
-            added += 1
+            if _add_unique_edge(G, start_oid, end_oid, label):
+                added += 1
     console.print(f"[green]Added {added} relationship edges ({placeholders_added} placeholder nodes created)[/green]")
     wk = add_well_known_group_memberships(G)
     if wk:
@@ -1022,18 +1127,34 @@ def save_graph_to_db(G, db_path):
     conn = sqlite3.connect(db_path)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS nodes (oid TEXT PRIMARY KEY, name TEXT, type TEXT, props TEXT, is_azure INTEGER)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS edges (start_oid TEXT, end_oid TEXT, label TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS edges (start_oid TEXT, end_oid TEXT, label TEXT, attrs TEXT)''')
     # Replace full snapshot: nodes upsert, edges must be cleared or they accumulate
     # on every re-save (no unique constraint on edges).
+    # Migrate older DBs that only had (start, end, label)
+    c.execute("PRAGMA table_info(edges)")
+    edge_cols = {row[1] for row in c.fetchall()}
+    if "attrs" not in edge_cols:
+        c.execute("ALTER TABLE edges ADD COLUMN attrs TEXT")
     c.execute('DELETE FROM edges')
     c.execute('DELETE FROM nodes')
     for n, d in G.nodes(data=True):
         c.execute(
             "INSERT INTO nodes VALUES (?, ?, ?, ?, ?)",
-            (n, d['name'], d['type'], json.dumps(d['props']), int(d.get('is_azure', False))),
+            (
+                n,
+                d.get('name', n),
+                d.get('type', 'Unknown'),
+                json.dumps(d.get('props') if d.get('props') is not None else {}),
+                int(d.get('is_azure', False)),
+            ),
         )
     for u, v, d in G.edges(data=True):
-        c.execute("INSERT INTO edges VALUES (?, ?, ?)", (u, v, d['label']))
+        label = d.get('label', '')
+        extra = {k: val for k, val in d.items() if k != 'label'}
+        c.execute(
+            "INSERT INTO edges VALUES (?, ?, ?, ?)",
+            (u, v, label, json.dumps(extra) if extra else None),
+        )
     conn.commit()
     conn.close()
     console.print(f"[green]Graph saved to DB: {db_path}[/green]")
@@ -1045,10 +1166,25 @@ def load_graph_from_db(db_path):
     c.execute("SELECT oid, name, type, props, is_azure FROM nodes")
     for oid, name, typ, props, is_azure in c.fetchall():
         G.add_node(oid, name=name, type=typ, props=json.loads(props), is_azure=bool(is_azure))
-        name_to_oid[name.upper().split('@')[0]] = oid
-    c.execute("SELECT start_oid, end_oid, label FROM edges")
-    for u, v, label in c.fetchall():
-        G.add_edge(u, v, label=label)
+        _register_name_map(name_to_oid, name, oid)
+    c.execute("PRAGMA table_info(edges)")
+    edge_cols = {row[1] for row in c.fetchall()}
+    if "attrs" in edge_cols:
+        c.execute("SELECT start_oid, end_oid, label, attrs FROM edges")
+        rows = c.fetchall()
+    else:
+        c.execute("SELECT start_oid, end_oid, label FROM edges")
+        rows = [(u, v, lab, None) for u, v, lab in c.fetchall()]
+    for u, v, label, attrs_json in rows:
+        attrs = {}
+        if attrs_json:
+            try:
+                attrs = json.loads(attrs_json) or {}
+            except (TypeError, ValueError, json.JSONDecodeError):
+                attrs = {}
+        if not isinstance(attrs, dict):
+            attrs = {}
+        G.add_edge(u, v, label=label, **{k: val for k, val in attrs.items() if k != "label"})
     conn.close()
     console.print(f"[green]Graph loaded from DB: {db_path}[/green]")
     return G, name_to_oid

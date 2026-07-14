@@ -2376,6 +2376,169 @@ class TestBloodBash(unittest.TestCase):
         dest = extract_to / "subdir" / "users.json"
         self.assertTrue(dest.is_file())
 
+    def test_primarygroupsid_memberof_edge(self):
+        """PrimaryGroupSID becomes member → MemberOf → primary group."""
+        nodes = {
+            "S-1-5-21-1-2-3-1100": {
+                "ObjectIdentifier": "S-1-5-21-1-2-3-1100",
+                "ObjectType": "User",
+                "Properties": {"name": "alice@LAB.LOCAL", "domain": "lab.local"},
+                "PrimaryGroupSID": "S-1-5-21-1-2-3-513",
+            },
+            "S-1-5-21-1-2-3-513": {
+                "ObjectIdentifier": "S-1-5-21-1-2-3-513",
+                "ObjectType": "Group",
+                "Properties": {"name": "DOMAIN USERS@LAB.LOCAL", "domain": "lab.local"},
+            },
+        }
+        G, _ = bloodbash_globals["build_graph"](nodes)
+        self.assertTrue(
+            any(
+                u == "S-1-5-21-1-2-3-1100"
+                and v == "S-1-5-21-1-2-3-513"
+                and d.get("label") == "MemberOf"
+                for u, v, d in G.edges(data=True)
+            )
+        )
+
+    def test_gpo_links_and_containedby_edges(self):
+        """Domain/OU Links and ContainedBy become GPLink / Contains edges."""
+        nodes = {
+            "S-1-5-21-1-2-3": {
+                "ObjectIdentifier": "S-1-5-21-1-2-3",
+                "ObjectType": "Domain",
+                "Properties": {"name": "LAB.LOCAL", "domain": "lab.local"},
+                "Links": [{"GUID": "GPO-GUID-1", "IsEnforced": False}],
+            },
+            "GPO-GUID-1": {
+                "ObjectIdentifier": "GPO-GUID-1",
+                "ObjectType": "GPO",
+                "Properties": {"name": "Default Domain Policy@LAB.LOCAL", "domain": "lab.local"},
+            },
+            "S-1-5-21-1-2-3-1100": {
+                "ObjectIdentifier": "S-1-5-21-1-2-3-1100",
+                "ObjectType": "User",
+                "Properties": {"name": "alice@LAB.LOCAL", "domain": "lab.local"},
+                "ContainedBy": {
+                    "ObjectIdentifier": "OU-1",
+                    "ObjectType": "OU",
+                },
+            },
+            "OU-1": {
+                "ObjectIdentifier": "OU-1",
+                "ObjectType": "OU",
+                "Properties": {"name": "Users@LAB.LOCAL", "domain": "lab.local"},
+            },
+        }
+        G, _ = bloodbash_globals["build_graph"](nodes)
+        self.assertTrue(
+            any(
+                u == "S-1-5-21-1-2-3"
+                and v == "GPO-GUID-1"
+                and d.get("label") == "GPLink"
+                for u, v, d in G.edges(data=True)
+            )
+        )
+        self.assertTrue(
+            any(
+                u == "OU-1"
+                and v == "S-1-5-21-1-2-3-1100"
+                and d.get("label") == "Contains"
+                for u, v, d in G.edges(data=True)
+            )
+        )
+
+    def test_session_and_memberof_dedupe(self):
+        """Same session/membership from multiple sources yields one edge."""
+        nodes = {
+            "S-1-5-21-1-2-3-4001": {
+                "ObjectIdentifier": "S-1-5-21-1-2-3-4001",
+                "ObjectType": "Computer",
+                "Properties": {"name": "PC01.LAB.LOCAL", "domain": "lab.local"},
+                "Sessions": {
+                    "Results": [{"UserSID": "S-1-5-21-1-2-3-4100"}],
+                },
+                "PrivilegedSessions": {
+                    "Results": [{"UserSID": "S-1-5-21-1-2-3-4100"}],
+                },
+                "RegistrySessions": {
+                    "Results": [{"UserSID": "S-1-5-21-1-2-3-4100"}],
+                },
+                "HasSession": [{"ObjectIdentifier": "S-1-5-21-1-2-3-4100"}],
+            },
+            "S-1-5-21-1-2-3-4100": {
+                "ObjectIdentifier": "S-1-5-21-1-2-3-4100",
+                "ObjectType": "User",
+                "Properties": {"name": "alice@LAB.LOCAL", "domain": "lab.local"},
+                "MemberOf": [{"ObjectIdentifier": "S-1-5-21-1-2-3-512"}],
+            },
+            "S-1-5-21-1-2-3-512": {
+                "ObjectIdentifier": "S-1-5-21-1-2-3-512",
+                "ObjectType": "Group",
+                "Properties": {"name": "DOMAIN ADMINS@LAB.LOCAL", "domain": "lab.local"},
+                "Members": [{"ObjectIdentifier": "S-1-5-21-1-2-3-4100", "ObjectType": "User"}],
+            },
+        }
+        G, _ = bloodbash_globals["build_graph"](nodes)
+        sessions = [
+            (u, v)
+            for u, v, d in G.edges(data=True)
+            if d.get("label") == "HasSession"
+            and u == "S-1-5-21-1-2-3-4001"
+            and v == "S-1-5-21-1-2-3-4100"
+        ]
+        self.assertEqual(len(sessions), 1)
+        memberof = [
+            (u, v)
+            for u, v, d in G.edges(data=True)
+            if d.get("label") == "MemberOf"
+            and u == "S-1-5-21-1-2-3-4100"
+            and v == "S-1-5-21-1-2-3-512"
+        ]
+        self.assertEqual(len(memberof), 1)
+
+    def test_aces_none_and_case_insensitive(self):
+        """Null Aces must not crash; lowercase aces key still creates edges."""
+        nodes = {
+            "S-1-5-21-1-2-3-1": {
+                "ObjectIdentifier": "S-1-5-21-1-2-3-1",
+                "ObjectType": "User",
+                "Properties": {"name": "u@LAB.LOCAL"},
+                "Aces": None,
+            },
+            "S-1-5-21-1-2-3-2": {
+                "ObjectIdentifier": "S-1-5-21-1-2-3-2",
+                "ObjectType": "User",
+                "Properties": {"name": "v@LAB.LOCAL"},
+                "aces": [
+                    {"PrincipalSID": "S-1-5-21-1-2-3-9", "RightName": "GenericWrite"},
+                ],
+            },
+        }
+        G, _ = bloodbash_globals["build_graph"](nodes)
+        self.assertTrue(
+            any(
+                u == "S-1-5-21-1-2-3-9"
+                and v == "S-1-5-21-1-2-3-2"
+                and d.get("label") == "GenericWrite"
+                for u, v, d in G.edges(data=True)
+            )
+        )
+
+    def test_db_roundtrip_preserves_edge_attrs(self):
+        """SQLite save/load keeps sid_filtering and other edge attrs."""
+        G = nx.MultiDiGraph()
+        G.add_node("D1", name="A.LOCAL", type="Domain", props={}, is_azure=False)
+        G.add_node("D2", name="B.LOCAL", type="Domain", props={}, is_azure=False)
+        G.add_edge("D1", "D2", label="TrustedDomain:Bidirectional", sid_filtering=False)
+        db_path = os.path.join(self.temp_dir, "edge-attrs.db")
+        bloodbash_globals["save_graph_to_db"](G, db_path)
+        G2, _ = bloodbash_globals["load_graph_from_db"](db_path)
+        edges = list(G2.edges(data=True))
+        self.assertEqual(len(edges), 1)
+        self.assertEqual(edges[0][2].get("label"), "TrustedDomain:Bidirectional")
+        self.assertIs(edges[0][2].get("sid_filtering"), False)
+
     def test_sessions_and_localgroups_ingest(self):
         """SharpHound nested Sessions/LocalGroups become HasSession/LocalAdmin/etc edges."""
         try:
