@@ -5155,6 +5155,53 @@ def collect_csv_pack_datasets(G, domain_filter=None) -> Dict[str, Tuple[List[str
         sorted(sess_rows, key=lambda r: (str(r[0]).lower(), str(r[1]).lower())),
     )
 
+    # Over-privileged broad principals (PlumHound Everyone / Auth Users / Domain Users)
+    OVERPRIV_PRINCIPAL_NEEDLES = (
+        ("everyone", "relationships_everyone.csv"),
+        ("authenticated users", "relationships_authenticated_users.csv"),
+        ("pre-windows 2000", "relationships_pre_windows_2000.csv"),
+        ("domain users", "relationships_domain_users.csv"),
+        ("domain computers", "relationships_domain_computers.csv"),
+        ("users@", "relationships_users_group.csv"),
+        ("guests@", "relationships_guests.csv"),
+    )
+    MEMBERSHIP_LABELS = frozenset({"memberof", "member", "member_of", "contains", "gplink", "linkedto"})
+    over_all: List[List[Any]] = []
+    per_file_rows: Dict[str, List[List[Any]]] = {fn: [] for _, fn in OVERPRIV_PRINCIPAL_NEEDLES}
+    for u, v, ed in G.edges(data=True):
+        label = ed.get("label") or ""
+        label_l = label.lower()
+        if label_l in MEMBERSHIP_LABELS:
+            continue
+        ud, vd = G.nodes.get(u) or {}, G.nodes.get(v) or {}
+        if ud.get("is_azure") or vd.get("is_azure"):
+            continue
+        if domain_filter and not (
+            _domain_matches(ud, domain_filter) or _domain_matches(vd, domain_filter)
+        ):
+            continue
+        src_name = ud.get("name") or str(u)
+        src_l = src_name.lower()
+        dst_name = vd.get("name") or str(v)
+        matched_file = None
+        for needle, fname in OVERPRIV_PRINCIPAL_NEEDLES:
+            if needle in src_l:
+                matched_file = fname
+                break
+        if not matched_file:
+            continue
+        row = [src_name, label, dst_name, vd.get("type") or ""]
+        per_file_rows[matched_file].append(row)
+        over_all.append(row + [matched_file])
+    rel_headers = ["Principal", "Relationship", "Target", "TargetType"]
+    for _, fname in OVERPRIV_PRINCIPAL_NEEDLES:
+        rows = sorted(per_file_rows[fname], key=lambda r: (str(r[0]).lower(), str(r[2]).lower(), str(r[1]).lower()))
+        datasets[fname] = (rel_headers, rows)
+    datasets["overprivileged_relationships.csv"] = (
+        ["Principal", "Relationship", "Target", "TargetType", "SourceFile"],
+        sorted(over_all, key=lambda r: (str(r[0]).lower(), str(r[2]).lower())),
+    )
+
     return datasets
 
 
