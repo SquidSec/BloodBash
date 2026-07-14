@@ -43,6 +43,7 @@ SEVERITY_SCORES = {
     "AS-REP Roastable": 5, "Shortest Paths": 6, "Password Never Expires": 4,
     "Password Not Required": 8, "Shadow Credentials": 8, "GPO Content": 7,
     "Constrained Delegation": 7, "Unconstrained Delegation": 8, "LAPS": 6,
+    "LAPS Readers": 8,
     "Owned Paths": 9, "Password in Description": 6,
     "Arbitrary Paths": 6, "Trust Abuse": 7, "Deep Group Nesting": 6,
     "Busiest Paths": 7, "Path Break": 8, "Password Age": 5, "Stale Accounts": 4,
@@ -1497,6 +1498,86 @@ def print_laps_status(G, domain_filter=None):
         console.print(Panel("[bold green]Impact:[/bold green] LAPS secures local admin passwords.\n[bold]Mitigation:[/bold] Ensure LAPS is enabled on all computers.\n[bold]Tools:[/bold] LAPS management tools, AD queries.", title="LAPS Enabled", border_style="green"))
     if found_disabled:
         console.print(Panel("[bold yellow]Impact:[/bold yellow] Local admin passwords may be weak or shared → easy compromise.\n[bold]Mitigation:[/bold] Enable LAPS to randomize and secure passwords.\n[bold]Tools:[/bold] LAPS deployment scripts.", title="LAPS Not Enabled", border_style="yellow"))
+
+
+READLAPS_LABELS = frozenset({
+    "readlapspassword",
+    "read laps password",
+    "ms-mcs-admpwd",
+})
+
+
+def collect_laps_readers(G, domain_filter=None, exclude_default_priv: bool = True) -> List[dict]:
+    """Principals with ReadLAPSPassword (or equivalent) on computers."""
+    rows: List[dict] = []
+    seen = set()
+    for u, v, ed in G.edges(data=True):
+        label = (ed.get("label") or "").lower()
+        if label not in READLAPS_LABELS:
+            continue
+        ud = G.nodes.get(u) or {}
+        vd = G.nodes.get(v) or {}
+        if ud.get("is_azure") or vd.get("is_azure"):
+            continue
+        if not _domain_matches(ud, domain_filter) and not _domain_matches(vd, domain_filter):
+            # keep if either side matches filter when set
+            if domain_filter:
+                continue
+        # Prefer computer as target
+        reader_d, computer_d = ud, vd
+        if str(vd.get("type", "")).lower() != "computer" and str(ud.get("type", "")).lower() == "computer":
+            reader_d, computer_d = vd, ud
+        reader = reader_d.get("name") or str(u)
+        computer = computer_d.get("name") or str(v)
+        if exclude_default_priv and _is_default_high_priv_name(reader):
+            continue
+        key = (reader, computer, label)
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(
+            {
+                "reader": reader,
+                "computer": computer,
+                "label": ed.get("label") or "ReadLAPSPassword",
+                "reader_oid": u if reader_d is ud else v,
+                "computer_oid": v if computer_d is vd else u,
+            }
+        )
+    rows.sort(key=lambda r: (r["reader"], r["computer"]))
+    return rows
+
+
+def print_laps_readers(G, domain_filter=None):
+    console.rule("[bold magenta]LAPS Password Readers (ReadLAPSPassword) (AD)[/bold magenta]")
+    rows = collect_laps_readers(G, domain_filter)
+    max_display = 40
+    for i, r in enumerate(rows):
+        if i < max_display:
+            console.print(
+                f"  • [green]{r['reader']}[/green] --[{r['label']}]--> [cyan]{r['computer']}[/cyan]"
+            )
+        add_finding(
+            "LAPS Readers",
+            f"{r['reader']} can ReadLAPSPassword on {r['computer']}",
+            score=8,
+        )
+    if len(rows) > max_display:
+        console.print(f"  [dim]... and {len(rows) - max_display} more[/dim]")
+    if rows:
+        console.print(
+            Panel(
+                "[bold red]Impact:[/bold red] Read LAPS password → local admin on target host → lateral movement.\n"
+                "[bold]Abuse:[/bold] Get-LapsADPassword / netexec / bloodyAD once ACL allows read.\n"
+                "[bold]Mitigation:[/bold] Restrict ReadLAPSPassword to helpdesk/tiered admin groups; "
+                "remove broad Authenticated Users / Domain Users grants.",
+                title="Abuse Suggestions: LAPS Readers",
+                border_style="red",
+            )
+        )
+    else:
+        console.print("[green]No non-default LAPS password readers found[/green]")
+
 
 def is_domain_controller(G, oid: str, max_depth: int = 10) -> bool:
     """Detect DC via props, UAC SERVER_TRUST_ACCOUNT, or Domain Controllers membership."""
@@ -4719,7 +4800,7 @@ HELP_TABLE_SECTIONS = [
             ("--unconstrained-delegation", "Unconstrained delegation principals", "DCs noted separately"),
             ("--constrained-delegation", "Constrained delegation (S4U)", ""),
             ("--sessions", "LocalAdmin / RDP / DCOM / session summary", ""),
-            ("--laps", "LAPS deployment via haslaps", ""),
+            ("--laps", "LAPS deployment via haslaps + ReadLAPSPassword readers", ""),
             ("--shadow-credentials", "AddKeyCredentialLink / shadow cred paths", ""),
         ],
     ),
@@ -5267,6 +5348,7 @@ def main():
         print_constrained_delegation(G, args.domain)
     if args.laps or run_all:
         print_laps_status(G, args.domain)
+        print_laps_readers(G, args.domain)
     if args.azure_privileged_roles or run_all:
         print_azure_privileged_roles(G, args.domain)
     if args.azure_app_secrets or run_all:
