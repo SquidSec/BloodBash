@@ -470,7 +470,7 @@ class TestDetectionVariations(unittest.TestCase):
             "haslaps": False,
         }, is_azure=False)
         self._capture(bloodbash_globals["print_laps_status"], G)
-        self.assertTrue(any("does not have LAPS" in f[2] for f in self._findings("LAPS")))
+        self.assertTrue(any("do not have LAPS" in f[2] for f in self._findings("LAPS")))
 
     def test_owned_paths(self):
         G = nx.MultiDiGraph()
