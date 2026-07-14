@@ -249,6 +249,62 @@ class TestBloodBash(unittest.TestCase):
         output = self._capture_output(bloodbash_globals["print_rbcd"], G)
         self.assertNotIn("SAFE-COMPUTER$", output)
 
+    def test_collect_can_configure_rbcd(self):
+        G = nx.MultiDiGraph()
+        G.add_node(
+            "T",
+            name="TARGET$.LAB.LOCAL",
+            type="Computer",
+            props={"domain": "LAB.LOCAL"},
+            is_azure=False,
+        )
+        G.add_node(
+            "U",
+            name="HELPDESK@LAB.LOCAL",
+            type="User",
+            props={"domain": "LAB.LOCAL"},
+            is_azure=False,
+        )
+        G.add_node(
+            "DA",
+            name="DOMAIN ADMINS@LAB.LOCAL",
+            type="Group",
+            props={"domain": "LAB.LOCAL"},
+            is_azure=False,
+        )
+        G.add_edge("U", "T", label="GenericAll")
+        G.add_edge("DA", "T", label="WriteDacl")
+        G.add_edge("U", "T", label="WriteAccountRestrictions")
+        rows = bloodbash_globals["collect_can_configure_rbcd"](G)
+        # DA excluded as expected high priv
+        self.assertTrue(any(r["principal"] == "HELPDESK@LAB.LOCAL" for r in rows))
+        self.assertFalse(any(r["principal"] == "DOMAIN ADMINS@LAB.LOCAL" for r in rows))
+        rights = {
+            r["right"]
+            for r in rows
+            if r["principal"] == "HELPDESK@LAB.LOCAL"
+        }
+        self.assertIn("GenericAll", rights)
+        self.assertIn("WriteAccountRestrictions", rights)
+
+    def test_print_can_configure_rbcd(self):
+        G = nx.MultiDiGraph()
+        G.add_node("T", name="SRV01$.LAB.LOCAL", type="Computer", props={}, is_azure=False)
+        G.add_node("U", name="LOWPRIV@LAB.LOCAL", type="User", props={}, is_azure=False)
+        G.add_edge("U", "T", label="GenericWrite")
+        bloodbash_globals["global_findings"] = []
+        output = self._capture_output(bloodbash_globals["print_can_configure_rbcd"], G)
+        clean = self._strip_ansi(output)
+        self.assertIn("LOWPRIV@LAB.LOCAL", clean)
+        self.assertIn("SRV01$", clean)
+        self.assertIn("GenericWrite", clean)
+        self.assertTrue(
+            any(
+                f[1] == "Can Configure RBCD" and "LOWPRIV" in f[2]
+                for f in bloodbash_globals["global_findings"]
+            )
+        )
+
     def test_sharphound_ce_property_aliases(self):
         """SharpHound CE field names must be recognized by detectors."""
         try:
