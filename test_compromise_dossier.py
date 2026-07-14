@@ -174,6 +174,26 @@ class TestCompromiseDossier(unittest.TestCase):
         self.assertEqual(docs, [])
         self.assertIn("not found", self._strip(out).lower())
 
+    def test_dossier_surfaces_impact_edges_without_hv_path(self):
+        """GenericWrite on GPO is impact even when paths_to_high_value is empty."""
+        G = nx.MultiDiGraph()
+        G.add_node("U", name="ALICE@LAB.LOCAL", type="User", props={"domain": "LAB.LOCAL"}, is_azure=False)
+        G.add_node("GPO", name="SOFT@LAB.LOCAL", type="GPO", props={"domain": "LAB.LOCAL"}, is_azure=False)
+        G.add_edge("U", "GPO", label="GenericWrite")
+        dossier = bloodbash_globals["build_compromise_dossier"](G, "ALICE")
+        self.assertEqual(dossier["counts"]["paths_to_high_value"], 0)
+        self.assertGreaterEqual(dossier["counts"]["impact_edges"], 1)
+        self.assertTrue(
+            any(
+                r["target"].startswith("SOFT") and r["right"] == "GenericWrite"
+                for r in dossier["impact_edges"]
+            )
+        )
+        out, _ = self._capture(bloodbash_globals["print_compromise_dossier"], dossier)
+        clean = self._strip(out)
+        self.assertIn("Direct impact edges", clean)
+        self.assertIn("SOFT@LAB.LOCAL", clean)
+
     def test_well_known_membership_exposes_auth_users_rights(self):
         """Domain Users → Auth Users (synthetic) inherits GenericWrite on GPOs."""
         G = nx.MultiDiGraph()
