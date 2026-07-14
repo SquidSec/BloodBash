@@ -3118,6 +3118,92 @@ RBCD_RIGHT_RANK = {
 }
 
 
+def _looks_like_sid(value: str) -> bool:
+    s = str(value or "")
+    return s.upper().startswith("S-1-") or "-S-1-" in s.upper()
+
+
+def resolve_principal_display_name(G, oid) -> str:
+    """Best display name for a principal node (prefer non-SID labels)."""
+    if oid not in G:
+        return str(oid)
+    d = G.nodes[oid] or {}
+    name = d.get("name") or str(oid)
+    if not _looks_like_sid(name) or name != str(oid):
+        # Prefer human name when present
+        if not _looks_like_sid(name):
+            return name
+    props = d.get("props") or {}
+    for key in ("name", "Name", "displayname", "displayName", "samaccountname", "samAccountName"):
+        cand = props.get(key)
+        if cand and not _looks_like_sid(str(cand)):
+            return str(cand)
+    # Last resort: keep SID but mark unresolved only if still SID-only
+    return name
+
+
+def _is_admin_tier_principal_name(name: str) -> bool:
+    """Admin-tier groups for ACL noise (excludes Domain Controllers / operators)."""
+    if not name:
+        return False
+    if _is_builtin_administrators_name(name):
+        return True
+    nl = str(name).lower()
+    sam = _principal_sam(name)
+    if any(
+        p in nl
+        for p in (
+            "domain admins",
+            "enterprise admins",
+            "schema admins",
+            "enterprise key admins",
+        )
+    ):
+        return True
+    if sam in (
+        "domain admins",
+        "enterprise admins",
+        "schema admins",
+        "enterprise key admins",
+        "key admins",
+        "krbtgt",
+    ):
+        return True
+    if nl.startswith("key admins@") or nl.startswith("krbtgt@"):
+        return True
+    return False
+
+
+def is_expected_admin_principal(G, oid: str, max_depth: int = 25) -> bool:
+    """True if principal is a built-in admin (or nested into one) for ACL noise filters.
+
+    Unlike is_expected_dcsync_principal, this does **not** treat Domain Controllers /
+    RODC / Account Operators as expected computer-ACL holders — only admin tier groups.
+    """
+    if oid not in G:
+        return False
+    name = (G.nodes[oid].get("name") or "")
+    if _is_admin_tier_principal_name(name):
+        return True
+    seen = set()
+    stack = [(oid, 0)]
+    while stack:
+        cur, depth = stack.pop()
+        if cur in seen or depth > max_depth:
+            continue
+        seen.add(cur)
+        for _, dst, ed in G.out_edges(cur, data=True):
+            label = (ed.get("label") or "").lower()
+            if label not in ("memberof", "member_of", "member"):
+                continue
+            dname = (G.nodes.get(dst) or {}).get("name") or ""
+            if _is_admin_tier_principal_name(dname):
+                return True
+            if depth + 1 <= max_depth:
+                stack.append((dst, depth + 1))
+    return False
+
+
 def collect_can_configure_rbcd(G, domain_filter=None, exclude_default_priv: bool = True) -> List[dict]:
     """Non-default principals who can configure RBCD on a computer resource.
 
@@ -3132,7 +3218,7 @@ def collect_can_configure_rbcd(G, domain_filter=None, exclude_default_priv: bool
         cached = expected_cache.get(oid)
         if cached is not None:
             return cached
-        result = is_expected_dcsync_principal(G, oid)
+        result = is_expected_admin_principal(G, oid)
         expected_cache[oid] = result
         return result
 
@@ -3152,7 +3238,7 @@ def collect_can_configure_rbcd(G, domain_filter=None, exclude_default_priv: bool
             ud = G.nodes.get(u) or {}
             if ud.get("is_azure"):
                 continue
-            principal = ud.get("name") or str(u)
+            principal = resolve_principal_display_name(G, u)
             if exclude_default_priv and (
                 _is_default_high_priv_name(principal) or _is_expected(u)
             ):
