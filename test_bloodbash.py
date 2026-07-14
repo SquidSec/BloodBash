@@ -131,6 +131,70 @@ class TestBloodBash(unittest.TestCase):
         self.assertTrue(bloodbash_globals["is_expected_dcsync_principal"](G, "U"))
         self.assertFalse(bloodbash_globals["is_expected_dcsync_principal"](G, "X"))
 
+    def test_is_domain_controller_via_group(self):
+        G = nx.MultiDiGraph()
+        G.add_node(
+            "DCG",
+            name="DOMAIN CONTROLLERS@LAB.LOCAL",
+            type="Group",
+            props={},
+            is_azure=False,
+        )
+        G.add_node(
+            "C",
+            name="FILE01.LAB.LOCAL",
+            type="Computer",
+            props={"unconstraineddelegation": True},
+            is_azure=False,
+        )
+        G.add_node(
+            "DC",
+            name="DC01.LAB.LOCAL",
+            type="Computer",
+            props={"unconstraineddelegation": True},
+            is_azure=False,
+        )
+        G.add_edge("DC", "DCG", label="MemberOf")
+        self.assertTrue(bloodbash_globals["is_domain_controller"](G, "DC"))
+        self.assertFalse(bloodbash_globals["is_domain_controller"](G, "C"))
+
+    def test_unconstrained_delegation_dc_vs_non_dc_sections(self):
+        G = nx.MultiDiGraph()
+        G.add_node(
+            "DCG",
+            name="DOMAIN CONTROLLERS@LAB.LOCAL",
+            type="Group",
+            props={},
+            is_azure=False,
+        )
+        G.add_node(
+            "DC",
+            name="DC01.LAB.LOCAL",
+            type="Computer",
+            props={"unconstraineddelegation": True, "operatingsystem": "Windows Server 2019"},
+            is_azure=False,
+        )
+        G.add_node(
+            "BAD",
+            name="APP01.LAB.LOCAL",
+            type="Computer",
+            props={"unconstraineddelegation": True},
+            is_azure=False,
+        )
+        G.add_edge("DC", "DCG", label="MemberOf")
+        bloodbash_globals["global_findings"] = []
+        output = self._capture_output(
+            bloodbash_globals["print_unconstrained_delegation"], G
+        )
+        clean = self._strip_ansi(output)
+        self.assertIn("Domain Controllers", clean)
+        self.assertIn("Non-DC", clean)
+        self.assertIn("DC01.LAB.LOCAL", clean)
+        self.assertIn("APP01.LAB.LOCAL", clean)
+        findings = [f[2] for f in bloodbash_globals["global_findings"] if f[1] == "Unconstrained Delegation"]
+        self.assertTrue(any("APP01" in d for d in findings))
+        self.assertFalse(any("DC01" in d for d in findings))
+
     def test_dcsync_domain_type_case_insensitive(self):
         """Domain nodes with type 'domain' (lowercase) must still be scanned."""
         G = nx.MultiDiGraph()
@@ -595,9 +659,10 @@ class TestBloodBash(unittest.TestCase):
         G.add_node("C1", name="Comp1", type="Computer", props={"TrustedForDelegation": True})
         G.add_node("C2", name="Comp2", type="Computer", props={"TrustedForDelegation": False})
         output = self._capture_output(bloodbash_globals['print_unconstrained_delegation'], G)
-        self.assertIn("Unconstrained delegation enabled", output)
-        self.assertIn("Comp1", output)
-        self.assertNotIn("Comp2", output)
+        clean = self._strip_ansi(output)
+        self.assertIn("Non-DC unconstrained", clean)
+        self.assertIn("Comp1", clean)
+        self.assertNotIn("Comp2", clean)
     def test_new_features_password_in_description(self):
         G = nx.MultiDiGraph()
         G.add_node("U1", name="User1", type="User", props={"description": "Password: P@ssw0rd123"})
