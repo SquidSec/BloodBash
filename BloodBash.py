@@ -3114,30 +3114,77 @@ def collect_can_configure_rbcd(G, domain_filter=None, exclude_default_priv: bool
     return rows
 
 
+def summarize_can_configure_rbcd(rows: List[dict]) -> List[dict]:
+    """Roll up can-configure-RBCD rows by principal (count + sample targets/rights)."""
+    by_prin: Dict[str, dict] = {}
+    for r in rows:
+        p = r.get("principal") or ""
+        bucket = by_prin.get(p)
+        if bucket is None:
+            bucket = {
+                "principal": p,
+                "principal_oid": r.get("principal_oid"),
+                "count": 0,
+                "targets": [],
+                "rights": set(),
+            }
+            by_prin[p] = bucket
+        bucket["count"] += 1
+        bucket["rights"].add(r.get("right") or "")
+        if len(bucket["targets"]) < 3:
+            t = r.get("target") or ""
+            if t and t not in bucket["targets"]:
+                bucket["targets"].append(t)
+    summary = []
+    for bucket in by_prin.values():
+        summary.append(
+            {
+                "principal": bucket["principal"],
+                "principal_oid": bucket["principal_oid"],
+                "count": bucket["count"],
+                "targets": bucket["targets"],
+                "rights": sorted(bucket["rights"]),
+            }
+        )
+    summary.sort(key=lambda s: (-s["count"], s["principal"]))
+    return summary
+
+
 def print_can_configure_rbcd(G, domain_filter=None):
     console.rule(
         "[bold magenta]Can Configure RBCD (write AllowedToAct on resource) (AD)[/bold magenta]"
     )
     rows = collect_can_configure_rbcd(G, domain_filter)
+    summary = summarize_can_configure_rbcd(rows)
     max_display = 40
-    max_findings = 200
-    for i, r in enumerate(rows):
+    max_findings = 50
+    console.print(
+        f"  [dim]{len(rows)} computer grant(s) across {len(summary)} principal(s)[/dim]"
+    )
+    for i, s in enumerate(summary):
+        samples = ", ".join(s["targets"])
+        if s["count"] > len(s["targets"]):
+            samples += f", … (+{s['count'] - len(s['targets'])} more)"
+        rights = ", ".join(s["rights"][:4])
         if i < max_display:
             console.print(
-                f"  • [green]{r['principal']}[/green] --[{r['right']}]--> [cyan]{r['target']}[/cyan]"
+                f"  • [green]{s['principal']}[/green] "
+                f"[red]×{s['count']}[/red] computers "
+                f"[dim]({rights})[/dim] e.g. [cyan]{samples}[/cyan]"
             )
         if i < max_findings:
             add_finding(
                 "Can Configure RBCD",
-                f"{r['principal']} can configure RBCD on {r['target']} via {r['right']}",
+                f"{s['principal']} can configure RBCD on {s['count']} computer(s) "
+                f"via {rights}",
                 score=9,
             )
-    if len(rows) > max_display:
-        console.print(f"  [dim]... and {len(rows) - max_display} more[/dim]")
-    if len(rows) > max_findings:
+    if len(summary) > max_display:
+        console.print(f"  [dim]... and {len(summary) - max_display} more principals[/dim]")
+    if len(summary) > max_findings:
         add_finding(
             "Can Configure RBCD",
-            f"{len(rows) - max_findings} additional can-configure-RBCD grants not listed individually",
+            f"{len(summary) - max_findings} additional principals with can-configure-RBCD grants",
             score=9,
         )
     if rows:

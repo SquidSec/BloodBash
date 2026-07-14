@@ -378,6 +378,33 @@ class TestBloodBash(unittest.TestCase):
             )
         )
 
+    def test_summarize_can_configure_rbcd_by_principal(self):
+        rows = [
+            {"principal": "A@LAB.LOCAL", "target": "H1$", "right": "GenericWrite"},
+            {"principal": "A@LAB.LOCAL", "target": "H2$", "right": "GenericAll"},
+            {"principal": "B@LAB.LOCAL", "target": "H3$", "right": "Owns"},
+        ]
+        summary = bloodbash_globals["summarize_can_configure_rbcd"](rows)
+        self.assertEqual(summary[0]["principal"], "A@LAB.LOCAL")
+        self.assertEqual(summary[0]["count"], 2)
+        self.assertEqual(summary[1]["principal"], "B@LAB.LOCAL")
+        self.assertEqual(summary[1]["count"], 1)
+
+    def test_print_can_configure_rbcd_aggregates_findings(self):
+        G = nx.MultiDiGraph()
+        G.add_node("U", name="LOWPRIV@LAB.LOCAL", type="User", props={}, is_azure=False)
+        for i in range(5):
+            tid = f"T{i}"
+            G.add_node(tid, name=f"HOST{i}$.LAB.LOCAL", type="Computer", props={}, is_azure=False)
+            G.add_edge("U", tid, label="GenericWrite")
+        bloodbash_globals["global_findings"] = []
+        output = self._capture_output(bloodbash_globals["print_can_configure_rbcd"], G)
+        clean = self._strip_ansi(output)
+        self.assertIn("×5", clean)
+        rbcd = [f for f in bloodbash_globals["global_findings"] if f[1] == "Can Configure RBCD"]
+        self.assertEqual(len(rbcd), 1)
+        self.assertIn("5 computer", rbcd[0][2])
+
     def test_can_configure_rbcd_keeps_best_right_per_pair(self):
         """Owns + WAR + AllExtendedRights on same host → one row (strongest)."""
         G = nx.MultiDiGraph()
@@ -413,19 +440,19 @@ class TestBloodBash(unittest.TestCase):
         self.assertFalse(any(r["right"].lower() == "writeproperty" for r in rows))
         self.assertTrue(any(r["right"] == "AddAllowedToAct" for r in rows))
 
-    def test_print_can_configure_rbcd_caps_findings(self):
+    def test_print_can_configure_rbcd_caps_principal_findings(self):
         G = nx.MultiDiGraph()
-        G.add_node("U", name="LOWPRIV@LAB.LOCAL", type="User", props={}, is_azure=False)
-        for i in range(250):
-            tid = f"T{i}"
-            G.add_node(tid, name=f"HOST{i}$.LAB.LOCAL", type="Computer", props={}, is_azure=False)
-            G.add_edge("U", tid, label="GenericWrite")
+        G.add_node("T", name="HOST$.LAB.LOCAL", type="Computer", props={}, is_azure=False)
+        for i in range(60):
+            uid = f"U{i}"
+            G.add_node(uid, name=f"USER{i}@LAB.LOCAL", type="User", props={}, is_azure=False)
+            G.add_edge(uid, "T", label="GenericWrite")
         bloodbash_globals["global_findings"] = []
         self._capture_output(bloodbash_globals["print_can_configure_rbcd"], G)
         rbcd_findings = [f for f in bloodbash_globals["global_findings"] if f[1] == "Can Configure RBCD"]
-        # 200 detail + 1 aggregate overflow finding
-        self.assertEqual(len(rbcd_findings), 201)
-        self.assertTrue(any("additional" in f[2].lower() for f in rbcd_findings))
+        # 50 principal findings + 1 overflow
+        self.assertEqual(len(rbcd_findings), 51)
+        self.assertTrue(any("additional principals" in f[2].lower() for f in rbcd_findings))
 
     def test_add_well_known_group_memberships_links_domain_users(self):
         G = nx.MultiDiGraph()
