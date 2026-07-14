@@ -1821,6 +1821,104 @@ class TestBloodBash(unittest.TestCase):
         self.assertIn("index.html", names)
         self.assertTrue(any(n.startswith("csv/") for n in names))
 
+    def test_export_csv_pack_core_files(self):
+        """PlumHound-style multi-CSV pack writes inventory CSVs + index."""
+        import time as _time
+        G = nx.MultiDiGraph()
+        G.add_node(
+            "DOM",
+            name="LAB.LOCAL",
+            type="Domain",
+            props={"domain": "LAB.LOCAL"},
+            is_azure=False,
+        )
+        G.add_node(
+            "DA",
+            name="DOMAIN ADMINS@LAB.LOCAL",
+            type="Group",
+            props={"domain": "LAB.LOCAL", "highvalue": True},
+            is_azure=False,
+        )
+        G.add_node(
+            "U1",
+            name="ALICE@LAB.LOCAL",
+            type="User",
+            props={
+                "domain": "LAB.LOCAL",
+                "enabled": True,
+                "hasspn": True,
+                "dontreqpreauth": False,
+                "pwdlastset": int(_time.time()) - 400 * 86400,
+            },
+            is_azure=False,
+        )
+        G.add_node(
+            "U2",
+            name="BOB@LAB.LOCAL",
+            type="User",
+            props={
+                "domain": "LAB.LOCAL",
+                "enabled": True,
+                "dontreqpreauth": True,
+                "passwordneverexpires": True,
+            },
+            is_azure=False,
+        )
+        G.add_node(
+            "C1",
+            name="PC01.LAB.LOCAL",
+            type="Computer",
+            props={"domain": "LAB.LOCAL", "haslaps": True, "operatingsystem": "Windows 10"},
+            is_azure=False,
+        )
+        G.add_node(
+            "C2",
+            name="DC01.LAB.LOCAL",
+            type="Computer",
+            props={"domain": "LAB.LOCAL", "haslaps": False, "isdc": True},
+            is_azure=False,
+        )
+        G.add_edge("U1", "DA", label="MemberOf")
+        G.add_edge("C2", "DA", label="MemberOf")  # not accurate but ok for group list
+        G.add_edge("U1", "C1", label="AdminTo")
+        G.add_edge("C1", "U2", label="HasSession")
+        pack_dir = os.path.join(self.temp_dir, "csvpack")
+        written = bloodbash_globals["export_csv_pack"](G, pack_dir)
+        self.assertTrue(written)
+        expected = [
+            "domains.csv",
+            "domain_admins.csv",
+            "users.csv",
+            "computers.csv",
+            "groups.csv",
+            "kerberoastable.csv",
+            "asrep_roastable.csv",
+            "password_never_expires.csv",
+            "laps_not_enabled.csv",
+            "local_admins_users.csv",
+            "user_sessions.csv",
+            "index.csv",
+            "README.txt",
+        ]
+        for name in expected:
+            path = os.path.join(pack_dir, name)
+            self.assertTrue(os.path.exists(path), msg=f"missing {name}")
+        with open(os.path.join(pack_dir, "kerberoastable.csv"), encoding="utf-8") as f:
+            content = f.read()
+        self.assertIn("ALICE@LAB.LOCAL", content)
+        with open(os.path.join(pack_dir, "asrep_roastable.csv"), encoding="utf-8") as f:
+            content = f.read()
+        self.assertIn("BOB@LAB.LOCAL", content)
+        with open(os.path.join(pack_dir, "index.csv"), encoding="utf-8") as f:
+            idx = f.read()
+        self.assertIn("kerberoastable.csv", idx)
+        self.assertIn("RowCount", idx)
+
+    def test_csv_pack_cli_flag_in_help(self):
+        out = self._capture_output(bloodbash_globals["print_structured_help"], "BloodBash.py")
+        clean = self._strip_ansi(out)
+        self.assertIn("--csv-pack", clean)
+
     def test_html_export_sortable_branded(self):
         G = nx.MultiDiGraph()
         G.add_node("DA", name="Domain Admins", type="Group", props={})

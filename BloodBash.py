@@ -4955,6 +4955,243 @@ def export_zip_pack(source_dir: str, zip_path: str) -> str:
     return zip_path
 
 
+def _node_enabled(props) -> bool:
+    if _prop_raw_ci(props, ["enabled", "Enabled"]) is None:
+        return True
+    return get_bool_prop_ci(props, ["enabled", "Enabled"], default=True)
+
+
+def collect_csv_pack_datasets(G, domain_filter=None) -> Dict[str, Tuple[List[str], List[List[Any]]]]:
+    """PlumHound-style multi-CSV datasets: name -> (headers, rows)."""
+    datasets: Dict[str, Tuple[List[str], List[List[Any]]]] = {}
+
+    # Domains
+    domain_rows = []
+    for n, d in G.nodes(data=True):
+        if d.get("is_azure"):
+            continue
+        if str(d.get("type") or "").lower() != "domain":
+            continue
+        if not _domain_matches(d, domain_filter):
+            continue
+        domain_rows.append([d.get("name") or n, str(d.get("type"))])
+    for r in list_domains(G):
+        if r["kind"] == "AD Domain" and not any(x[0] == r["name"] for x in domain_rows):
+            if domain_filter and str(r["name"]).lower() != str(domain_filter).lower():
+                continue
+            domain_rows.append([r["name"], "Domain"])
+    datasets["domains.csv"] = (["Name", "Type"], domain_rows)
+
+    # Domain Admins (nested members of DA-style groups)
+    da_rows = []
+    for n, d in G.nodes(data=True):
+        if d.get("is_azure"):
+            continue
+        if not _domain_matches(d, domain_filter):
+            continue
+        if str(d.get("type") or "").lower() not in ("user", "computer", "group"):
+            continue
+        is_priv, groups = is_member_of_privileged_group(G, n)
+        if not is_priv:
+            continue
+        da_like = [g for g in groups if "domain admins" in g.lower() or "enterprise admins" in g.lower()]
+        if not da_like and not any("domain admins" in (d.get("name") or "").lower() for _ in [0]):
+            # still include if nested into any priv group matched above
+            da_like = groups[:3]
+        props = d.get("props") or {}
+        da_rows.append([
+            d.get("name") or n,
+            d.get("type"),
+            _node_enabled(props),
+            "; ".join(da_like or groups[:5]),
+        ])
+    datasets["domain_admins.csv"] = (
+        ["Name", "Type", "Enabled", "ViaGroups"],
+        sorted(da_rows, key=lambda r: str(r[0]).lower()),
+    )
+
+    # Users / computers / groups inventory
+    user_rows, comp_rows, group_rows = [], [], []
+    for n, d in G.nodes(data=True):
+        if d.get("is_azure"):
+            continue
+        if not _domain_matches(d, domain_filter):
+            continue
+        props = d.get("props") or {}
+        typ = str(d.get("type") or "").lower()
+        name = d.get("name") or n
+        if typ == "user":
+            user_rows.append([
+                name,
+                _node_enabled(props),
+                get_bool_prop_ci(props, ["admincount", "adminCount"]),
+                _user_has_spn(props),
+                get_bool_prop_ci(props, ["dontreqpreauth", "dontReqPreauth"]),
+                get_bool_prop_ci(props, ["passwordneverexpires", "pwdneverexpires"]),
+                get_bool_prop_ci(props, ["passwordnotrequired", "passwordnotreqd"]),
+            ])
+        elif typ == "computer":
+            comp_rows.append([
+                name,
+                _node_enabled(props),
+                _has_laps_enabled(props),
+                is_domain_controller(G, n),
+                _prop_raw_ci(props, ["operatingsystem", "OperatingSystem"]) or "",
+            ])
+        elif typ == "group":
+            member_count = sum(
+                1
+                for u, _, ed in G.in_edges(n, data=True)
+                if (ed.get("label") or "").lower() in ("memberof", "member")
+            )
+            group_rows.append([
+                name,
+                get_bool_prop_ci(props, ["highvalue", "HighValue"]),
+                get_bool_prop_ci(props, ["admincount", "adminCount"]),
+                member_count,
+            ])
+    datasets["users.csv"] = (
+        ["Name", "Enabled", "AdminCount", "HasSPN", "DontReqPreauth", "PwdNeverExpires", "PwdNotRequired"],
+        sorted(user_rows, key=lambda r: str(r[0]).lower()),
+    )
+    datasets["computers.csv"] = (
+        ["Name", "Enabled", "HasLAPS", "IsDC", "OperatingSystem"],
+        sorted(comp_rows, key=lambda r: str(r[0]).lower()),
+    )
+    datasets["groups.csv"] = (
+        ["Name", "HighValue", "AdminCount", "InboundMemberEdges"],
+        sorted(group_rows, key=lambda r: str(r[0]).lower()),
+    )
+
+    # Credential hygiene CSVs
+    kerb_rows, asrep_rows, pne_rows = [], [], []
+    for n, d in G.nodes(data=True):
+        if d.get("is_azure") or str(d.get("type") or "").lower() != "user":
+            continue
+        if not _domain_matches(d, domain_filter):
+            continue
+        props = d.get("props") or {}
+        if not _node_enabled(props):
+            continue
+        name = d.get("name") or n
+        if name.upper().startswith("KRBTGT"):
+            continue
+        if _user_has_spn(props) and not get_bool_prop_ci(props, ["sensitive", "Sensitive"]):
+            kerb_rows.append([name, format_privilege_context_tags(d).strip()])
+        if get_bool_prop_ci(props, ["dontreqpreauth", "dontReqPreauth"]):
+            asrep_rows.append([name, format_privilege_context_tags(d).strip()])
+        pne = get_bool_prop_ci(props, ["passwordneverexpires", "pwdneverexpires"])
+        if not pne:
+            uac = _prop_raw_ci(props, ["useraccountcontrol", "UserAccountControl"])
+            try:
+                pne = bool(int(uac) & 0x10000)
+            except (TypeError, ValueError):
+                pass
+        if pne:
+            pne_rows.append([name])
+    datasets["kerberoastable.csv"] = (["Name", "Tags"], kerb_rows)
+    datasets["asrep_roastable.csv"] = (["Name", "Tags"], asrep_rows)
+    datasets["password_never_expires.csv"] = (["Name"], pne_rows)
+
+    # LAPS not enabled
+    laps_missing = []
+    for n, d in G.nodes(data=True):
+        if d.get("is_azure") or str(d.get("type") or "").lower() != "computer":
+            continue
+        if not _domain_matches(d, domain_filter):
+            continue
+        if not _has_laps_enabled(d.get("props") or {}):
+            laps_missing.append([d.get("name") or n])
+    datasets["laps_not_enabled.csv"] = (["Computer"], laps_missing)
+
+    # Local admins (users) — AdminTo / LocalAdmin edges from user -> computer
+    la_rows = []
+    for u, v, ed in G.edges(data=True):
+        label = (ed.get("label") or "").lower()
+        if label not in ("adminto", "localadmin"):
+            continue
+        ud, vd = G.nodes.get(u) or {}, G.nodes.get(v) or {}
+        if ud.get("is_azure") or vd.get("is_azure"):
+            continue
+        if str(vd.get("type") or "").lower() != "computer":
+            continue
+        if str(ud.get("type") or "").lower() not in ("user", "group"):
+            continue
+        if domain_filter and not (
+            _domain_matches(ud, domain_filter) or _domain_matches(vd, domain_filter)
+        ):
+            continue
+        la_rows.append([
+            ud.get("name") or u,
+            ud.get("type"),
+            ed.get("label") or label,
+            vd.get("name") or v,
+        ])
+    datasets["local_admins_users.csv"] = (
+        ["Principal", "PrincipalType", "Right", "Computer"],
+        sorted(la_rows, key=lambda r: (str(r[0]).lower(), str(r[3]).lower())),
+    )
+
+    # User sessions — HasSession computer -> user (BloodHound direction)
+    sess_rows = []
+    for u, v, ed in G.edges(data=True):
+        if (ed.get("label") or "").lower() != "hassession":
+            continue
+        ud, vd = G.nodes.get(u) or {}, G.nodes.get(v) or {}
+        # Normalize to Computer, User
+        if str(ud.get("type") or "").lower() == "computer":
+            comp, user = ud, vd
+        elif str(vd.get("type") or "").lower() == "computer":
+            comp, user = vd, ud
+        else:
+            continue
+        if domain_filter and not (
+            _domain_matches(comp, domain_filter) or _domain_matches(user, domain_filter)
+        ):
+            continue
+        sess_rows.append([comp.get("name") or "", user.get("name") or ""])
+    datasets["user_sessions.csv"] = (
+        ["Computer", "User"],
+        sorted(sess_rows, key=lambda r: (str(r[0]).lower(), str(r[1]).lower())),
+    )
+
+    return datasets
+
+
+def export_csv_pack(G, export_dir: str, domain_filter=None) -> List[str]:
+    """
+    PlumHound-style multi-CSV report pack: one CSV per inventory task + index.csv.
+    """
+    export_dir = os.path.abspath(export_dir)
+    os.makedirs(export_dir, exist_ok=True)
+    datasets = collect_csv_pack_datasets(G, domain_filter)
+    written: List[str] = []
+    index_rows: List[List[Any]] = []
+    for filename, (headers, rows) in sorted(datasets.items()):
+        path = os.path.join(export_dir, filename)
+        write_csv_file(path, headers, rows)
+        written.append(path)
+        index_rows.append([filename, len(rows), ", ".join(headers)])
+    index_path = os.path.join(export_dir, "index.csv")
+    write_csv_file(index_path, ["File", "RowCount", "Columns"], index_rows)
+    written.append(index_path)
+    readme = os.path.join(export_dir, "README.txt")
+    with open(readme, "w", encoding="utf-8") as f:
+        f.write(
+            f"BloodBash PlumHound-style CSV pack v{__version__} ({__org__})\n"
+            f"Generated: {datetime.now(timezone.utc).isoformat()}\n"
+            f"Files: {len(datasets)} datasets + index.csv\n"
+            f"Use index.csv as a report index (similar to PlumHound REPORT-INDEX).\n"
+        )
+    written.append(readme)
+    console.print(
+        f"[green]CSV pack written:[/green] {export_dir} "
+        f"({len(datasets)} datasets, {len(written)} files)"
+    )
+    logger.info("CSV pack written to %s (%d files)", export_dir, len(written))
+    return written
+
+
 # ────────────────────────────────────────────────
 # Export
 # ────────────────────────────────────────────────
@@ -5181,6 +5418,7 @@ HELP_TABLE_SECTIONS = [
             ("--export-bh", "BloodHound-compatible full graph JSON", ""),
             ("--dot [FILE]", "Graphviz DOT export", "default: bloodbash.dot"),
             ("--report-pack DIR", "Multi-page HTML suite + CSVs + index.html", ""),
+            ("--csv-pack DIR", "PlumHound-style multi-CSV inventory pack", "index.csv + task CSVs"),
             ("--export-zip [FILE]", "Zip the report pack", "default: bloodbash-reports.zip"),
             ("--all-findings", "Print complete findings table at end of run", "not limited to top 20"),
             ("--log-file [FILE]", "Write a run audit log", "default: bloodbash.log"),
@@ -5504,7 +5742,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--report-pack",
         metavar="DIR",
-        help="Write multi-page HTML report suite + per-section CSVs + index.html",
+        help="Multi-page HTML suite + CSVs + index.html",
+    )
+    parser.add_argument(
+        "--csv-pack",
+        metavar="DIR",
+        help="PlumHound-style multi-CSV inventory pack (domains, DA, roastables, LAPS, sessions, …)",
     )
     parser.add_argument(
         "--export-zip",
@@ -5585,7 +5828,7 @@ def main():
         args.path_to, args.inspect, args.export_bh, args.dot, args.deep_analysis,
         args.gpo_content_dir, args.busiest_paths, args.path_break, args.password_age,
         args.stale_accounts, args.privilege_inventory, args.owned_inventory,
-        args.inventory, args.report_pack, args.export_zip, args.from_user,
+        args.inventory, args.report_pack, args.csv_pack, args.export_zip, args.from_user,
         getattr(args, "from_user_export", None) is not None,
     ])
     run_all = args.all or not selected_checks
@@ -5604,7 +5847,7 @@ def main():
             args.path_to, args.inspect, args.export_bh, args.dot, args.deep_analysis,
             args.gpo_content_dir, args.busiest_paths, args.path_break, args.password_age,
             args.stale_accounts, args.privilege_inventory, args.owned_inventory,
-            args.inventory, args.report_pack,
+            args.inventory, args.report_pack, args.csv_pack,
         ])
         if only_dossier:
             run_all = False
@@ -5621,6 +5864,7 @@ def main():
         args.inspect, args.export_bh, args.dot, args.deep_analysis, args.gpo_content_dir,
         args.busiest_paths, args.path_break, args.password_age, args.stale_accounts,
         args.privilege_inventory, args.owned_inventory, args.inventory, args.report_pack,
+        args.csv_pack,
     ]):
         mode_str = f"Compromise dossier (--from-user {args.from_user})"
     elif args.all:
@@ -5758,7 +6002,7 @@ def main():
         export_results(G, format_type=args.export, domain_filter=args.domain)
 
     report_dir = args.report_pack
-    if args.export_zip and not report_dir:
+    if args.export_zip and not report_dir and not args.csv_pack:
         report_dir = os.path.join(os.getcwd(), "bloodbash-report-pack")
     if report_dir:
         export_report_pack(
@@ -5772,12 +6016,15 @@ def main():
             fast=args.fast,
             include_paths=True,
         )
+    if args.csv_pack:
+        export_csv_pack(G, args.csv_pack, domain_filter=args.domain)
     if args.export_zip:
         zip_target = args.export_zip
-        if report_dir:
-            export_zip_pack(report_dir, zip_target)
+        zip_src = report_dir or args.csv_pack
+        if zip_src:
+            export_zip_pack(zip_src, zip_target)
         else:
-            console.print("[yellow]--export-zip requires a report pack directory[/yellow]")
+            console.print("[yellow]--export-zip requires --report-pack or --csv-pack[/yellow]")
 
     if args.export_bh:
         export_bloodhound_compatible(G)
