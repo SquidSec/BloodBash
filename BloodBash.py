@@ -2163,25 +2163,58 @@ def _has_laps_enabled(props):
 
 def print_laps_status(G, domain_filter=None):
     console.rule("[bold magenta]LAPS (Local Administrator Password Solution) Status (AD)[/bold magenta]")
-    computers = [d for _, d in G.nodes(data=True) if d['type'].lower() == 'computer' and _domain_matches(d, domain_filter) and not d.get('is_azure', False)]
+    computers = [
+        d for _, d in G.nodes(data=True)
+        if d['type'].lower() == 'computer'
+        and _domain_matches(d, domain_filter)
+        and not d.get('is_azure', False)
+    ]
     if not computers:
         console.print("[green]No computers found[/green]")
         return
-    found_enabled = False
-    found_disabled = False
+    enabled = []
+    disabled = []
     for d in computers:
         props = d.get('props') or {}
         if _has_laps_enabled(props):
-            found_enabled = True
-            console.print(f"[green]LAPS enabled[/green]: [bold cyan]{d['name']}[/bold cyan]")
+            enabled.append(d.get('name') or '')
         else:
-            found_disabled = True
-            console.print(f"[yellow]LAPS not enabled[/yellow]: [bold cyan]{d['name']}[/bold cyan]")
-            add_finding("LAPS", f"Computer {d['name']} does not have LAPS enabled")
-    if found_enabled:
-        console.print(Panel("[bold green]Impact:[/bold green] LAPS secures local admin passwords.\n[bold]Mitigation:[/bold] Ensure LAPS is enabled on all computers.\n[bold]Tools:[/bold] LAPS management tools, AD queries.", title="LAPS Enabled", border_style="green"))
-    if found_disabled:
-        console.print(Panel("[bold yellow]Impact:[/bold yellow] Local admin passwords may be weak or shared → easy compromise.\n[bold]Mitigation:[/bold] Enable LAPS to randomize and secure passwords.\n[bold]Tools:[/bold] LAPS deployment scripts.", title="LAPS Not Enabled", border_style="yellow"))
+            disabled.append(d.get('name') or '')
+    total = len(computers)
+    console.print(
+        f"  LAPS enabled: [green]{len(enabled)}[/green] / {total}  ·  "
+        f"not enabled: [yellow]{len(disabled)}[/yellow] / {total}"
+    )
+    max_samples = 10
+    if enabled:
+        for name in enabled[:max_samples]:
+            console.print(f"  [green]LAPS enabled[/green]: [bold cyan]{name}[/bold cyan]")
+        if len(enabled) > max_samples:
+            console.print(f"  [dim]... and {len(enabled) - max_samples} more with LAPS[/dim]")
+    if disabled:
+        for name in disabled[:max_samples]:
+            console.print(f"  [yellow]LAPS not enabled[/yellow]: [bold cyan]{name}[/bold cyan]")
+        if len(disabled) > max_samples:
+            console.print(f"  [dim]... and {len(disabled) - max_samples} more without LAPS[/dim]")
+        add_finding(
+            "LAPS",
+            f"{len(disabled)}/{total} computers do not have LAPS enabled",
+            score=6,
+        )
+    if enabled and not disabled:
+        console.print(Panel(
+            "[bold green]Impact:[/bold green] LAPS secures local admin passwords.\n"
+            "[bold]Mitigation:[/bold] Ensure LAPS stays enabled on all computers.",
+            title="LAPS Fully Enabled",
+            border_style="green",
+        ))
+    elif disabled:
+        console.print(Panel(
+            "[bold yellow]Impact:[/bold yellow] Local admin passwords may be weak or shared → easy compromise.\n"
+            "[bold]Mitigation:[/bold] Enable LAPS to randomize and secure passwords.",
+            title="LAPS Coverage Gap",
+            border_style="yellow",
+        ))
 
 
 READLAPS_LABELS = frozenset({
