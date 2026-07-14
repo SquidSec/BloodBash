@@ -1096,7 +1096,8 @@ class TestBloodBash(unittest.TestCase):
         G = nx.MultiDiGraph()
         G.add_node("Dummy", name="Dummy", type="User")
         output = self._capture_output(bloodbash_globals['print_adcs_vulnerabilities'], G)
-        self.assertIn("No obvious ESC1–ESC14 misconfigurations detected", output)
+        clean = self._strip_ansi(output)
+        self.assertIn("No ADCS objects in this collection", clean)
     def test_no_results_shortest_paths(self):
         G = nx.MultiDiGraph()
         G.add_node("User", name="User", type="User")
