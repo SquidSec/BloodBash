@@ -1790,5 +1790,137 @@ class TestBloodBash(unittest.TestCase):
         bloodbash_globals['add_finding']("DCSync", "Test default score")
         self.assertEqual(bloodbash_globals['global_findings'][-1][0], 10)
 
+    # ────────────────────────────────────────────────
+    # Privilege-context tags (AdminCount / OWNED / LASTLOG)
+    # ────────────────────────────────────────────────
+    def test_format_lastlog_bucket_never(self):
+        props = {"lastlogontimestamp": -1}
+        self.assertEqual(
+            bloodbash_globals["format_lastlog_bucket"](props),
+            "NEVER",
+        )
+        props2 = {"lastlogon": 0}
+        self.assertEqual(
+            bloodbash_globals["format_lastlog_bucket"](props2),
+            "NEVER",
+        )
+
+    def test_format_lastlog_bucket_age_bands(self):
+        now = 1_700_000_000.0  # fixed epoch
+        # ~400 days ago -> > 1 year
+        props = {"lastlogontimestamp": int(now - 400 * 86400)}
+        self.assertEqual(
+            bloodbash_globals["format_lastlog_bucket"](props, now=now),
+            "> 1 year",
+        )
+        # ~10 days ago -> < 1 year
+        props2 = {"lastlogontimestamp": int(now - 10 * 86400)}
+        self.assertEqual(
+            bloodbash_globals["format_lastlog_bucket"](props2, now=now),
+            "< 1 year",
+        )
+        # ~4 years
+        props3 = {"lastlogontimestamp": int(now - 4 * 365 * 86400)}
+        self.assertEqual(
+            bloodbash_globals["format_lastlog_bucket"](props3, now=now),
+            "> 3 years",
+        )
+        # ~6 years
+        props4 = {"lastlogontimestamp": int(now - 6 * 365 * 86400)}
+        self.assertEqual(
+            bloodbash_globals["format_lastlog_bucket"](props4, now=now),
+            "> 5 years",
+        )
+        # ~11 years
+        props5 = {"lastlogontimestamp": int(now - 11 * 365 * 86400)}
+        self.assertEqual(
+            bloodbash_globals["format_lastlog_bucket"](props5, now=now),
+            "> 10 years",
+        )
+
+    def test_format_privilege_context_tags_admincount_owned(self):
+        d = {
+            "name": "SVC@LAB.LOCAL",
+            "type": "User",
+            "props": {
+                "admincount": True,
+                "owned": True,
+                "lastlogontimestamp": -1,
+            },
+        }
+        tags = bloodbash_globals["format_privilege_context_tags"](d)
+        self.assertIn("[AdminCount]", tags)
+        self.assertIn("[OWNED]", tags)
+        self.assertIn("[LASTLOG: NEVER]", tags)
+
+    def test_format_privilege_context_tags_empty_when_clean(self):
+        import time as _time
+        d = {
+            "name": "NORMAL@LAB.LOCAL",
+            "type": "User",
+            "props": {
+                "admincount": False,
+                "owned": False,
+                "lastlogontimestamp": int(_time.time()),
+            },
+        }
+        tags = bloodbash_globals["format_privilege_context_tags"](d)
+        self.assertNotIn("[AdminCount]", tags)
+        self.assertNotIn("[OWNED]", tags)
+        # recent logon still gets a LASTLOG band
+        self.assertIn("[LASTLOG:", tags)
+
+    def test_kerberoastable_shows_privilege_context_tags(self):
+        G = nx.MultiDiGraph()
+        G.add_node(
+            "K",
+            name="PRIVKERB@LAB.LOCAL",
+            type="User",
+            props={
+                "hasspn": True,
+                "sensitive": False,
+                "enabled": True,
+                "admincount": True,
+                "owned": True,
+                "lastlogontimestamp": -1,
+            },
+            is_azure=False,
+        )
+        bloodbash_globals["global_findings"] = []
+        output = self._capture_output(bloodbash_globals["print_kerberoastable"], G)
+        clean = self._strip_ansi(output)
+        self.assertIn("PRIVKERB@LAB.LOCAL", clean)
+        self.assertIn("[AdminCount]", clean)
+        self.assertIn("[OWNED]", clean)
+        self.assertIn("[LASTLOG: NEVER]", clean)
+        # findings text also carries tags for report export
+        details = " ".join(f[2] for f in bloodbash_globals["global_findings"] if f[1] == "Kerberoastable")
+        self.assertIn("[AdminCount]", details)
+        self.assertIn("[OWNED]", details)
+
+    def test_as_rep_roastable_shows_privilege_context_tags(self):
+        G = nx.MultiDiGraph()
+        G.add_node(
+            "A",
+            name="PRIVASREP@LAB.LOCAL",
+            type="User",
+            props={
+                "dontreqpreauth": True,
+                "sensitive": False,
+                "enabled": True,
+                "admincount": True,
+                "lastlogontimestamp": -1,
+            },
+            is_azure=False,
+        )
+        bloodbash_globals["global_findings"] = []
+        output = self._capture_output(bloodbash_globals["print_as_rep_roastable"], G)
+        clean = self._strip_ansi(output)
+        self.assertIn("PRIVASREP@LAB.LOCAL", clean)
+        self.assertIn("[AdminCount]", clean)
+        self.assertIn("[LASTLOG: NEVER]", clean)
+        details = " ".join(f[2] for f in bloodbash_globals["global_findings"] if f[1] == "AS-REP Roastable")
+        self.assertIn("[AdminCount]", details)
+
 if __name__ == '__main__':
     unittest.main()
