@@ -43,7 +43,7 @@ SEVERITY_SCORES = {
     "AS-REP Roastable": 5, "Shortest Paths": 6, "Password Never Expires": 4,
     "Password Not Required": 8, "Shadow Credentials": 8, "GPO Content": 7,
     "Constrained Delegation": 7, "Unconstrained Delegation": 8, "LAPS": 6,
-    "LAPS Readers": 8,
+    "LAPS Readers": 8, "Can Configure RBCD": 9,
     "Owned Paths": 9, "Password in Description": 6,
     "Arbitrary Paths": 6, "Trust Abuse": 7, "Deep Group Nesting": 6,
     "Busiest Paths": 7, "Path Break": 8, "Password Age": 5, "Stale Accounts": 4,
@@ -2296,6 +2296,100 @@ def print_rbcd(G, domain_filter=None):
         print_abuse_panel("RBCD")
     else:
         console.print("[green]No RBCD configured computers found[/green]")
+
+
+# Rights that let a principal set msDS-AllowedToActOnBehalfOfOtherIdentity (RBCD)
+RBCD_CONFIGURE_RIGHTS = frozenset({
+    "genericall",
+    "genericwrite",
+    "writeowner",
+    "writedacl",
+    "owns",
+    "allextendedrights",
+    "writeaccountrestrictions",
+    "addallowedtoact",
+    "writeproperty",
+})
+
+
+def collect_can_configure_rbcd(G, domain_filter=None, exclude_default_priv: bool = True) -> List[dict]:
+    """Non-default principals who can configure RBCD on a computer (or user)."""
+    rows: List[dict] = []
+    seen = set()
+    for u, v, ed in G.edges(data=True):
+        label = (ed.get("label") or "")
+        label_l = label.lower()
+        if label_l not in RBCD_CONFIGURE_RIGHTS:
+            continue
+        ud = G.nodes.get(u) or {}
+        vd = G.nodes.get(v) or {}
+        if ud.get("is_azure") or vd.get("is_azure"):
+            continue
+        if domain_filter and not (
+            _domain_matches(ud, domain_filter) or _domain_matches(vd, domain_filter)
+        ):
+            continue
+        # Target should be computer (or user) resource
+        vtype = str(vd.get("type") or "").lower()
+        if vtype not in ("computer", "user"):
+            continue
+        principal = ud.get("name") or str(u)
+        target = vd.get("name") or str(v)
+        if exclude_default_priv and (
+            _is_default_high_priv_name(principal)
+            or is_expected_dcsync_principal(G, u)
+        ):
+            continue
+        key = (principal, target, label_l)
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(
+            {
+                "principal": principal,
+                "target": target,
+                "right": label,
+                "principal_oid": u,
+                "target_oid": v,
+            }
+        )
+    rows.sort(key=lambda r: (r["principal"], r["target"], r["right"]))
+    return rows
+
+
+def print_can_configure_rbcd(G, domain_filter=None):
+    console.rule(
+        "[bold magenta]Can Configure RBCD (write AllowedToAct on resource) (AD)[/bold magenta]"
+    )
+    rows = collect_can_configure_rbcd(G, domain_filter)
+    max_display = 40
+    for i, r in enumerate(rows):
+        if i < max_display:
+            console.print(
+                f"  • [green]{r['principal']}[/green] --[{r['right']}]--> [cyan]{r['target']}[/cyan]"
+            )
+        add_finding(
+            "Can Configure RBCD",
+            f"{r['principal']} can configure RBCD on {r['target']} via {r['right']}",
+            score=9,
+        )
+    if len(rows) > max_display:
+        console.print(f"  [dim]... and {len(rows) - max_display} more[/dim]")
+    if rows:
+        console.print(
+            Panel(
+                "[bold red]Impact:[/bold red] Write msDS-AllowedToActOnBehalfOfOtherIdentity → "
+                "impersonate any user to the resource (RBCD).\n"
+                "[bold]Abuse:[/bold] Add attacker computer as AllowedToAct, then S4U2Self/S4U2Proxy.\n"
+                "[bold]Mitigation:[/bold] Remove broad GenericAll/WriteDacl/WriteAccountRestrictions "
+                "on computers from non-admin principals.",
+                title="Abuse Suggestions: Can Configure RBCD",
+                border_style="red",
+            )
+        )
+    else:
+        console.print("[green]No non-default principals can configure RBCD[/green]")
+
 
 def print_shortest_paths(G, fast=False, max_paths=10, target_filter=None, domain_filter=None, indirect=False):
     console.rule("[bold magenta]Shortest Paths to High-Value Targets[/bold magenta]")
@@ -4794,7 +4888,7 @@ HELP_TABLE_SECTIONS = [
         [
             ("--dcsync", "GetChanges + GetChangesAll DCSync rights", ""),
             ("--dangerous-permissions", "Dangerous ACLs on high-value objects", ""),
-            ("--rbcd", "Resource-based constrained delegation (AllowedToAct)", ""),
+            ("--rbcd", "RBCD configured + who can configure AllowedToAct", ""),
             ("--gpo-abuse", "Weak / abusable GPO permissions", ""),
             ("--sid-history", "SID history abuse candidates", ""),
             ("--unconstrained-delegation", "Unconstrained delegation principals", "DCs noted separately"),
@@ -5322,6 +5416,7 @@ def main():
         print_dcsync_rights(G, args.domain)
     if args.rbcd or run_all:
         print_rbcd(G, args.domain)
+        print_can_configure_rbcd(G, args.domain)
     if args.sessions or run_all:
         print_sessions_localadmin(G, args.domain)
     if args.kerberoastable or run_all:
