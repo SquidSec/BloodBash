@@ -82,6 +82,24 @@ class TestCompromiseDossier(unittest.TestCase):
         self.assertIn("DOMAIN ADMINS@LAB.LOCAL", names)
         self.assertGreaterEqual(mem["effective_count"], 3)
 
+    def test_nested_groups_case_insensitive_memberof_label(self):
+        G = nx.MultiDiGraph()
+        G.add_node("U", name="ALICE@LAB.LOCAL", type="User", props={}, is_azure=False)
+        G.add_node("G", name="STAFF@LAB.LOCAL", type="Group", props={}, is_azure=False)
+        G.add_edge("U", "G", label="memberof")  # lowercase edge label
+        mem = bloodbash_globals["collect_nested_groups"](G, "U")
+        self.assertEqual(mem["direct_count"], 1)
+        self.assertEqual(mem["direct"][0]["name"], "STAFF@LAB.LOCAL")
+
+    def test_compromise_right_labels_include_rbcd_configure_rights(self):
+        labels = set(bloodbash_globals["COMPROMISE_RIGHT_LABELS"])
+        summary = set(bloodbash_globals["COMPROMISE_SUMMARY_RIGHTS"])
+        self.assertIn("WriteAccountRestrictions", labels)
+        self.assertIn("AddAllowedToAct", labels)
+        self.assertIn("AllExtendedRights", labels)
+        self.assertIn("WriteAccountRestrictions", summary)
+        self.assertIn("AddAllowedToAct", summary)
+
     def test_outbound_rights_include_via_group(self):
         G = self._foothold_graph()
         mem = bloodbash_globals["collect_nested_groups"](G, "U")
@@ -155,6 +173,81 @@ class TestCompromiseDossier(unittest.TestCase):
         )
         self.assertEqual(docs, [])
         self.assertIn("not found", self._strip(out).lower())
+
+    def test_well_known_membership_exposes_auth_users_rights(self):
+        """Domain Users → Auth Users (synthetic) inherits GenericWrite on GPOs."""
+        G = nx.MultiDiGraph()
+        G.add_node(
+            "U",
+            name="ALICE@LAB.LOCAL",
+            type="User",
+            props={"domain": "LAB.LOCAL"},
+            is_azure=False,
+        )
+        G.add_node(
+            "DU",
+            name="DOMAIN USERS@LAB.LOCAL",
+            type="Group",
+            props={"domain": "LAB.LOCAL"},
+            is_azure=False,
+        )
+        G.add_node(
+            "AU",
+            name="AUTHENTICATED USERS@LAB.LOCAL",
+            type="Group",
+            props={"domain": "LAB.LOCAL"},
+            is_azure=False,
+        )
+        G.add_node(
+            "EV",
+            name="EVERYONE@LAB.LOCAL",
+            type="Group",
+            props={"domain": "LAB.LOCAL"},
+            is_azure=False,
+        )
+        G.add_node(
+            "GPO",
+            name="SOFTWARE-DEPLOY@LAB.LOCAL",
+            type="GPO",
+            props={"domain": "LAB.LOCAL"},
+            is_azure=False,
+        )
+        G.add_node(
+            "PC",
+            name="WS01.LAB.LOCAL",
+            type="Computer",
+            props={"domain": "LAB.LOCAL"},
+            is_azure=False,
+        )
+        # Primary group + direct ACL (SharpHound omits Domain Users → Auth Users)
+        G.add_edge("U", "DU", label="MemberOf")
+        G.add_edge("U", "PC", label="AllExtendedRights")
+        G.add_edge("U", "PC", label="WriteAccountRestrictions")
+        G.add_edge("AU", "GPO", label="GenericWrite")
+        G.add_edge("AU", "GPO", label="WriteDacl")
+        G.add_edge("AU", "GPO", label="WriteOwner")
+        added = bloodbash_globals["add_well_known_group_memberships"](G)
+        self.assertGreaterEqual(added, 1)
+        self.assertTrue(
+            any(
+                u == "DU" and v == "AU" and d.get("label") == "MemberOf"
+                for u, v, d in G.edges(data=True)
+            )
+        )
+        dossier = bloodbash_globals["build_compromise_dossier"](G, "ALICE")
+        self.assertIsNotNone(dossier)
+        eff = {g["name"] for g in dossier["membership"]["effective"]}
+        self.assertIn("AUTHENTICATED USERS@LAB.LOCAL", eff)
+        self.assertIn("EVERYONE@LAB.LOCAL", eff)
+        rights = dossier["rights"]
+        self.assertIn("GenericWrite", rights)
+        self.assertTrue(
+            any("SOFTWARE-DEPLOY" in r["target"] for r in rights["GenericWrite"])
+        )
+        self.assertIn("WriteAccountRestrictions", rights)
+        self.assertTrue(
+            any("WS01" in r["target"] for r in rights["WriteAccountRestrictions"])
+        )
 
     def test_cli_help_mentions_from_user(self):
         import subprocess, sys

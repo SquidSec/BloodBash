@@ -225,3 +225,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Customer / engagement BloodHound dumps (never commit)
+*_bloodhound.zip
+*_BloodHound.zip
+*Zone.Identifier

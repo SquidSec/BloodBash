@@ -305,6 +305,119 @@ class TestBloodBash(unittest.TestCase):
             )
         )
 
+    def test_rbcd_configure_rights_exclude_bare_writeproperty(self):
+        rights = bloodbash_globals["RBCD_CONFIGURE_RIGHTS"]
+        self.assertNotIn("writeproperty", rights)
+        self.assertIn("writeaccountrestrictions", rights)
+        self.assertIn("addallowedtoact", rights)
+        self.assertIn("genericall", rights)
+
+    def test_can_configure_rbcd_ignores_user_targets_and_writeproperty(self):
+        """Only computer resources count; bare WriteProperty is not RBCD-configure."""
+        G = nx.MultiDiGraph()
+        G.add_node("PC", name="PC01$.LAB.LOCAL", type="Computer", props={}, is_azure=False)
+        G.add_node("USR", name="BOB@LAB.LOCAL", type="User", props={}, is_azure=False)
+        G.add_node("U", name="LOWPRIV@LAB.LOCAL", type="User", props={}, is_azure=False)
+        G.add_edge("U", "USR", label="GenericAll")
+        G.add_edge("U", "PC", label="WriteProperty")
+        G.add_edge("U", "PC", label="AddAllowedToAct")
+        rows = bloodbash_globals["collect_can_configure_rbcd"](G)
+        self.assertTrue(any(r["target"].startswith("PC01") for r in rows))
+        self.assertFalse(any("BOB@" in r["target"] for r in rows))
+        self.assertFalse(any(r["right"].lower() == "writeproperty" for r in rows))
+        self.assertTrue(any(r["right"] == "AddAllowedToAct" for r in rows))
+
+    def test_print_can_configure_rbcd_caps_findings(self):
+        G = nx.MultiDiGraph()
+        G.add_node("U", name="LOWPRIV@LAB.LOCAL", type="User", props={}, is_azure=False)
+        for i in range(250):
+            tid = f"T{i}"
+            G.add_node(tid, name=f"HOST{i}$.LAB.LOCAL", type="Computer", props={}, is_azure=False)
+            G.add_edge("U", tid, label="GenericWrite")
+        bloodbash_globals["global_findings"] = []
+        self._capture_output(bloodbash_globals["print_can_configure_rbcd"], G)
+        rbcd_findings = [f for f in bloodbash_globals["global_findings"] if f[1] == "Can Configure RBCD"]
+        # 200 detail + 1 aggregate overflow finding
+        self.assertEqual(len(rbcd_findings), 201)
+        self.assertTrue(any("additional" in f[2].lower() for f in rbcd_findings))
+
+    def test_add_well_known_group_memberships_links_domain_users(self):
+        G = nx.MultiDiGraph()
+        G.add_node(
+            "S-1-5-21-1-2-3-513",
+            name="DOMAIN USERS@LAB.LOCAL",
+            type="Group",
+            props={"domain": "LAB.LOCAL"},
+            is_azure=False,
+        )
+        G.add_node(
+            "S-1-5-21-1-2-3-515",
+            name="DOMAIN COMPUTERS@LAB.LOCAL",
+            type="Group",
+            props={"domain": "LAB.LOCAL"},
+            is_azure=False,
+        )
+        G.add_node(
+            "LAB.LOCAL-S-1-5-11",
+            name="AUTHENTICATED USERS@LAB.LOCAL",
+            type="Group",
+            props={"domain": "LAB.LOCAL"},
+            is_azure=False,
+        )
+        G.add_node(
+            "LAB.LOCAL-S-1-1-0",
+            name="EVERYONE@LAB.LOCAL",
+            type="Group",
+            props={"domain": "LAB.LOCAL"},
+            is_azure=False,
+        )
+        G.add_node(
+            "LAB.LOCAL-S-1-5-32-545",
+            name="USERS@LAB.LOCAL",
+            type="Group",
+            props={"domain": "LAB.LOCAL"},
+            is_azure=False,
+        )
+        added = bloodbash_globals["add_well_known_group_memberships"](G)
+        self.assertGreaterEqual(added, 3)
+        edges = {(u, v) for u, v, d in G.edges(data=True) if d.get("label") == "MemberOf"}
+        self.assertIn(("S-1-5-21-1-2-3-513", "LAB.LOCAL-S-1-5-11"), edges)
+        self.assertIn(("S-1-5-21-1-2-3-515", "LAB.LOCAL-S-1-5-11"), edges)
+        self.assertIn(("LAB.LOCAL-S-1-5-11", "LAB.LOCAL-S-1-1-0"), edges)
+        # Idempotent
+        self.assertEqual(bloodbash_globals["add_well_known_group_memberships"](G), 0)
+
+    def test_build_graph_synthesizes_well_known_memberof(self):
+        nodes = {
+            "S-1-5-21-1-2-3-513": {
+                "ObjectIdentifier": "S-1-5-21-1-2-3-513",
+                "ObjectType": "Group",
+                "Properties": {"name": "DOMAIN USERS@LAB.LOCAL", "domain": "LAB.LOCAL"},
+            },
+            "LAB.LOCAL-S-1-5-11": {
+                "ObjectIdentifier": "LAB.LOCAL-S-1-5-11",
+                "ObjectType": "Group",
+                "Properties": {
+                    "name": "AUTHENTICATED USERS@LAB.LOCAL",
+                    "domain": "LAB.LOCAL",
+                },
+            },
+            "LAB.LOCAL-S-1-1-0": {
+                "ObjectIdentifier": "LAB.LOCAL-S-1-1-0",
+                "ObjectType": "Group",
+                "Properties": {"name": "EVERYONE@LAB.LOCAL", "domain": "LAB.LOCAL"},
+            },
+        }
+        G, _ = bloodbash_globals["build_graph"](nodes)
+        self.assertTrue(
+            any(
+                u == "S-1-5-21-1-2-3-513"
+                and v == "LAB.LOCAL-S-1-5-11"
+                and d.get("label") == "MemberOf"
+                for u, v, d in G.edges(data=True)
+            )
+        )
+
     def test_sharphound_ce_property_aliases(self):
         """SharpHound CE field names must be recognized by detectors."""
         try:
