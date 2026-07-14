@@ -1498,61 +1498,100 @@ def print_laps_status(G, domain_filter=None):
     if found_disabled:
         console.print(Panel("[bold yellow]Impact:[/bold yellow] Local admin passwords may be weak or shared → easy compromise.\n[bold]Mitigation:[/bold] Enable LAPS to randomize and secure passwords.\n[bold]Tools:[/bold] LAPS deployment scripts.", title="LAPS Not Enabled", border_style="yellow"))
 
+def is_domain_controller(G, oid: str, max_depth: int = 10) -> bool:
+    """Detect DC via props, UAC SERVER_TRUST_ACCOUNT, or Domain Controllers membership."""
+    if oid not in G:
+        return False
+    d = G.nodes[oid]
+    props = d.get("props") or {}
+    if get_bool_prop_ci(props, ["isdc", "IsDC", "IsDomainController", "isDomainController"]):
+        return True
+    uac_raw = _prop_raw_ci(props, ["useraccountcontrol", "UserAccountControl"])
+    try:
+        if bool(int(uac_raw) & 0x2000):  # SERVER_TRUST_ACCOUNT
+            return True
+    except (TypeError, ValueError):
+        pass
+    # Nested MemberOf Domain Controllers / Enterprise Domain Controllers
+    seen = set()
+    stack = [(oid, 0)]
+    while stack:
+        cur, depth = stack.pop()
+        if cur in seen or depth > max_depth:
+            continue
+        seen.add(cur)
+        for _, dst, ed in G.out_edges(cur, data=True):
+            label = (ed.get("label") or "").lower()
+            if label not in ("memberof", "member_of", "member"):
+                continue
+            dname = ((G.nodes.get(dst) or {}).get("name") or "").lower()
+            if "domain controllers" in dname or "enterprise domain controllers" in dname:
+                return True
+            if depth + 1 <= max_depth:
+                stack.append((dst, depth + 1))
+    return False
+
+
 def print_unconstrained_delegation(G, domain_filter=None):
     console.rule("[bold magenta]Unconstrained Delegation Detection (AD)[/bold magenta]")
-    found = False
+    dcs: List[dict] = []
+    non_dcs: List[dict] = []
     for n, d in G.nodes(data=True):
         if d.get('is_azure', False):
             continue
-        if domain_filter and d.get('props', {}).get('domain') != domain_filter:
+        if not _domain_matches(d, domain_filter):
             continue
-        if d['type'].lower() == 'computer':
-            props = d.get('props') or {}
-            # SharpHound CE uses unconstraineddelegation
-            trusted_for_delegation = get_bool_prop_ci(
-                props,
-                ['trustedfordelegation', 'TrustedForDelegation', 'unconstraineddelegation'],
+        if str(d.get('type', '')).lower() not in ('computer', 'user'):
+            continue
+        props = d.get('props') or {}
+        # SharpHound CE uses unconstraineddelegation
+        trusted_for_delegation = get_bool_prop_ci(
+            props,
+            ['trustedfordelegation', 'TrustedForDelegation', 'unconstraineddelegation'],
+        )
+        if not trusted_for_delegation:
+            uac_raw = _prop_raw_ci(props, ['useraccountcontrol', 'UserAccountControl'])
+            try:
+                trusted_for_delegation = bool(int(uac_raw) & 0x80000)
+            except (TypeError, ValueError):
+                pass
+        if not trusted_for_delegation:
+            continue
+        os_name = _prop_raw_ci(props, ['operatingsystem', 'OperatingSystem']) or ""
+        entry = {"oid": n, "name": d.get("name") or "", "os": os_name, "type": d.get("type")}
+        if is_domain_controller(G, n):
+            dcs.append(entry)
+        else:
+            non_dcs.append(entry)
+
+    if dcs:
+        console.print("[bold]Domain Controllers (expected unconstrained)[/bold]")
+        for e in dcs:
+            os_s = f" [{e['os']}]" if e["os"] else ""
+            console.print(
+                f"  [dim]•[/dim] [cyan]{e['name']}[/cyan]{os_s}"
             )
-            if not trusted_for_delegation:
-                uac_raw = props.get('useraccountcontrol') or props.get('UserAccountControl')
-                try:
-                    trusted_for_delegation = bool(int(uac_raw) & 0x80000)
-                except (TypeError, ValueError):
-                    pass
-            if trusted_for_delegation:
-                # Domain Controllers normally have unconstrained delegation — note but don't score high
-                is_dc = bool(
-                    props.get('isdc')
-                    or props.get('IsDC')
-                    or get_bool_prop_ci(props, ['isdc', 'IsDomainController'])
-                )
-                uac_raw = props.get('useraccountcontrol') or props.get('UserAccountControl')
-                try:
-                    is_dc = is_dc or bool(int(uac_raw) & 0x2000)  # SERVER_TRUST_ACCOUNT
-                except (TypeError, ValueError):
-                    pass
-                name_l = d['name'].lower()
-                is_dc = is_dc or name_l.startswith('dc') or '-dc' in name_l or 'domain controller' in name_l
-                if is_dc:
-                    console.print(
-                        f"[dim]Unconstrained delegation (expected on DC)[/dim]: "
-                        f"[cyan]{d['name']}[/cyan]"
-                    )
-                else:
-                    found = True
-                    console.print(
-                        f"[yellow]Unconstrained delegation enabled[/yellow]: "
-                        f"[bold cyan]{d['name']}[/bold cyan]"
-                    )
-                    add_finding(
-                        "Unconstrained Delegation",
-                        f"Computer {d['name']} allows unconstrained delegation",
-                        score=8,
-                    )
-    if found:
+    if non_dcs:
+        console.print("[bold yellow]Non-DC unconstrained delegation (abuse candidates)[/bold yellow]")
+        for e in non_dcs:
+            os_s = f" [{e['os']}]" if e["os"] else ""
+            typ = str(e.get("type") or "Computer")
+            console.print(
+                f"  [yellow]•[/yellow] [bold cyan]{e['name']}[/bold cyan] ({typ}){os_s}"
+            )
+            add_finding(
+                "Unconstrained Delegation",
+                f"{typ} {e['name']} allows unconstrained delegation (non-DC)",
+                score=8,
+            )
+    if non_dcs:
         print_abuse_panel("Unconstrained Delegation")
+    elif dcs:
+        console.print(
+            f"[dim]Only DC unconstrained delegation found ({len(dcs)}); no non-DC abuse candidates.[/dim]"
+        )
     else:
-        console.print("[green]No unexpected unconstrained delegation found[/green]")
+        console.print("[green]No unconstrained delegation found[/green]")
 
 def print_sid_history_abuse(G, domain_filter=None):
     console.rule("[bold magenta]SID History Abuse (AD)[/bold magenta]")
