@@ -59,6 +59,21 @@ class TestBloodBash(unittest.TestCase):
     # ────────────────────────────────────────────────
     # Existing tests (kept 100% unchanged)
     # ────────────────────────────────────────────────
+    def test_sessions_localadmin_excludes_genericall_object_acl(self):
+        """GenericAll on computer object is not a LocalAdmin edge."""
+        G = nx.MultiDiGraph()
+        G.add_node("PC", name="PC01.LAB.LOCAL", type="Computer", props={}, is_azure=False)
+        G.add_node("DA", name="DOMAIN ADMINS@LAB.LOCAL", type="Group", props={}, is_azure=False)
+        G.add_node("U", name="HELP@LAB.LOCAL", type="User", props={}, is_azure=False)
+        G.add_edge("DA", "PC", label="GenericAll")
+        G.add_edge("U", "PC", label="LocalAdmin")
+        output = self._capture_output(bloodbash_globals["print_sessions_localadmin"], G)
+        clean = self._strip_ansi(output)
+        self.assertIn("HELP@LAB.LOCAL", clean)
+        self.assertIn("LocalAdmin", clean)
+        self.assertNotIn("GenericAll", clean)
+        self.assertNotIn("DOMAIN ADMINS@LAB.LOCAL", clean)
+
     def test_gpo_abuse(self):
         try:
             G = self._load_and_build_graph("gpo-tests")
