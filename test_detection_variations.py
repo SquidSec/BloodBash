@@ -147,6 +147,7 @@ class TestDetectionVariations(unittest.TestCase):
         G = nx.MultiDiGraph()
         G.add_node("T", name="ESC3T@LAB", type="Certificate Template", props={
             "ekus": ["1.3.6.1.4.1.311.20.2.1"],  # enrollment agent
+            "requiresmanagerapproval": False,
         }, is_azure=False)
         G.add_node("U", name="user@LAB", type="User", props={}, is_azure=False)
         G.add_edge("U", "T", label="Enroll")
@@ -722,6 +723,9 @@ class TestDetectionVariations(unittest.TestCase):
         G.add_node("U", name="guest1", type="Azure User", props={
             "tenantId": "t1", "userType": "Guest",
         }, is_azure=True)
+        G.add_node("R", name="Global Administrator", type="Azure Role",
+                   props={"tenantId": "t1"}, is_azure=True)
+        G.add_edge("U", "R", label="HasRole")
         self._capture(bloodbash_globals["print_azure_guest_access"], G)
         self.assertTrue(self._findings("Azure Guest Access"))
 
