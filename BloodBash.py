@@ -2454,6 +2454,27 @@ def print_adcs_vulnerabilities(G, domain_filter=None):
     """
     console.rule("[bold magenta]ADCS ESC Vulnerabilities (ESC1–ESC14) (AD)[/bold magenta]")
     found = False
+    adcs_types = {
+        'certificate template', 'enterprise ca', 'root ca', 'ntauth store', 'aia ca',
+    }
+    adcs_object_count = sum(
+        1
+        for _, d in G.nodes(data=True)
+        if not d.get('is_azure', False)
+        and _domain_matches(d, domain_filter)
+        and (
+            str(d.get('type') or '').lower() in adcs_types
+            or str(d.get('type') or '').lower().endswith(' ca')
+        )
+    )
+    if adcs_object_count == 0:
+        console.print(
+            "[yellow]No ADCS objects in this collection[/yellow] "
+            "[dim](no certificate templates / enterprise CAs / NTauth). "
+            "Re-collect with SharpHound ADCS / Certify modules — "
+            "absence of data is not a clean bill of health.[/dim]"
+        )
+        return
     # Common EKUs
     EKU_CLIENT_AUTH = '1.3.6.1.5.5.7.3.2'
     EKU_SMART_CARD = '1.3.6.1.4.1.311.20.2.2'
