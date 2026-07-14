@@ -946,6 +946,67 @@ def decode_uac(value):
         return f"{value} ({', '.join(flags)})"
     return str(value)
 
+
+def format_lastlog_bucket(props, now: Optional[float] = None) -> Optional[str]:
+    """Human last-logon age band for privilege-context tags (quickwin-style).
+
+    Returns NEVER / < 1 year / > 1 year / > 2 years / > 3 years / > 5 years /
+    > 10 years, or None when no timestamp property is present.
+    """
+    if not isinstance(props, dict):
+        return None
+    raw = _prop_raw_ci(
+        props,
+        [
+            "lastlogontimestamp",
+            "lastLogonTimestamp",
+            "lastlogon",
+            "lastLogon",
+            "LastLogonTimestamp",
+            "LastLogon",
+        ],
+    )
+    if raw is None:
+        return None
+    try:
+        v = int(raw)
+    except (TypeError, ValueError):
+        return None
+    if v in (0, -1):
+        return "NEVER"
+    ts = parse_ad_timestamp(v)
+    if ts is None:
+        return "NEVER"
+    days = _days_since(ts, now=now)
+    if days is None:
+        return None
+    years = days / 365.0
+    if years > 10:
+        return "> 10 years"
+    if years > 5:
+        return "> 5 years"
+    if years > 3:
+        return "> 3 years"
+    if years > 2:
+        return "> 2 years"
+    if years > 1:
+        return "> 1 year"
+    return "< 1 year"
+
+
+def format_privilege_context_tags(d: dict, now: Optional[float] = None) -> str:
+    """Compact tags: [AdminCount] [OWNED] [LASTLOG: …] for credential findings."""
+    props = (d or {}).get("props") or {}
+    parts: List[str] = []
+    if get_bool_prop_ci(props, ["admincount", "adminCount", "AdminCount"]):
+        parts.append("[AdminCount]")
+    if get_bool_prop_ci(props, ["owned", "Owned"]):
+        parts.append("[OWNED]")
+    bucket = format_lastlog_bucket(props, now=now)
+    if bucket is not None:
+        parts.append(f"[LASTLOG: {bucket}]")
+    return (" " + " ".join(parts)) if parts else ""
+
 def get_bool_prop_ci(props, keys, default=False):
     if not isinstance(props, dict):
         return default
@@ -2231,10 +2292,11 @@ def print_kerberoastable(G, domain_filter=None):
         props = d.get('props') or {}
         uac_raw = _prop_raw_ci(props, ['useraccountcontrol', 'UserAccountControl'])
         uac_str = f" | UAC: {decode_uac(uac_raw)}" if uac_raw is not None else ""
+        ctx = format_privilege_context_tags(d)
         if i < max_display:
-            console.print(f"  • [cyan]{d['name']}[/cyan]{uac_str}")
+            console.print(f"  • [cyan]{d['name']}[/cyan]{uac_str}{ctx}")
         # One findings-table row per account (not a single aggregated count)
-        add_finding("Kerberoastable", f"{d['name']} has SPN (Kerberoastable)", score=5)
+        add_finding("Kerberoastable", f"{d['name']} has SPN (Kerberoastable){ctx}", score=5)
     if len(hits) > max_display:
         console.print(f"  [dim]... and {len(hits) - max_display} more[/dim]")
     if hits:
@@ -2266,11 +2328,12 @@ def print_as_rep_roastable(G, domain_filter=None):
         props = d.get('props') or {}
         uac_raw = _prop_raw_ci(props, ['useraccountcontrol', 'UserAccountControl'])
         uac_str = f" | UAC: {decode_uac(uac_raw)}" if uac_raw is not None else ""
+        ctx = format_privilege_context_tags(d)
         if i < max_display:
-            console.print(f"  • [cyan]{d['name']}[/cyan]{uac_str}")
+            console.print(f"  • [cyan]{d['name']}[/cyan]{uac_str}{ctx}")
         add_finding(
             "AS-REP Roastable",
-            f"{d['name']} has DONT_REQ_PREAUTH (AS-REP roastable)",
+            f"{d['name']} has DONT_REQ_PREAUTH (AS-REP roastable){ctx}",
             score=5,
         )
     if len(hits) > max_display:
