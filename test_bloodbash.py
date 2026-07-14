@@ -1295,6 +1295,62 @@ class TestBloodBash(unittest.TestCase):
         self.assertIn("Percentage", clean)
         self.assertIn("Users with SPN", clean)
         self.assertIn("LAPS Computers", clean)
+
+    def test_list_domains_from_graph(self):
+        G = nx.MultiDiGraph()
+        G.add_node(
+            "D1",
+            name="LAB.LOCAL",
+            type="Domain",
+            props={"domain": "lab.local"},
+            is_azure=False,
+        )
+        G.add_node(
+            "D2",
+            name="CORP.LOCAL",
+            type="Domain",
+            props={"domain": "corp.local"},
+            is_azure=False,
+        )
+        G.add_node(
+            "U",
+            name="user@other.local",
+            type="User",
+            props={"domain": "other.local"},
+            is_azure=False,
+        )
+        G.add_node(
+            "T",
+            name="tenant-a",
+            type="AZTenant",
+            props={"tenantId": "aaaa-bbbb"},
+            is_azure=True,
+        )
+        domains = bloodbash_globals["list_domains"](G)
+        names = [d["name"] for d in domains]
+        self.assertIn("LAB.LOCAL", names)
+        self.assertIn("CORP.LOCAL", names)
+        # user-only domain also appears
+        self.assertTrue(any("other.local" in n.lower() for n in names))
+
+    def test_cli_list_domains_exits_early(self):
+        """--list-domains prints domains and does not require full analysis."""
+        import subprocess
+        result = subprocess.run(
+            [
+                sys.executable,
+                "BloodBash.py",
+                "testData/basic-tests",
+                "--list-domains",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
+        combined = result.stdout + result.stderr
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", combined)
+        self.assertIn("Domain", clean)
     def test_export_bloodhound_compatible(self):
         G = nx.MultiDiGraph()
         G.add_node("1", name="User1", type="User", props={"enabled": True})
