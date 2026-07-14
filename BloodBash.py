@@ -2797,12 +2797,28 @@ def print_adcs_vulnerabilities(G, domain_filter=None):
     else:
         console.print("[green]No obvious ESC1–ESC14 misconfigurations detected[/green]")
 
+def _is_broad_principal_name(name: str) -> bool:
+    """Everyone / Authenticated Users / Domain Users — domain-wide ACL holders."""
+    if not name:
+        return False
+    nl = str(name).lower()
+    sam = _principal_sam(name)
+    if sam in ("everyone", "authenticated users", "domain users", "users"):
+        return True
+    if "authenticated users" in nl or nl.startswith("everyone@"):
+        return True
+    if nl.startswith("domain users@"):
+        return True
+    return False
+
+
 def print_gpo_abuse(G, domain_filter=None):
     console.rule("[bold magenta]GPO Abuse Risks (AD)[/bold magenta]")
     found = False
     high_value_keywords = [
         'domain controllers', 'domain admins', 'enterprise admins', 'administrators',
     ]
+    dangerous = {'genericall', 'writedacl', 'writeowner', 'genericwrite'}
     for n, d in G.nodes(data=True):
         if d.get('is_azure', False):
             continue
@@ -2812,37 +2828,47 @@ def print_gpo_abuse(G, domain_filter=None):
             continue
         name = d['name']
         incoming = list(G.in_edges(n, data=True))
-        rights = {edge_data['label'].lower() for _, _, edge_data in incoming}
-        dangerous = {'genericall', 'writedacl', 'writeowner', 'genericwrite'}
-        dangerous_found = dangerous & rights
-        if dangerous_found:
-            is_high_risk = False
-            linked_ous = []
-            # BloodHound GPLink is container (OU/domain) → GPO (in-edges on the GPO).
-            for src, _, edge_data in incoming:
-                if (edge_data.get('label') or '').lower() in ('gplink', 'linkedto'):
-                    ou_name = (G.nodes[src].get('name') or '').lower()
-                    linked_ous.append(G.nodes[src].get('name') or str(src))
-                    if any(kw in ou_name for kw in high_value_keywords):
-                        is_high_risk = True
-            found = True
-            risk_color = "[red]" if is_high_risk else "[yellow]"
-            if linked_ous:
-                risk_tag = "High-risk" if is_high_risk else "Linked"
-                scope_note = f" ({risk_tag}: Linked to {', '.join(linked_ous)})"
-            else:
-                scope_note = " (No links detected - low risk)"
-            console.print(f"{risk_color}Weak GPO{risk_color}: [bold cyan]{name}[/bold cyan]{scope_note}")
-            for u, _, edge in incoming:
-                label_lower = edge['label'].lower()
-                if label_lower in dangerous:
-                    principal_name = G.nodes[u]['name']
-                    console.print(f"  → [green]{principal_name}[/green] --[{edge['label']}]-->")
-            add_finding("GPO Abuse", f"Weak GPO: {name}{scope_note}")
+        # Non-default writers only (DA/EA GenericWrite on GPOs is expected noise)
+        writers = []
+        for u, _, edge in incoming:
+            label_lower = (edge.get('label') or '').lower()
+            if label_lower not in dangerous:
+                continue
+            principal_name = G.nodes[u].get('name') or str(u)
+            if _is_default_high_priv_name(principal_name):
+                continue
+            writers.append((principal_name, edge.get('label') or label_lower, u))
+        if not writers:
+            continue
+        is_high_risk = False
+        linked_ous = []
+        # BloodHound GPLink is container (OU/domain) → GPO (in-edges on the GPO).
+        for src, _, edge_data in incoming:
+            if (edge_data.get('label') or '').lower() in ('gplink', 'linkedto'):
+                ou_name = (G.nodes[src].get('name') or '').lower()
+                linked_ous.append(G.nodes[src].get('name') or str(src))
+                if any(kw in ou_name for kw in high_value_keywords):
+                    is_high_risk = True
+        if any(_is_broad_principal_name(p) for p, _, _ in writers):
+            is_high_risk = True
+        found = True
+        risk_color = "[red]" if is_high_risk else "[yellow]"
+        if linked_ous:
+            risk_tag = "High-risk" if is_high_risk else "Linked"
+            scope_note = f" ({risk_tag}: Linked to {', '.join(linked_ous)})"
+        else:
+            scope_note = " (No links detected - low risk)"
+        # Broad principals first in output
+        writers.sort(key=lambda w: (0 if _is_broad_principal_name(w[0]) else 1, w[0]))
+        console.print(f"{risk_color}Weak GPO{risk_color}: [bold cyan]{name}[/bold cyan]{scope_note}")
+        for principal_name, label, _ in writers:
+            style = "red" if _is_broad_principal_name(principal_name) else "green"
+            console.print(f"  → [{style}]{principal_name}[/{style}] --[{label}]-->")
+        add_finding("GPO Abuse", f"Weak GPO: {name}{scope_note}", score=9 if is_high_risk else 7)
     if found:
         print_abuse_panel("GPO Abuse")
     else:
-        console.print("[green]No dangerous GPO rights found[/green]")
+        console.print("[green]No dangerous GPO rights found from non-default principals[/green]")
 
 # Multi-word / unambiguous DCSync holder phrases (substring-safe).
 EXPECTED_DCSYNC_NAME_NEEDLES = (
