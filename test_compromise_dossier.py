@@ -136,12 +136,17 @@ class TestCompromiseDossier(unittest.TestCase):
         self.assertTrue(os.path.exists(os.path.join(out_dir, "dossier.json")))
         self.assertTrue(os.path.exists(os.path.join(out_dir, "rights", "AdminTo.txt")))
         self.assertTrue(os.path.exists(os.path.join(out_dir, "rights", "CanRDP.txt")))
+        self.assertTrue(os.path.exists(os.path.join(out_dir, "adminto_hosts.txt")))
+        self.assertTrue(os.path.exists(os.path.join(out_dir, "adminto_hosts.csv")))
         with open(os.path.join(out_dir, "membership_effective.txt"), encoding="utf-8") as f:
             text = f.read()
         self.assertIn("DOMAIN ADMINS@LAB.LOCAL", text)
         with open(os.path.join(out_dir, "rights", "CanRDP.txt"), encoding="utf-8") as f:
             rdp = f.read()
         self.assertIn("WS02.LAB.LOCAL", rdp)
+        with open(os.path.join(out_dir, "adminto_hosts.txt"), encoding="utf-8") as f:
+            hosts = f.read()
+        self.assertIn("WS01.LAB.LOCAL", hosts)
 
     def test_run_compromise_dossiers_missing(self):
         G = self._foothold_graph()
