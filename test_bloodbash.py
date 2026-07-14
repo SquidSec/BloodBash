@@ -73,15 +73,63 @@ class TestBloodBash(unittest.TestCase):
             G = self._load_and_build_graph("dcsync-tests")
         except FileNotFoundError as e:
             self.skipTest(str(e))
+        bloodbash_globals['global_findings'] = []
         output = self._capture_output(bloodbash_globals['print_dcsync_rights'], G)
         clean = self._strip_ansi(output)
         self.assertIn("DCSync possible", clean)
         self.assertIn("LOWPRIV@LAB.LOCAL", clean)
         # Built-in DA still shown as expected, not as critical non-default finding text only
         self.assertIn("DOMAIN ADMINS@LAB.LOCAL", clean)
+        self.assertIn("Expected DCSync", clean)
         # Partial GetChangesAll-only is not full DCSync
         self.assertIn("PARTIAL@LAB.LOCAL", clean)
         self.assertIn("Partial replication rights", clean)
+        # Findings: unexpected full DCSync only for LOWPRIV, not DOMAIN ADMINS
+        dcsync_details = [f[2] for f in bloodbash_globals['global_findings'] if f[1] == "DCSync"]
+        self.assertTrue(any("LOWPRIV" in d for d in dcsync_details))
+        self.assertFalse(any("DOMAIN ADMINS" in d and "can DCSync" in d for d in dcsync_details))
+
+    def test_dcsync_nested_da_member_is_expected(self):
+        """User nested into Domain Admins with DCSync rights is expected, not critical."""
+        G = nx.MultiDiGraph()
+        G.add_node("DOM", name="LAB.LOCAL", type="Domain", props={"domain": "LAB.LOCAL"}, is_azure=False)
+        G.add_node(
+            "DA",
+            name="DOMAIN ADMINS@LAB.LOCAL",
+            type="Group",
+            props={"domain": "LAB.LOCAL"},
+            is_azure=False,
+        )
+        G.add_node(
+            "U",
+            name="NESTEDDA@LAB.LOCAL",
+            type="User",
+            props={"domain": "LAB.LOCAL", "enabled": True},
+            is_azure=False,
+        )
+        G.add_edge("U", "DA", label="MemberOf")
+        G.add_edge("U", "DOM", label="GetChanges")
+        G.add_edge("U", "DOM", label="GetChangesAll")
+        bloodbash_globals["global_findings"] = []
+        output = self._capture_output(bloodbash_globals["print_dcsync_rights"], G)
+        clean = self._strip_ansi(output)
+        self.assertIn("NESTEDDA@LAB.LOCAL", clean)
+        self.assertIn("Expected DCSync", clean)
+        critical = [
+            f for f in bloodbash_globals["global_findings"]
+            if f[1] == "DCSync" and "can DCSync" in f[2] and "NESTEDDA" in f[2]
+        ]
+        self.assertEqual(critical, [])
+
+    def test_is_expected_dcsync_principal(self):
+        G = nx.MultiDiGraph()
+        G.add_node("DA", name="DOMAIN ADMINS@LAB.LOCAL", type="Group", props={}, is_azure=False)
+        G.add_node("U", name="NESTED@LAB.LOCAL", type="User", props={}, is_azure=False)
+        G.add_node("X", name="LOWPRIV@LAB.LOCAL", type="User", props={}, is_azure=False)
+        G.add_edge("U", "DA", label="MemberOf")
+        self.assertTrue(bloodbash_globals["is_expected_dcsync_principal"](G, "DA"))
+        self.assertTrue(bloodbash_globals["is_expected_dcsync_principal"](G, "U"))
+        self.assertFalse(bloodbash_globals["is_expected_dcsync_principal"](G, "X"))
 
     def test_dcsync_domain_type_case_insensitive(self):
         """Domain nodes with type 'domain' (lowercase) must still be scanned."""

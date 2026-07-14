@@ -1988,11 +1988,59 @@ def print_gpo_abuse(G, domain_filter=None):
     else:
         console.print("[green]No dangerous GPO rights found[/green]")
 
+# Principals that normally hold DCSync (name match + nested membership).
+EXPECTED_DCSYNC_NAME_NEEDLES = (
+    "domain admins",
+    "enterprise admins",
+    "schema admins",
+    "administrators@",
+    "builtin\\administrators",
+    "domain controllers",
+    "enterprise domain controllers",
+    "enterprise read-only domain controllers",
+    "read-only domain controllers",
+)
+
+
+def is_expected_dcsync_principal(G, oid: str, max_depth: int = 25) -> bool:
+    """True if principal is a built-in DCSync holder or nested into one."""
+    if oid not in G:
+        return False
+    nd = G.nodes[oid]
+    name = nd.get("name") or ""
+    nl = name.lower()
+    if any(k in nl for k in EXPECTED_DCSYNC_NAME_NEEDLES):
+        return True
+    if nl in ("administrators", "domain admins", "enterprise admins"):
+        return True
+    # Nested MemberOf into an expected group
+    seen = set()
+    stack = [(oid, 0)]
+    while stack:
+        cur, depth = stack.pop()
+        if cur in seen or depth > max_depth:
+            continue
+        seen.add(cur)
+        for _, dst, ed in G.out_edges(cur, data=True):
+            label = (ed.get("label") or "").lower()
+            if label not in ("memberof", "member_of", "member"):
+                continue
+            dnd = G.nodes.get(dst) or {}
+            dname = (dnd.get("name") or "").lower()
+            if any(k in dname for k in EXPECTED_DCSYNC_NAME_NEEDLES):
+                return True
+            if depth + 1 <= max_depth:
+                stack.append((dst, depth + 1))
+    return False
+
+
 def print_dcsync_rights(G, domain_filter=None):
     console.rule("[bold magenta]DCSync / Replication Rights (AD)[/bold magenta]")
     # Classic DCSync requires GetChanges + GetChangesAll together.
     # GetChangesInFilteredSet alone is RODC-related, not full DCSync.
+    # Unexpected (non-default / non-nested-DA) full DCSync is the critical finding.
     found = False
+    unexpected = 0
     domain_oids = [
         n for n, d in G.nodes(data=True)
         if d.get('type', '').lower() == 'domain'
@@ -2017,15 +2065,6 @@ def print_dcsync_rights(G, domain_filter=None):
         'replicating directory changes in filtered set',
         'ds-replication-get-changes-in-filtered-set',
     }
-    default_priv_keywords = (
-        'domain admins', 'enterprise admins', 'administrators',
-        'domain controllers', 'enterprise domain controllers',
-        'builtin\\administrators',
-    )
-
-    def _is_default_priv(name):
-        nl = name.lower()
-        return any(k in nl for k in default_priv_keywords)
 
     for domain_oid in domain_oids:
         domain_name = G.nodes[domain_oid]['name']
@@ -2041,17 +2080,22 @@ def print_dcsync_rights(G, domain_filter=None):
             has_filtered = bool(labels & filtered_set_labels)
             if has_gc and has_gca:
                 found = True
-                if _is_default_priv(principal_name):
+                if is_expected_dcsync_principal(G, u):
                     console.print(
                         f"[dim]Expected DCSync rights[/dim]: [cyan]{principal_name}[/cyan] "
-                        f"on [cyan]{domain_name}[/cyan] (built-in high privilege)"
+                        f"on [cyan]{domain_name}[/cyan] (built-in / nested high privilege)"
                     )
                 else:
+                    unexpected += 1
                     console.print(
                         f"[red]DCSync possible[/red]: [green]{principal_name}[/green] "
-                        f"has GetChanges + GetChangesAll on [cyan]{domain_name}[/cyan]"
+                        f"has GetChanges + GetChangesAll on [cyan]{domain_name}[/cyan] "
+                        f"[Unexpected / non-default]"
                     )
-                    add_finding("DCSync", f"{principal_name} can DCSync on {domain_name}")
+                    add_finding(
+                        "DCSync",
+                        f"{principal_name} can DCSync on {domain_name} (unexpected)",
+                    )
             elif has_gca and not has_gc:
                 # Incomplete — note but do not call full DCSync
                 console.print(
@@ -2069,6 +2113,11 @@ def print_dcsync_rights(G, domain_filter=None):
                     f"[dim]Filtered-set replication[/dim]: [cyan]{principal_name}[/cyan] "
                     f"on [cyan]{domain_name}[/cyan] (RODC-related, not full DCSync)"
                 )
+    if unexpected:
+        console.print(
+            f"[bold red]Unexpected DCSync principals: {unexpected}[/bold red] "
+            f"(excluding DA/EA/DC nested membership)"
+        )
     if found:
         print_abuse_panel("DCSync")
     else:
