@@ -1919,6 +1919,66 @@ class TestBloodBash(unittest.TestCase):
         clean = self._strip_ansi(out)
         self.assertIn("--csv-pack", clean)
 
+    def test_csv_pack_everyone_and_overpriv_relationships(self):
+        G = nx.MultiDiGraph()
+        G.add_node(
+            "EVERY",
+            name="EVERYONE@LAB.LOCAL",
+            type="Group",
+            props={"domain": "LAB.LOCAL"},
+            is_azure=False,
+        )
+        G.add_node(
+            "AUTH",
+            name="AUTHENTICATED USERS@LAB.LOCAL",
+            type="Group",
+            props={"domain": "LAB.LOCAL"},
+            is_azure=False,
+        )
+        G.add_node(
+            "DU",
+            name="DOMAIN USERS@LAB.LOCAL",
+            type="Group",
+            props={"domain": "LAB.LOCAL"},
+            is_azure=False,
+        )
+        G.add_node(
+            "T",
+            name="SERVER01.LAB.LOCAL",
+            type="Computer",
+            props={"domain": "LAB.LOCAL"},
+            is_azure=False,
+        )
+        G.add_node(
+            "GPO",
+            name="DEFAULT DOMAIN POLICY@LAB.LOCAL",
+            type="GPO",
+            props={"domain": "LAB.LOCAL"},
+            is_azure=False,
+        )
+        G.add_edge("EVERY", "T", label="GenericAll")
+        G.add_edge("AUTH", "T", label="GenericWrite")
+        G.add_edge("DU", "GPO", label="WriteDacl")
+        pack_dir = os.path.join(self.temp_dir, "csv-everyone")
+        bloodbash_globals["export_csv_pack"](G, pack_dir)
+        with open(os.path.join(pack_dir, "relationships_everyone.csv"), encoding="utf-8") as f:
+            everyone = f.read()
+        self.assertIn("EVERYONE@LAB.LOCAL", everyone)
+        self.assertIn("GenericAll", everyone)
+        self.assertIn("SERVER01.LAB.LOCAL", everyone)
+        with open(os.path.join(pack_dir, "relationships_authenticated_users.csv"), encoding="utf-8") as f:
+            auth = f.read()
+        self.assertIn("AUTHENTICATED USERS", auth)
+        with open(os.path.join(pack_dir, "relationships_domain_users.csv"), encoding="utf-8") as f:
+            du = f.read()
+        self.assertIn("DOMAIN USERS", du)
+        self.assertIn("WriteDacl", du)
+        with open(os.path.join(pack_dir, "overprivileged_relationships.csv"), encoding="utf-8") as f:
+            over = f.read()
+        self.assertIn("EVERYONE", over)
+        self.assertIn("AUTHENTICATED USERS", over)
+        self.assertIn("DOMAIN USERS", over)
+
     def test_html_export_sortable_branded(self):
         G = nx.MultiDiGraph()
         G.add_node("DA", name="Domain Admins", type="Group", props={})
