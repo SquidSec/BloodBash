@@ -59,6 +59,24 @@ class TestBloodBash(unittest.TestCase):
     # ────────────────────────────────────────────────
     # Existing tests (kept 100% unchanged)
     # ────────────────────────────────────────────────
+    def test_broad_principal_acls_detects_everyone_genericwrite(self):
+        G = nx.MultiDiGraph()
+        G.add_node("EV", name="EVERYONE@LAB.LOCAL", type="Group", props={}, is_azure=False)
+        G.add_node("U", name="MRIOS@LAB.LOCAL", type="User", props={}, is_azure=False)
+        G.add_node("GPO", name="SOFT@LAB.LOCAL", type="GPO", props={}, is_azure=False)
+        G.add_node("AU", name="AUTHENTICATED USERS@LAB.LOCAL", type="Group", props={}, is_azure=False)
+        G.add_edge("EV", "U", label="GenericWrite")
+        G.add_edge("AU", "GPO", label="WriteDacl")
+        rows = bloodbash_globals["collect_broad_principal_acls"](G)
+        self.assertTrue(any(r["target"].startswith("MRIOS") for r in rows))
+        self.assertTrue(any(r["target"].startswith("SOFT") for r in rows))
+        bloodbash_globals["global_findings"] = []
+        out = self._capture_output(bloodbash_globals["print_broad_principal_acls"], G)
+        self.assertIn("EVERYONE", self._strip_ansi(out))
+        self.assertTrue(
+            any(f[1] == "Broad Principal ACL" for f in bloodbash_globals["global_findings"])
+        )
+
     def test_sessions_localadmin_excludes_genericall_object_acl(self):
         """GenericAll on computer object is not a LocalAdmin edge."""
         G = nx.MultiDiGraph()

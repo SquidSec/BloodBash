@@ -45,6 +45,7 @@ SEVERITY_SCORES = {
     "Password Not Required": 8, "Shadow Credentials": 8, "GPO Content": 7,
     "Constrained Delegation": 7, "Unconstrained Delegation": 8, "LAPS": 6,
     "LAPS Readers": 8, "Can Configure RBCD": 9,
+    "Broad Principal ACL": 9,
     "Owned Paths": 9, "Password in Description": 6,
     "Arbitrary Paths": 6, "Trust Abuse": 7, "Deep Group Nesting": 6,
     "Busiest Paths": 7, "Path Break": 8, "Password Age": 5, "Stale Accounts": 4,
@@ -3376,6 +3377,86 @@ def print_dangerous_permissions(G, domain_filter=None, indirect=False):
         print_abuse_panel("Dangerous Permissions")
     else:
         console.print("[green]No dangerous ACLs found on high-value objects[/green]")
+
+
+def collect_broad_principal_acls(G, domain_filter=None) -> List[dict]:
+    """Dangerous ACLs held by Everyone / Authenticated Users / Domain Users."""
+    dangerous = {
+        "genericall", "genericwrite", "writedacl", "writeowner", "owns",
+        "forcechangepassword", "resetpassword", "allextendedrights",
+        "addmember", "addkeycredentiallink",
+    }
+    interesting_types = {
+        "user", "computer", "gpo", "group", "domain", "ou",
+        "certificate template", "enterprise ca",
+    }
+    rows: List[dict] = []
+    for u, v, ed in G.edges(data=True):
+        label = (ed.get("label") or "")
+        label_l = label.lower()
+        if label_l not in dangerous:
+            continue
+        ud = G.nodes.get(u) or {}
+        vd = G.nodes.get(v) or {}
+        if ud.get("is_azure") or vd.get("is_azure"):
+            continue
+        principal = ud.get("name") or str(u)
+        if not _is_broad_principal_name(principal):
+            continue
+        if domain_filter and not (
+            _domain_matches(ud, domain_filter) or _domain_matches(vd, domain_filter)
+        ):
+            continue
+        vtype = str(vd.get("type") or "").lower()
+        if vtype not in interesting_types:
+            continue
+        rows.append(
+            {
+                "principal": principal,
+                "target": vd.get("name") or str(v),
+                "target_type": vd.get("type") or "?",
+                "right": label,
+            }
+        )
+    rows.sort(key=lambda r: (r["principal"], r["target_type"], r["target"], r["right"]))
+    return rows
+
+
+def print_broad_principal_acls(G, domain_filter=None):
+    console.rule(
+        "[bold magenta]Broad Principal ACLs (Everyone / Auth Users / Domain Users) (AD)[/bold magenta]"
+    )
+    rows = collect_broad_principal_acls(G, domain_filter)
+    max_display = 40
+    max_findings = 50
+    for i, r in enumerate(rows):
+        if i < max_display:
+            console.print(
+                f"  • [red]{r['principal']}[/red] --[{r['right']}]--> "
+                f"[cyan]{r['target']}[/cyan] ({r['target_type']})"
+            )
+        if i < max_findings:
+            add_finding(
+                "Broad Principal ACL",
+                f"{r['principal']} has {r['right']} on {r['target']} ({r['target_type']})",
+                score=9,
+            )
+    if len(rows) > max_display:
+        console.print(f"  [dim]... and {len(rows) - max_display} more[/dim]")
+    if rows:
+        console.print(
+            Panel(
+                "[bold red]Impact:[/bold red] Domain-wide principals with write/reset rights → "
+                "any authenticated user can abuse the target.\n"
+                "[bold]Mitigation:[/bold] Remove Everyone/Authenticated Users/Domain Users from "
+                "dangerous ACLs; prefer tiered admin groups.",
+                title="Abuse Suggestions: Broad Principal ACLs",
+                border_style="red",
+            )
+        )
+    else:
+        console.print("[green]No dangerous ACLs held by Everyone/Auth Users/Domain Users[/green]")
+
 
 def _user_has_spn(props) -> bool:
     """True if the user is Kerberoastable via hasspn flag or non-empty SPN list.
@@ -6996,6 +7077,7 @@ def main():
         print_shortest_paths(G, fast=args.fast, domain_filter=args.domain, indirect=args.indirect)
     if args.dangerous_permissions or run_all:
         print_dangerous_permissions(G, args.domain, args.indirect)
+        print_broad_principal_acls(G, args.domain)
     if args.adcs or run_all:
         print_adcs_vulnerabilities(G, args.domain)
     if args.gpo_abuse or run_all:
