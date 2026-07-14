@@ -5202,6 +5202,99 @@ def collect_csv_pack_datasets(G, domain_filter=None) -> Dict[str, Tuple[List[str
         sorted(over_all, key=lambda r: (str(r[0]).lower(), str(r[2]).lower())),
     )
 
+    # Computer AdminTo Computer (lateral movement via machine accounts)
+    c2c_rows: List[List[Any]] = []
+    for u, v, ed in G.edges(data=True):
+        label = (ed.get("label") or "").lower()
+        if label not in ("adminto", "localadmin"):
+            continue
+        ud, vd = G.nodes.get(u) or {}, G.nodes.get(v) or {}
+        if str(ud.get("type") or "").lower() != "computer":
+            continue
+        if str(vd.get("type") or "").lower() != "computer":
+            continue
+        if ud.get("is_azure") or vd.get("is_azure"):
+            continue
+        if domain_filter and not (
+            _domain_matches(ud, domain_filter) or _domain_matches(vd, domain_filter)
+        ):
+            continue
+        c2c_rows.append([
+            ud.get("name") or u,
+            ed.get("label") or "AdminTo",
+            vd.get("name") or v,
+        ])
+    datasets["computer_adminto_computer.csv"] = (
+        ["SourceComputer", "Right", "TargetComputer"],
+        sorted(c2c_rows, key=lambda r: (str(r[0]).lower(), str(r[2]).lower())),
+    )
+
+    # Bulk AdminTo host lists (principals with outbound AdminTo counts)
+    bulk_map: Dict[str, List[str]] = defaultdict(list)
+    bulk_type: Dict[str, str] = {}
+    for u, v, ed in G.edges(data=True):
+        if (ed.get("label") or "").lower() not in ("adminto", "localadmin"):
+            continue
+        ud, vd = G.nodes.get(u) or {}, G.nodes.get(v) or {}
+        if str(vd.get("type") or "").lower() != "computer":
+            continue
+        if ud.get("is_azure") or vd.get("is_azure"):
+            continue
+        if domain_filter and not (
+            _domain_matches(ud, domain_filter) or _domain_matches(vd, domain_filter)
+        ):
+            continue
+        src = ud.get("name") or str(u)
+        bulk_map[src].append(vd.get("name") or str(v))
+        bulk_type[src] = str(ud.get("type") or "")
+    bulk_rows = []
+    for src, hosts in bulk_map.items():
+        hosts_u = sorted(set(hosts), key=str.lower)
+        bulk_rows.append([
+            src,
+            bulk_type.get(src, ""),
+            len(hosts_u),
+            "; ".join(hosts_u[:50]) + (f" (+{len(hosts_u) - 50})" if len(hosts_u) > 50 else ""),
+        ])
+    bulk_rows.sort(key=lambda r: (-int(r[2]), str(r[0]).lower()))
+    datasets["bulk_adminto_hosts.csv"] = (
+        ["Principal", "PrincipalType", "HostCount", "Hosts"],
+        bulk_rows,
+    )
+
+    # Dual: privileged (DA/EA nested) AND has AdminTo/local admin (tiering violation)
+    dual_rows: List[List[Any]] = []
+    for n, d in G.nodes(data=True):
+        if d.get("is_azure"):
+            continue
+        if not _domain_matches(d, domain_filter):
+            continue
+        if str(d.get("type") or "").lower() not in ("user", "computer"):
+            continue
+        is_priv, groups = is_member_of_privileged_group(G, n)
+        if not is_priv:
+            continue
+        admin_targets = []
+        for _, v, ed in G.out_edges(n, data=True):
+            if (ed.get("label") or "").lower() not in ("adminto", "localadmin"):
+                continue
+            vd = G.nodes.get(v) or {}
+            if str(vd.get("type") or "").lower() == "computer":
+                admin_targets.append(vd.get("name") or str(v))
+        if not admin_targets:
+            continue
+        dual_rows.append([
+            d.get("name") or n,
+            d.get("type"),
+            "; ".join(groups[:5]),
+            len(admin_targets),
+            "; ".join(sorted(set(admin_targets), key=lambda s: str(s).lower())[:30]),
+        ])
+    datasets["dual_privileged_and_local_admin.csv"] = (
+        ["Principal", "Type", "PrivGroups", "AdminToCount", "AdminToHosts"],
+        sorted(dual_rows, key=lambda r: (-int(r[3]), str(r[0]).lower())),
+    )
+
     return datasets
 
 

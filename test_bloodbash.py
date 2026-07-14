@@ -1919,6 +1919,68 @@ class TestBloodBash(unittest.TestCase):
         clean = self._strip_ansi(out)
         self.assertIn("--csv-pack", clean)
 
+    def test_csv_pack_computer_adminto_computer(self):
+        G = nx.MultiDiGraph()
+        G.add_node("C1", name="JUMP.LAB.LOCAL", type="Computer", props={}, is_azure=False)
+        G.add_node("C2", name="TARGET.LAB.LOCAL", type="Computer", props={}, is_azure=False)
+        G.add_node("U1", name="USER@LAB.LOCAL", type="User", props={}, is_azure=False)
+        G.add_edge("C1", "C2", label="AdminTo")
+        G.add_edge("U1", "C2", label="AdminTo")  # user should not appear in computer-computer
+        pack = os.path.join(self.temp_dir, "csv-c2c")
+        bloodbash_globals["export_csv_pack"](G, pack)
+        with open(os.path.join(pack, "computer_adminto_computer.csv"), encoding="utf-8") as f:
+            data = f.read()
+        self.assertIn("JUMP.LAB.LOCAL", data)
+        self.assertIn("TARGET.LAB.LOCAL", data)
+        self.assertNotIn("USER@LAB.LOCAL", data)
+
+    def test_csv_pack_dual_lowpriv_and_da(self):
+        G = nx.MultiDiGraph()
+        G.add_node(
+            "DA",
+            name="DOMAIN ADMINS@LAB.LOCAL",
+            type="Group",
+            props={},
+            is_azure=False,
+        )
+        G.add_node(
+            "U",
+            name="MERGED@LAB.LOCAL",
+            type="User",
+            props={"enabled": True, "admincount": False},
+            is_azure=False,
+        )
+        G.add_node(
+            "C",
+            name="WS.LAB.LOCAL",
+            type="Computer",
+            props={},
+            is_azure=False,
+        )
+        # Nested into DA but also has low-priv-looking AdminTo (dual use)
+        G.add_edge("U", "DA", label="MemberOf")
+        G.add_edge("U", "C", label="AdminTo")
+        pack = os.path.join(self.temp_dir, "csv-dual")
+        bloodbash_globals["export_csv_pack"](G, pack)
+        with open(os.path.join(pack, "dual_privileged_and_local_admin.csv"), encoding="utf-8") as f:
+            data = f.read()
+        self.assertIn("MERGED@LAB.LOCAL", data)
+        self.assertIn("WS.LAB.LOCAL", data)
+
+    def test_csv_pack_bulk_adminto_hosts(self):
+        G = nx.MultiDiGraph()
+        G.add_node("U", name="HELP@LAB.LOCAL", type="User", props={}, is_azure=False)
+        for i in range(3):
+            G.add_node(f"C{i}", name=f"PC{i}.LAB.LOCAL", type="Computer", props={}, is_azure=False)
+            G.add_edge("U", f"C{i}", label="AdminTo")
+        pack = os.path.join(self.temp_dir, "csv-bulk")
+        bloodbash_globals["export_csv_pack"](G, pack)
+        with open(os.path.join(pack, "bulk_adminto_hosts.csv"), encoding="utf-8") as f:
+            data = f.read()
+        self.assertIn("HELP@LAB.LOCAL", data)
+        self.assertIn("3", data)
+        self.assertIn("PC0.LAB.LOCAL", data)
+
     def test_csv_pack_everyone_and_overpriv_relationships(self):
         G = nx.MultiDiGraph()
         G.add_node(
