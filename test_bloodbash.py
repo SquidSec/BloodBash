@@ -929,6 +929,61 @@ class TestBloodBash(unittest.TestCase):
         self.assertTrue(any("NOLAPS-PC" in f[2] for f in bloodbash_globals['global_findings']))
         self.assertFalse(any("HASLAPS-PC" in f[2] for f in bloodbash_globals['global_findings']))
 
+    def test_collect_laps_readers(self):
+        G = nx.MultiDiGraph()
+        G.add_node(
+            "C",
+            name="WORKSTATION01.LAB.LOCAL",
+            type="Computer",
+            props={"haslaps": True, "domain": "LAB.LOCAL"},
+            is_azure=False,
+        )
+        G.add_node(
+            "U",
+            name="HELPDESK@LAB.LOCAL",
+            type="User",
+            props={"domain": "LAB.LOCAL"},
+            is_azure=False,
+        )
+        G.add_node(
+            "DA",
+            name="DOMAIN ADMINS@LAB.LOCAL",
+            type="Group",
+            props={"domain": "LAB.LOCAL"},
+            is_azure=False,
+        )
+        G.add_edge("U", "C", label="ReadLAPSPassword")
+        G.add_edge("DA", "C", label="ReadLAPSPassword")
+        rows = bloodbash_globals["collect_laps_readers"](G)
+        # Default high-priv (DA) excluded; helpdesk kept
+        names = {(r["reader"], r["computer"]) for r in rows}
+        self.assertIn(("HELPDESK@LAB.LOCAL", "WORKSTATION01.LAB.LOCAL"), names)
+        self.assertFalse(any(r["reader"] == "DOMAIN ADMINS@LAB.LOCAL" for r in rows))
+
+    def test_print_laps_readers(self):
+        G = nx.MultiDiGraph()
+        G.add_node(
+            "C",
+            name="PC01.LAB.LOCAL",
+            type="Computer",
+            props={"haslaps": True},
+            is_azure=False,
+        )
+        G.add_node("U", name="LAPSREADER@LAB.LOCAL", type="User", props={}, is_azure=False)
+        G.add_edge("U", "C", label="ReadLAPSPassword")
+        bloodbash_globals["global_findings"] = []
+        output = self._capture_output(bloodbash_globals["print_laps_readers"], G)
+        clean = self._strip_ansi(output)
+        self.assertIn("LAPSREADER@LAB.LOCAL", clean)
+        self.assertIn("PC01.LAB.LOCAL", clean)
+        self.assertIn("ReadLAPSPassword", clean)
+        self.assertTrue(
+            any(
+                f[1] == "LAPS Readers" and "LAPSREADER" in f[2]
+                for f in bloodbash_globals["global_findings"]
+            )
+        )
+
 
     def test_domain_trusts_ingest(self):
         """SharpHound domain Trusts[] become TrustedDomain edges."""
