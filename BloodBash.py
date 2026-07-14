@@ -3589,7 +3589,8 @@ def print_sessions_localadmin(G, domain_filter=None):
     table.add_column("Count", justify="right")
     table.add_column("Examples", style="green")
     from collections import defaultdict, Counter
-    rights = ['LocalAdmin', 'CanRDP', 'ExecuteDCOM', 'GenericAll']
+    # Local group / session edges only — GenericAll is an AD object ACL, not local admin.
+    rights = ['LocalAdmin', 'AdminTo', 'CanRDP', 'ExecuteDCOM']
     counts = defaultdict(Counter)
     for u, v, d in G.edges(data=True):
         if v in computers and d.get('label') in rights:
