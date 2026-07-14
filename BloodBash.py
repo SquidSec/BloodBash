@@ -1126,7 +1126,7 @@ def print_verbose_summary(G, domain_filter=None):
     azure_count = 0
     ad_count = 0
     for _, d in G.nodes(data=True):
-        if domain_filter and d.get('props', {}).get('domain') != domain_filter and d.get('props', {}).get('tenantId') != domain_filter:
+        if not _domain_matches(d, domain_filter):
             continue
         types_count[d['type']] += 1
         if d.get('is_azure', False):
@@ -1140,7 +1140,7 @@ def print_verbose_summary(G, domain_filter=None):
         table.add_row(t, str(cnt))
     console.print(table)
     console.print(f"[cyan]AD Objects: {ad_count} | Azure Objects: {azure_count}[/cyan]")
-    users = [d['name'] for _, d in G.nodes(data=True) if d['type'].lower() in ['user', 'azure user'] and (not domain_filter or d.get('props', {}).get('domain') == domain_filter or d.get('props', {}).get('tenantId') == domain_filter)]
+    users = [d['name'] for _, d in G.nodes(data=True) if d['type'].lower() in ['user', 'azure user'] and _domain_matches(d, domain_filter)]
     if users:
         console.print(f"\n[bold cyan]Users (AD + Azure) ({len(users)}):[/bold cyan]")
         for name in sorted(users)[:30]:
@@ -1305,7 +1305,7 @@ def get_high_value_targets(G, domain_filter=None):
     ]
     targets = []
     for n, d in G.nodes(data=True):
-        if domain_filter and d.get('props', {}).get('domain') != domain_filter and d.get('props', {}).get('tenantId') != domain_filter:
+        if not _domain_matches(d, domain_filter):
             continue
         name = d['name'].lower()
         typ = d['type'].lower()
@@ -1352,7 +1352,7 @@ def print_password_in_descriptions(G, domain_filter=None):
     for n, d in G.nodes(data=True):
         if d.get('is_azure', False):  # Skip Azure for AD-specific checks
             continue
-        if domain_filter and d.get('props', {}).get('domain') != domain_filter:
+        if not _domain_matches(d, domain_filter):
             continue
         if d['type'].lower() == 'user':
             props = d.get('props') or {}
@@ -1482,7 +1482,7 @@ def print_shadow_credentials(G, domain_filter=None):
     for n, d in G.nodes(data=True):
         if d.get('is_azure', False):
             continue
-        if domain_filter and d.get('props', {}).get('domain') != domain_filter:
+        if not _domain_matches(d, domain_filter):
             continue
         if d.get('type', '').lower() not in ('user', 'computer'):
             continue
@@ -1554,7 +1554,7 @@ def print_shadow_credentials(G, domain_filter=None):
     for n, d in G.nodes(data=True):
         if d.get('is_azure', False):
             continue
-        if domain_filter and d.get('props', {}).get('domain') != domain_filter:
+        if not _domain_matches(d, domain_filter):
             continue
         if d.get('type', '').lower() not in ('user', 'computer'):
             continue
@@ -1590,7 +1590,7 @@ def print_gpo_content_parsing(G, domain_filter=None):
     for n, d in G.nodes(data=True):
         if d.get('is_azure', False):
             continue
-        if domain_filter and d.get('props', {}).get('domain') != domain_filter:
+        if not _domain_matches(d, domain_filter):
             continue
         if d.get('type', '').lower() != 'gpo':
             continue
@@ -1665,7 +1665,7 @@ def print_constrained_delegation(G, domain_filter=None):
     for n, d in G.nodes(data=True):
         if d.get('is_azure', False):
             continue
-        if domain_filter and d.get('props', {}).get('domain') != domain_filter:
+        if not _domain_matches(d, domain_filter):
             continue
         if d['type'].lower() == 'computer':
             props = d.get('props') or {}
@@ -1716,7 +1716,7 @@ def _has_laps_enabled(props):
 
 def print_laps_status(G, domain_filter=None):
     console.rule("[bold magenta]LAPS (Local Administrator Password Solution) Status (AD)[/bold magenta]")
-    computers = [d for _, d in G.nodes(data=True) if d['type'].lower() == 'computer' and (not domain_filter or d.get('props', {}).get('domain') == domain_filter) and not d.get('is_azure', False)]
+    computers = [d for _, d in G.nodes(data=True) if d['type'].lower() == 'computer' and _domain_matches(d, domain_filter) and not d.get('is_azure', False)]
     if not computers:
         console.print("[green]No computers found[/green]")
         return
@@ -1918,7 +1918,7 @@ def print_sid_history_abuse(G, domain_filter=None):
     for n, d in G.nodes(data=True):
         if d.get('is_azure', False):
             continue
-        if domain_filter and d.get('props', {}).get('domain') != domain_filter:
+        if not _domain_matches(d, domain_filter):
             continue
         if d['type'].lower() not in ('user', 'computer'):
             continue
@@ -2013,7 +2013,7 @@ def print_adcs_vulnerabilities(G, domain_filter=None):
     for n, d in G.nodes(data=True):
         if d.get('is_azure', False):
             continue
-        if domain_filter and d.get('props', {}).get('domain') != domain_filter:
+        if not _domain_matches(d, domain_filter):
             continue
         obj_type = d.get('type', 'Unknown').lower()
         if obj_type not in ['certificate template', 'enterprise ca', 'root ca', 'ntauth store']:
@@ -2312,7 +2312,7 @@ def print_gpo_abuse(G, domain_filter=None):
     for n, d in G.nodes(data=True):
         if d.get('is_azure', False):
             continue
-        if domain_filter and d.get('props', {}).get('domain') != domain_filter:
+        if not _domain_matches(d, domain_filter):
             continue
         if d['type'].lower() != 'gpo':
             continue
@@ -2401,7 +2401,7 @@ def print_dcsync_rights(G, domain_filter=None):
     domain_oids = [
         n for n, d in G.nodes(data=True)
         if d.get('type', '').lower() == 'domain'
-        and (not domain_filter or d.get('props', {}).get('domain') == domain_filter)
+        and _domain_matches(d, domain_filter)
         and not d.get('is_azure', False)
     ]
     if not domain_oids:
@@ -2489,7 +2489,7 @@ def print_rbcd(G, domain_filter=None):
     for n, d in G.nodes(data=True):
         if d.get('is_azure', False):
             continue
-        if domain_filter and d.get('props', {}).get('domain') != domain_filter:
+        if not _domain_matches(d, domain_filter):
             continue
         if d.get('type', '').lower() != 'computer':
             continue
@@ -2650,7 +2650,7 @@ def print_can_configure_rbcd(G, domain_filter=None):
 
 def print_shortest_paths(G, fast=False, max_paths=10, target_filter=None, domain_filter=None, indirect=False):
     console.rule("[bold magenta]Shortest Paths to High-Value Targets[/bold magenta]")
-    users = [n for n, d in G.nodes(data=True) if d['type'].lower() in ['user', 'azure user'] and (not domain_filter or d.get('props', {}).get('domain') == domain_filter or d.get('props', {}).get('tenantId') == domain_filter)]
+    users = [n for n, d in G.nodes(data=True) if d['type'].lower() in ['user', 'azure user'] and _domain_matches(d, domain_filter)]
     targets = get_high_value_targets(G, domain_filter)
     if target_filter:
         targets = [t for t in targets if target_filter.lower() in t[1].lower()]
@@ -3022,7 +3022,7 @@ def print_privileged_roast_targets(G, domain_filter=None):
 
 def print_sessions_localadmin(G, domain_filter=None):
     console.rule("[bold magenta]Session / LocalAdmin / RDP / DCOM Summary (AD)[/bold magenta]")
-    computers = [n for n, d in G.nodes(data=True) if d['type'].lower() == 'computer' and (not domain_filter or d.get('props', {}).get('domain') == domain_filter) and not d.get('is_azure', False)]
+    computers = [n for n, d in G.nodes(data=True) if d['type'].lower() == 'computer' and _domain_matches(d, domain_filter) and not d.get('is_azure', False)]
     if not computers:
         console.print("[yellow]No computers found[/yellow]")
         return
@@ -3053,7 +3053,7 @@ def print_paths_to_owned(G, owned_str, domain_filter=None):
     for o in owned_list:
         found = False
         for oid, d in G.nodes(data=True):
-            if d['name'].upper().split('@')[0] == o.upper() and (not domain_filter or d.get('props', {}).get('domain') == domain_filter or d.get('props', {}).get('tenantId') == domain_filter):
+            if d['name'].upper().split('@')[0] == o.upper() and _domain_matches(d, domain_filter):
                 owned_oids.append((oid, d['name'], d['type']))
                 found = True
                 break
@@ -3089,7 +3089,7 @@ def print_arbitrary_paths(G, path_from=None, path_to=None, domain_filter=None, m
     for sname in sources:
         s_oid = None
         for oid, d in G.nodes(data=True):
-            if d['name'].upper().split('@')[0] == sname.upper() and (not domain_filter or d.get('props', {}).get('domain') == domain_filter or d.get('props', {}).get('tenantId') == domain_filter):
+            if d['name'].upper().split('@')[0] == sname.upper() and _domain_matches(d, domain_filter):
                 s_oid = oid
                 break
         if not s_oid:
@@ -3098,7 +3098,7 @@ def print_arbitrary_paths(G, path_from=None, path_to=None, domain_filter=None, m
         for tname in targets:
             t_oid = None
             for oid, d in G.nodes(data=True):
-                if d['name'].upper().split('@')[0] == tname.upper() and (not domain_filter or d.get('props', {}).get('domain') == domain_filter or d.get('props', {}).get('tenantId') == domain_filter):
+                if d['name'].upper().split('@')[0] == tname.upper() and _domain_matches(d, domain_filter):
                     t_oid = oid
                     break
             if not t_oid:
@@ -3160,7 +3160,7 @@ def inspect_node(G, identifier, domain_filter=None):
     found = False
     for oid, d in G.nodes(data=True):
         name_norm = d['name'].upper().split('@')[0]
-        if (oid == identifier or name_norm == identifier.upper()) and (not domain_filter or d.get('props', {}).get('domain') == domain_filter or d.get('props', {}).get('tenantId') == domain_filter):
+        if (oid == identifier or name_norm == identifier.upper()) and _domain_matches(d, domain_filter):
             found = True
             console.print(f"[cyan]OID:[/cyan] {oid}")
             console.print(f"[cyan]Name:[/cyan] {d['name']}")
@@ -3184,7 +3184,7 @@ def inspect_node(G, identifier, domain_filter=None):
 
 def print_group_analysis(G, domain_filter=None, deep_analysis=False):
     console.rule("[bold magenta]Group Nesting Depth & Cycle Analysis (AD + Azure)[/bold magenta]")
-    groups = [n for n, d in G.nodes(data=True) if d['type'].lower() in ['group', 'azure group'] and (not domain_filter or d.get('props', {}).get('domain') == domain_filter or d.get('props', {}).get('tenantId') == domain_filter)]
+    groups = [n for n, d in G.nodes(data=True) if d['type'].lower() in ['group', 'azure group'] and _domain_matches(d, domain_filter)]
     if not groups:
         console.print("[green]No groups found[/green]")
         return
@@ -3412,7 +3412,7 @@ def print_azure_privileged_roles(G, domain_filter=None):
     for n, d in G.nodes(data=True):
         if not d.get('is_azure', False):
             continue
-        if domain_filter and d.get('props', {}).get('tenantId') != domain_filter:
+        if not _domain_matches(d, domain_filter):
             continue
         if d['type'].lower() == 'azure role':
             role_name = d['name'].lower()
@@ -3440,7 +3440,7 @@ def print_azure_app_secrets(G, domain_filter=None):
     for n, d in G.nodes(data=True):
         if not d.get('is_azure', False):
             continue
-        if domain_filter and d.get('props', {}).get('tenantId') != domain_filter:
+        if not _domain_matches(d, domain_filter):
             continue
         if d['type'].lower() not in ('azure application', 'azure service principal'):
             continue
@@ -3478,7 +3478,7 @@ def print_azure_mfa_bypass(G, domain_filter=None):
     for n, d in G.nodes(data=True):
         if not d.get('is_azure', False):
             continue
-        if domain_filter and d.get('props', {}).get('tenantId') != domain_filter:
+        if not _domain_matches(d, domain_filter):
             continue
         if d['type'].lower() != 'azure user':
             continue
@@ -3526,7 +3526,7 @@ def print_azure_guest_access(G, domain_filter=None):
     for n, d in G.nodes(data=True):
         if not d.get('is_azure', False):
             continue
-        if domain_filter and d.get('props', {}).get('tenantId') != domain_filter:
+        if not _domain_matches(d, domain_filter):
             continue
         if d['type'].lower() == 'azure user':
             props = d.get('props', {})
@@ -3551,7 +3551,7 @@ def print_azure_service_principal_abuse(G, domain_filter=None):
     for n, d in G.nodes(data=True):
         if not d.get('is_azure', False):
             continue
-        if domain_filter and d.get('props', {}).get('tenantId') != domain_filter:
+        if not _domain_matches(d, domain_filter):
             continue
         if d['type'].lower() == 'azure service principal':
             incoming = list(G.in_edges(n, data=True))
@@ -5717,12 +5717,12 @@ def export_to_dot(G, dot_path, domain_filter=None):
     with open(dot_path, "w", encoding="utf-8") as f:
         f.write("digraph BloodBash {\n  rankdir=LR;\n  node [shape=box];\n")
         for n, d in G.nodes(data=True):
-            if domain_filter and d.get('props', {}).get('domain') != domain_filter and d.get('props', {}).get('tenantId') != domain_filter:
+            if not _domain_matches(d, domain_filter):
                 continue
             color = "red" if any(k in d['name'].lower() for k in ['admin', 'krbtgt', 'ca', 'template', 'global admin']) else "blue"
             f.write(f'  "{d["name"]}" [label="{d["name"]}\\n{d["type"]}", color={color}];\n')
         for u, v, d in G.edges(data=True):
-            if domain_filter and (G.nodes[u].get('props', {}).get('domain') != domain_filter and G.nodes[u].get('props', {}).get('tenantId') != domain_filter) and (G.nodes[v].get('props', {}).get('domain') != domain_filter and G.nodes[v].get('props', {}).get('tenantId') != domain_filter):
+            if domain_filter and not (_domain_matches(G.nodes[u], domain_filter) or _domain_matches(G.nodes[v], domain_filter)):
                 continue
             f.write(f'  "{G.nodes[u]["name"]}" -> "{G.nodes[v]["name"]}" [label="{d.get("label", "?")}"];\n')
         f.write("}\n")
