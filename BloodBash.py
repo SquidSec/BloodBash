@@ -883,6 +883,71 @@ def load_graph_from_db(db_path):
 # ────────────────────────────────────────────────
 # VERBOSE SUMMARY (Extended for Azure)
 # ────────────────────────────────────────────────
+def list_domains(G) -> List[dict]:
+    """List AD domains and Azure tenants present in the graph."""
+    found: Dict[str, dict] = {}
+    for n, d in G.nodes(data=True):
+        props = d.get("props") or {}
+        name = d.get("name") or ""
+        typ = str(d.get("type") or "").lower()
+        is_azure = bool(d.get("is_azure", False))
+        if typ == "domain" or (not is_azure and typ == "domain"):
+            key = name.upper() if name else str(n).upper()
+            found[key] = {
+                "name": name or str(n),
+                "kind": "AD Domain",
+                "id": props.get("domain") or props.get("objectid") or n,
+            }
+            continue
+        if is_azure and ("tenant" in typ or props.get("tenantId") or props.get("tenantid")):
+            tid = props.get("tenantId") or props.get("tenantid") or name or str(n)
+            key = f"AZ:{tid}".upper()
+            found[key] = {
+                "name": str(tid),
+                "kind": "Azure Tenant",
+                "id": tid,
+            }
+            continue
+        # Fallback: domain property on objects
+        dom = props.get("domain") or props.get("Domain")
+        if dom and not is_azure:
+            key = str(dom).upper()
+            if key not in found:
+                found[key] = {
+                    "name": str(dom),
+                    "kind": "AD Domain",
+                    "id": str(dom),
+                }
+        tid = props.get("tenantId") or props.get("tenantid")
+        if tid and is_azure:
+            key = f"AZ:{tid}".upper()
+            if key not in found:
+                found[key] = {
+                    "name": str(tid),
+                    "kind": "Azure Tenant",
+                    "id": str(tid),
+                }
+    return sorted(found.values(), key=lambda x: (x["kind"], x["name"].upper()))
+
+
+def print_list_domains(G):
+    console.rule("[bold magenta]Domains / Tenants in collection[/bold magenta]")
+    rows = list_domains(G)
+    if not rows:
+        console.print("[yellow]No domains or tenants found[/yellow]")
+        return
+    table = Table(title="Available domains")
+    table.add_column("Kind", style="dim")
+    table.add_column("Name", style="cyan")
+    table.add_column("Id / filter value", style="green")
+    for r in rows:
+        table.add_row(r["kind"], r["name"], str(r["id"]))
+    console.print(table)
+    console.print(
+        "[dim]Use --domain NAME to filter analysis (case-insensitive).[/dim]"
+    )
+
+
 def print_verbose_summary(G, domain_filter=None):
     console.rule("[bold magenta]VERBOSE SUMMARY[/bold magenta]")
     types_count = defaultdict(int)
@@ -5125,6 +5190,7 @@ HELP_TABLE_SECTIONS = [
         "Filters & utilities",
         [
             ("--domain X", "Filter to one AD domain or Azure tenantId", ""),
+            ("--list-domains", "List domains/tenants in collection and exit", ""),
             ("--db FILE", "Load/save graph in SQLite", "skip re-ingest"),
             ("--inspect NODE", "Dump props + edges for node(s)", "comma-separated"),
         ],
@@ -5375,6 +5441,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dot", nargs="?", const="bloodbash.dot", help="Export Graphviz DOT file")
     parser.add_argument("--fast", action="store_true", help="Fast mode (limit heavy pathfinding)")
     parser.add_argument("--domain", help="Filter by domain (AD) or tenantId (Azure)")
+    parser.add_argument(
+        "--list-domains",
+        action="store_true",
+        help="List AD domains / Azure tenants in the collection and exit",
+    )
     parser.add_argument("--indirect", action="store_true", help="Include indirect paths/permissions")
     parser.add_argument("--db", help="SQLite DB path for persistence (save/load graph)")
     parser.add_argument("--owned", help="Comma-separated owned principals (find paths *to* them)")
@@ -5491,6 +5562,10 @@ def main():
             console.print("[red]No objects loaded. Exiting.[/red]")
             sys.exit(1)
         G, name_to_oid = build_graph(nodes, args.db if args.db else None, debug=DEBUG)
+
+    if args.list_domains:
+        print_list_domains(G)
+        return
 
     run_inventory = bool(args.inventory)
     if run_inventory:
