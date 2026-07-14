@@ -3045,6 +3045,17 @@ RBCD_CONFIGURE_RIGHTS = frozenset({
     "writeaccountrestrictions",
     "addallowedtoact",
 })
+# Prefer specific / strongest configure rights when multiple edges exist.
+RBCD_RIGHT_RANK = {
+    "addallowedtoact": 100,
+    "writeaccountrestrictions": 90,
+    "genericall": 80,
+    "genericwrite": 70,
+    "writedacl": 60,
+    "writeowner": 50,
+    "owns": 40,
+    "allextendedrights": 30,
+}
 
 
 def collect_can_configure_rbcd(G, domain_filter=None, exclude_default_priv: bool = True) -> List[dict]:
@@ -3052,9 +3063,9 @@ def collect_can_configure_rbcd(G, domain_filter=None, exclude_default_priv: bool
 
     Scans computer in-edges only (not the full edge set) and memoizes nested
     high-priv membership checks so large SharpHound graphs stay responsive.
+    Keeps a single best right per (principal, target).
     """
-    rows: List[dict] = []
-    seen = set()
+    best: Dict[Tuple[Any, Any], dict] = {}
     expected_cache: Dict[Any, bool] = {}
 
     def _is_expected(oid) -> bool:
@@ -3086,19 +3097,19 @@ def collect_can_configure_rbcd(G, domain_filter=None, exclude_default_priv: bool
                 _is_default_high_priv_name(principal) or _is_expected(u)
             ):
                 continue
-            key = (principal, target, label_l)
-            if key in seen:
-                continue
-            seen.add(key)
-            rows.append(
-                {
+            key = (u, v)
+            rank = RBCD_RIGHT_RANK.get(label_l, 0)
+            prev = best.get(key)
+            if prev is None or rank > prev.get("_rank", -1):
+                best[key] = {
                     "principal": principal,
                     "target": target,
                     "right": label,
                     "principal_oid": u,
                     "target_oid": v,
+                    "_rank": rank,
                 }
-            )
+    rows = [{k: v for k, v in r.items() if k != "_rank"} for r in best.values()]
     rows.sort(key=lambda r: (r["principal"], r["target"], r["right"]))
     return rows
 

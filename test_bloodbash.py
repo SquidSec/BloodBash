@@ -355,13 +355,10 @@ class TestBloodBash(unittest.TestCase):
         # DA excluded as expected high priv
         self.assertTrue(any(r["principal"] == "HELPDESK@LAB.LOCAL" for r in rows))
         self.assertFalse(any(r["principal"] == "DOMAIN ADMINS@LAB.LOCAL" for r in rows))
-        rights = {
-            r["right"]
-            for r in rows
-            if r["principal"] == "HELPDESK@LAB.LOCAL"
-        }
-        self.assertIn("GenericAll", rights)
-        self.assertIn("WriteAccountRestrictions", rights)
+        # Best single right per (principal, target) — WAR ranks above GenericAll
+        helpdesk = [r for r in rows if r["principal"] == "HELPDESK@LAB.LOCAL"]
+        self.assertEqual(len(helpdesk), 1)
+        self.assertEqual(helpdesk[0]["right"], "WriteAccountRestrictions")
 
     def test_print_can_configure_rbcd(self):
         G = nx.MultiDiGraph()
@@ -380,6 +377,19 @@ class TestBloodBash(unittest.TestCase):
                 for f in bloodbash_globals["global_findings"]
             )
         )
+
+    def test_can_configure_rbcd_keeps_best_right_per_pair(self):
+        """Owns + WAR + AllExtendedRights on same host → one row (strongest)."""
+        G = nx.MultiDiGraph()
+        G.add_node("T", name="HOST$.LAB.LOCAL", type="Computer", props={}, is_azure=False)
+        G.add_node("U", name="HELPDESK@LAB.LOCAL", type="User", props={}, is_azure=False)
+        G.add_edge("U", "T", label="Owns")
+        G.add_edge("U", "T", label="AllExtendedRights")
+        G.add_edge("U", "T", label="WriteAccountRestrictions")
+        rows = bloodbash_globals["collect_can_configure_rbcd"](G)
+        host_rows = [r for r in rows if r["principal"] == "HELPDESK@LAB.LOCAL"]
+        self.assertEqual(len(host_rows), 1)
+        self.assertEqual(host_rows[0]["right"], "WriteAccountRestrictions")
 
     def test_rbcd_configure_rights_exclude_bare_writeproperty(self):
         rights = bloodbash_globals["RBCD_CONFIGURE_RIGHTS"]
