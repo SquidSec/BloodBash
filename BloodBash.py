@@ -488,6 +488,175 @@ def load_json_dir(directory, debug=False):
     return nodes
 
 
+def _register_name_map(name_to_oid, name, oid):
+    """Map full UPN/name and short SAM; never overwrite short key with a different oid."""
+    if name is None or oid is None:
+        return
+    name_u = str(name).upper()
+    name_to_oid[name_u] = oid
+    short = name_u.split('@')[0].split('\\')[-1]
+    if short and short not in name_to_oid:
+        name_to_oid[short] = oid
+
+
+def _ensure_graph_node(G, nodes, name_to_oid, oid, name=None, typ='Unknown', props=None, is_azure=False):
+    if oid is None:
+        return
+    if oid not in G.nodes:
+        G.add_node(
+            oid,
+            name=str(name if name is not None else oid),
+            type=typ or 'Unknown',
+            props=props if isinstance(props, dict) else {},
+            is_azure=bool(is_azure),
+        )
+        if oid not in nodes:
+            _register_name_map(name_to_oid, name if name is not None else oid, oid)
+    elif name and (not G.nodes[oid].get('name') or G.nodes[oid].get('name') == oid):
+        G.nodes[oid]['name'] = str(name)
+
+
+def _edge_label_exists(G, u, v, label) -> bool:
+    if not G.has_edge(u, v):
+        return False
+    want = (label or '').lower()
+    for data in G.get_edge_data(u, v).values():
+        if (data.get('label') or '').lower() == want:
+            return True
+    return False
+
+
+def _add_unique_edge(G, u, v, label, **attrs):
+    """Add edge only if no multi-edge with the same label already exists."""
+    if u is None or v is None or not label:
+        return False
+    if _edge_label_exists(G, u, v, label):
+        return False
+    G.add_edge(u, v, label=label, **attrs)
+    return True
+
+
+def _sid_suffix(oid: str) -> str:
+    """Normalize SID / domain-prefixed SID to a comparable tail (e.g. S-1-5-11)."""
+    s = str(oid or "")
+    # DOMAIN-S-1-5-11 or plain S-1-5-11
+    idx = s.upper().find("S-1-")
+    if idx >= 0:
+        return s[idx:].upper()
+    return s.upper()
+
+
+def _node_domain_key(d: dict) -> str:
+    props = d.get("props") or {}
+    dom = (
+        props.get("domain")
+        or props.get("Domain")
+        or props.get("domainsid")
+        or ""
+    )
+    if not dom:
+        name = d.get("name") or ""
+        if "@" in name:
+            dom = name.rsplit("@", 1)[-1]
+        elif name.count(".") >= 1 and not name.upper().startswith("S-1-"):
+            # computer FQDN-style DOMAIN.LOCAL
+            parts = name.split(".", 1)
+            if len(parts) == 2 and parts[1]:
+                dom = parts[1]
+    return str(dom).upper().strip()
+
+
+def add_well_known_group_memberships(G) -> int:
+    """Synthesize BloodHound-style well-known MemberOf edges missing from SharpHound JSON.
+
+    SharpHound does not emit Domain Users → Authenticated Users → Everyone (etc.).
+    BloodHound CE adds these at ingest so every Domain User inherits ACLs granted
+    to AUTHENTICATED USERS / EVERYONE. Without them, compromise dossiers and path
+    finding under-report (e.g. GenericWrite on GPOs held by Authenticated Users).
+    """
+    # domain_key -> role -> oid
+    by_domain: Dict[str, Dict[str, str]] = defaultdict(dict)
+    global_roles: Dict[str, List[str]] = defaultdict(list)
+
+    for oid, d in G.nodes(data=True):
+        if d.get("is_azure"):
+            continue
+        typ = str(d.get("type") or "").lower()
+        if typ not in ("group", "unknown", ""):
+            continue
+        name = (d.get("name") or "").upper()
+        sid = _sid_suffix(oid)
+        dom = _node_domain_key(d) or "_GLOBAL_"
+        role = None
+        if sid.endswith("-513") or name.startswith("DOMAIN USERS@") or name == "DOMAIN USERS":
+            role = "domain_users"
+        elif sid.endswith("-515") or name.startswith("DOMAIN COMPUTERS@"):
+            role = "domain_computers"
+        elif sid.endswith("-516") or name.startswith("DOMAIN CONTROLLERS@"):
+            role = "domain_controllers"
+        elif sid == "S-1-5-11" or "AUTHENTICATED USERS" in name:
+            role = "authenticated_users"
+        elif sid == "S-1-1-0" or name.startswith("EVERYONE@"):
+            role = "everyone"
+        elif sid == "S-1-5-32-545" or (
+            (name.startswith("USERS@") or name == "USERS") and "DOMAIN USERS" not in name
+        ):
+            role = "builtin_users"
+        if not role:
+            continue
+        if role in ("authenticated_users", "everyone", "builtin_users"):
+            global_roles[role].append(oid)
+        by_domain[dom][role] = oid
+
+    added = 0
+
+    def _pick(role: str, dom: str, roles: dict) -> Optional[str]:
+        if roles.get(role):
+            return roles[role]
+        cands = global_roles.get(role) or []
+        if not cands:
+            return None
+        dom_compact = dom.replace(".", "")
+        for cand in cands:
+            cname = (G.nodes[cand].get("name") or "").upper()
+            coid = str(cand).upper().replace(".", "")
+            if dom != "_GLOBAL_" and (dom in cname or dom_compact in coid):
+                return cand
+        return cands[0] if len(cands) == 1 else None
+
+    def _link(src, dst) -> None:
+        nonlocal added
+        if src and dst and src in G and dst in G:
+            if _add_unique_edge(G, src, dst, "MemberOf"):
+                added += 1
+
+    for dom, roles in by_domain.items():
+        if dom == "_GLOBAL_" and not any(
+            r in roles for r in ("domain_users", "domain_computers", "domain_controllers")
+        ):
+            # Only link pure well-known globals when no domain-scoped groups keyed here
+            au = roles.get("authenticated_users")
+            ev = roles.get("everyone")
+            _link(au, ev)
+            continue
+        du = roles.get("domain_users")
+        dc = roles.get("domain_computers")
+        dctrl = roles.get("domain_controllers")
+        au = _pick("authenticated_users", dom, roles)
+        ev = _pick("everyone", dom, roles)
+        bu = _pick("builtin_users", dom, roles)
+
+        # BloodHound CE well-known nesting
+        _link(du, au)
+        _link(dc, au)
+        _link(dctrl, au)
+        _link(au, ev)
+        _link(du, bu)
+        _link(au, bu)
+
+    return added
+
+
 def build_graph(nodes, db_path=None, debug=False):
     G = nx.MultiDiGraph()
     name_to_oid = {}
@@ -839,6 +1008,9 @@ def build_graph(nodes, db_path=None, debug=False):
             G.add_edge(start_oid, end_oid, label=label)
             added += 1
     console.print(f"[green]Added {added} relationship edges ({placeholders_added} placeholder nodes created)[/green]")
+    wk = add_well_known_group_memberships(G)
+    if wk:
+        console.print(f"[green]Added {wk} well-known group MemberOf edges (Auth Users / Everyone / …)[/green]")
     console.print(f"[green]✓ Graph built: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges[/green]")
     if debug:
         console.print(f"[blue]DEBUG: Final graph stats - Nodes: {G.number_of_nodes()} | Edges: {G.number_of_edges()}[/blue]")
@@ -2363,7 +2535,9 @@ def print_rbcd(G, domain_filter=None):
         console.print("[green]No RBCD configured computers found[/green]")
 
 
-# Rights that let a principal set msDS-AllowedToActOnBehalfOfOtherIdentity (RBCD)
+# Rights that let a principal set msDS-AllowedToActOnBehalfOfOtherIdentity (RBCD).
+# Omit bare WriteProperty: SharpHound emits many property writes; only
+# WriteAccountRestrictions / AddAllowedToAct (and full control) reliably mean RBCD.
 RBCD_CONFIGURE_RIGHTS = frozenset({
     "genericall",
     "genericwrite",
@@ -2373,51 +2547,61 @@ RBCD_CONFIGURE_RIGHTS = frozenset({
     "allextendedrights",
     "writeaccountrestrictions",
     "addallowedtoact",
-    "writeproperty",
 })
 
 
 def collect_can_configure_rbcd(G, domain_filter=None, exclude_default_priv: bool = True) -> List[dict]:
-    """Non-default principals who can configure RBCD on a computer (or user)."""
+    """Non-default principals who can configure RBCD on a computer resource.
+
+    Scans computer in-edges only (not the full edge set) and memoizes nested
+    high-priv membership checks so large SharpHound graphs stay responsive.
+    """
     rows: List[dict] = []
     seen = set()
-    for u, v, ed in G.edges(data=True):
-        label = (ed.get("label") or "")
-        label_l = label.lower()
-        if label_l not in RBCD_CONFIGURE_RIGHTS:
+    expected_cache: Dict[Any, bool] = {}
+
+    def _is_expected(oid) -> bool:
+        cached = expected_cache.get(oid)
+        if cached is not None:
+            return cached
+        result = is_expected_dcsync_principal(G, oid)
+        expected_cache[oid] = result
+        return result
+
+    for v, vd in G.nodes(data=True):
+        if vd.get("is_azure"):
             continue
-        ud = G.nodes.get(u) or {}
-        vd = G.nodes.get(v) or {}
-        if ud.get("is_azure") or vd.get("is_azure"):
+        if str(vd.get("type") or "").lower() != "computer":
             continue
-        if domain_filter and not (
-            _domain_matches(ud, domain_filter) or _domain_matches(vd, domain_filter)
-        ):
+        if domain_filter and not _domain_matches(vd, domain_filter):
             continue
-        # Target should be computer (or user) resource
-        vtype = str(vd.get("type") or "").lower()
-        if vtype not in ("computer", "user"):
-            continue
-        principal = ud.get("name") or str(u)
         target = vd.get("name") or str(v)
-        if exclude_default_priv and (
-            _is_default_high_priv_name(principal)
-            or is_expected_dcsync_principal(G, u)
-        ):
-            continue
-        key = (principal, target, label_l)
-        if key in seen:
-            continue
-        seen.add(key)
-        rows.append(
-            {
-                "principal": principal,
-                "target": target,
-                "right": label,
-                "principal_oid": u,
-                "target_oid": v,
-            }
-        )
+        for u, _, ed in G.in_edges(v, data=True):
+            label = ed.get("label") or ""
+            label_l = label.lower()
+            if label_l not in RBCD_CONFIGURE_RIGHTS:
+                continue
+            ud = G.nodes.get(u) or {}
+            if ud.get("is_azure"):
+                continue
+            principal = ud.get("name") or str(u)
+            if exclude_default_priv and (
+                _is_default_high_priv_name(principal) or _is_expected(u)
+            ):
+                continue
+            key = (principal, target, label_l)
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(
+                {
+                    "principal": principal,
+                    "target": target,
+                    "right": label,
+                    "principal_oid": u,
+                    "target_oid": v,
+                }
+            )
     rows.sort(key=lambda r: (r["principal"], r["target"], r["right"]))
     return rows
 
@@ -2428,18 +2612,26 @@ def print_can_configure_rbcd(G, domain_filter=None):
     )
     rows = collect_can_configure_rbcd(G, domain_filter)
     max_display = 40
+    max_findings = 200
     for i, r in enumerate(rows):
         if i < max_display:
             console.print(
                 f"  • [green]{r['principal']}[/green] --[{r['right']}]--> [cyan]{r['target']}[/cyan]"
             )
-        add_finding(
-            "Can Configure RBCD",
-            f"{r['principal']} can configure RBCD on {r['target']} via {r['right']}",
-            score=9,
-        )
+        if i < max_findings:
+            add_finding(
+                "Can Configure RBCD",
+                f"{r['principal']} can configure RBCD on {r['target']} via {r['right']}",
+                score=9,
+            )
     if len(rows) > max_display:
         console.print(f"  [dim]... and {len(rows) - max_display} more[/dim]")
+    if len(rows) > max_findings:
+        add_finding(
+            "Can Configure RBCD",
+            f"{len(rows) - max_findings} additional can-configure-RBCD grants not listed individually",
+            score=9,
+        )
     if rows:
         console.print(
             Panel(
@@ -4121,6 +4313,7 @@ COMPROMISE_RIGHT_LABELS = (
     "WriteDacl", "WriteOwner", "Owns", "ForceChangePassword", "ResetPassword",
     "AddMember", "AddKeyCredentialLink", "AllowedToAct", "HasSession",
     "GetChanges", "GetChangesAll", "AllExtendedRights", "WriteProperty",
+    "WriteAccountRestrictions", "AddAllowedToAct",
     "MemberOf",  # membership handled separately but kept for completeness
 )
 # Rights shown in the high-level summary counts (order preserved)
@@ -4128,6 +4321,7 @@ COMPROMISE_SUMMARY_RIGHTS = (
     "LocalAdmin", "AdminTo", "CanRDP", "ExecuteDCOM", "GenericAll", "GenericWrite",
     "WriteDacl", "WriteOwner", "ForceChangePassword", "ResetPassword", "AddMember",
     "HasSession", "AllowedToAct", "AddKeyCredentialLink", "GetChanges", "GetChangesAll",
+    "AllExtendedRights", "WriteAccountRestrictions", "AddAllowedToAct",
 )
 
 
@@ -4186,7 +4380,7 @@ def collect_nested_groups(G, start_oid: str, max_depth: int = 25) -> Dict[str, A
         if depth >= max_depth:
             continue
         for _, v, ed in G.out_edges(cur, data=True):
-            if (ed or {}).get("label") != "MemberOf":
+            if ((ed or {}).get("label") or "").lower() != "memberof":
                 continue
             if v in seen:
                 continue
@@ -4198,8 +4392,8 @@ def collect_nested_groups(G, start_oid: str, max_depth: int = 25) -> Dict[str, A
             if depth == 0:
                 direct.append(entry)
             effective.append(entry)
-            # Continue nesting through groups
-            if (gtype or "").lower() in ("group", "azure group"):
+            # Continue nesting through groups (Unknown: well-known SID placeholders)
+            if (gtype or "").lower() in ("group", "azure group", "unknown", ""):
                 queue.append((v, depth + 1))
     direct.sort(key=lambda x: x["name"].lower())
     effective.sort(key=lambda x: (x["depth"], x["name"].lower()))
@@ -6291,4 +6485,11 @@ def main():
         console.print(f"[bold blue]DEBUG: Total findings: {len(global_findings)}[/bold blue]")
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        try:
+            console.print("\n[yellow]Interrupted by user[/yellow]")
+        except Exception:
+            pass
+        sys.exit(130)
