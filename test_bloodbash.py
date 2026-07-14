@@ -1206,12 +1206,16 @@ class TestBloodBash(unittest.TestCase):
         self.assertIn("Comp1", output)
         self.assertIn("Comp3", output)  # ms-Mcs-AdmPwd case variant
         self.assertIn("Comp5", output)  # haslaps: true (CE)
-        self.assertTrue(any("LAPS" in f[2] for f in bloodbash_globals['global_findings']))
-        # Comp3 must not be reported as missing LAPS when password attr is present
+        # Summary finding only (not one finding per computer)
+        laps_findings = [f for f in bloodbash_globals['global_findings'] if f[1] == "LAPS"]
+        self.assertEqual(len(laps_findings), 1)
+        self.assertRegex(laps_findings[0][2], r"\d+/\d+ computers do not have LAPS")
+        # Comp3 must not appear as a missing-LAPS host name in findings
         self.assertFalse(
-            any("Comp3" in f[2] for f in bloodbash_globals['global_findings']),
+            any("Comp3" in f[2] for f in laps_findings),
             "Comp3 has ms-Mcs-AdmPwd and should not be a LAPS-missing finding",
         )
+
 
     def test_laps_haslaps_flag(self):
         """SharpHound CE haslaps boolean is the primary LAPS signal."""
@@ -1223,8 +1227,9 @@ class TestBloodBash(unittest.TestCase):
         self.assertIn("LAPS enabled", output)
         self.assertIn("HASLAPS-PC", output)
         self.assertIn("NOLAPS-PC", output)
-        self.assertTrue(any("NOLAPS-PC" in f[2] for f in bloodbash_globals['global_findings']))
-        self.assertFalse(any("HASLAPS-PC" in f[2] for f in bloodbash_globals['global_findings']))
+        laps_findings = [f for f in bloodbash_globals['global_findings'] if f[1] == "LAPS"]
+        self.assertEqual(len(laps_findings), 1)
+        self.assertIn("1/2 computers do not have LAPS enabled", laps_findings[0][2])
 
     def test_collect_laps_readers(self):
         G = nx.MultiDiGraph()
