@@ -5257,6 +5257,47 @@ def collect_paths_from_principal(
     return results[: max_targets * max_paths_per_target]
 
 
+# Rights that imply immediate abuse impact even without a path to Domain Admins.
+IMPACT_RIGHT_LABELS = frozenset({
+    "genericall", "genericwrite", "writedacl", "writeowner", "owns",
+    "forcechangepassword", "resetpassword", "addmember", "addkeycredentiallink",
+    "allextendedrights", "writeaccountrestrictions", "addallowedtoact",
+    "adminto", "localadmin", "allowedtoact",
+})
+IMPACT_TARGET_TYPES = frozenset({
+    "user", "computer", "gpo", "group", "domain",
+    "certificate template", "enterprise ca",
+})
+
+
+def collect_impact_edges_from_rights(rights: Dict[str, List[dict]]) -> List[dict]:
+    """High-signal abuse edges from an outbound rights map (not only HV paths)."""
+    impact = []
+    for lab, rows in (rights or {}).items():
+        if (lab or "").lower() not in IMPACT_RIGHT_LABELS:
+            continue
+        for r in rows:
+            ttype = str(r.get("target_type") or "").lower()
+            if ttype not in IMPACT_TARGET_TYPES:
+                continue
+            impact.append(
+                {
+                    "right": lab,
+                    "target": r.get("target"),
+                    "target_type": r.get("target_type"),
+                    "via": r.get("via"),
+                }
+            )
+    impact.sort(
+        key=lambda x: (
+            str(x.get("target_type") or "").lower(),
+            str(x.get("target") or "").lower(),
+            str(x.get("right") or "").lower(),
+        )
+    )
+    return impact
+
+
 def build_compromise_dossier(
     G,
     principal: str,
@@ -5276,6 +5317,7 @@ def build_compromise_dossier(
     # Effective principals for rights = self + all nested groups
     principal_oids = [oid] + [g["id"] for g in membership["effective"]]
     rights = collect_outbound_rights_for_principals(G, principal_oids)
+    impact_edges = collect_impact_edges_from_rights(rights)
     paths = collect_paths_from_principal(
         G,
         oid,
@@ -5289,6 +5331,7 @@ def build_compromise_dossier(
         "direct_groups": membership["direct_count"],
         "effective_groups": membership["effective_count"],
         "paths_to_high_value": len(paths),
+        "impact_edges": len(impact_edges),
     }
     for lab in COMPROMISE_SUMMARY_RIGHTS:
         counts[lab] = len(rights.get(lab, []))
@@ -5309,6 +5352,7 @@ def build_compromise_dossier(
         "highvalue": get_bool_prop_ci(props, ["highvalue", "HighValue"]),
         "membership": membership,
         "rights": rights,
+        "impact_edges": impact_edges,
         "paths_to_high_value": paths,
         "counts": counts,
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -5346,13 +5390,19 @@ def print_compromise_dossier(dossier: dict, detail_limit: int = 25) -> None:
     table.add_row("Direct group membership", str(counts.get("direct_groups", 0)))
     table.add_row("Effective groups (nested)", str(counts.get("effective_groups", 0)))
     table.add_row("Paths to high-value", str(counts.get("paths_to_high_value", 0)))
+    table.add_row("Direct impact edges", str(counts.get("impact_edges", 0)))
     for lab in COMPROMISE_SUMMARY_RIGHTS:
         n = counts.get(lab, 0)
         if n:
             table.add_row(lab, str(n))
     # Extra rights not in summary list
     for lab, n in sorted(counts.items()):
-        if lab in ("direct_groups", "effective_groups", "paths_to_high_value"):
+        if lab in (
+            "direct_groups",
+            "effective_groups",
+            "paths_to_high_value",
+            "impact_edges",
+        ):
             continue
         if lab in COMPROMISE_SUMMARY_RIGHTS:
             continue
@@ -5404,6 +5454,21 @@ def print_compromise_dossier(dossier: dict, detail_limit: int = 25) -> None:
         if len(rows) > detail_limit:
             console.print(f"    [dim]... and {len(rows) - detail_limit} more[/dim]")
 
+    # ── Direct impact (GPO/user/computer abuse without DA path) ──
+    impact = dossier.get("impact_edges") or []
+    console.print("\n[bold]Direct impact edges (abuse without HV path)[/bold]")
+    if not impact:
+        console.print("  [dim](no high-impact write/reset/admin edges found)[/dim]")
+    for r in impact[:detail_limit]:
+        via = r.get("via") or ""
+        via_note = f" [dim]via {via}[/dim]" if via and via != name else ""
+        console.print(
+            f"  • [yellow]{r.get('right')}[/yellow] → "
+            f"[red]{r.get('target')}[/red] ({r.get('target_type')}){via_note}"
+        )
+    if len(impact) > detail_limit:
+        console.print(f"  [dim]... and {len(impact) - detail_limit} more impact edges[/dim]")
+
     # ── Paths to HV ──
     paths = dossier.get("paths_to_high_value") or []
     console.print("\n[bold]Attack paths to high-value targets[/bold]")
@@ -5422,7 +5487,8 @@ def print_compromise_dossier(dossier: dict, detail_limit: int = 25) -> None:
         "Compromise Dossier",
         f"{name}: {counts.get('effective_groups', 0)} groups, "
         f"{counts.get('LocalAdmin', 0) + counts.get('AdminTo', 0)} admin rights, "
-        f"{counts.get('CanRDP', 0)} RDP, {counts.get('paths_to_high_value', 0)} HV paths",
+        f"{counts.get('CanRDP', 0)} RDP, {counts.get('paths_to_high_value', 0)} HV paths, "
+        f"{counts.get('impact_edges', 0)} impact edges",
         score=8,
     )
 
