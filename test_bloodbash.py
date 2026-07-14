@@ -1919,6 +1919,51 @@ class TestBloodBash(unittest.TestCase):
         clean = self._strip_ansi(out)
         self.assertIn("--csv-pack", clean)
 
+    def test_apply_quick_wins_preset_enables_best_checks(self):
+        """--quick-wins enables the high-value triage set without --all."""
+        ns = bloodbash_globals["build_arg_parser"]().parse_args(["./data", "--quick-wins"])
+        self.assertTrue(ns.quick_wins)
+        bloodbash_globals["apply_quick_wins_to_args"](ns)
+        # Core privilege / credential quick wins
+        self.assertTrue(ns.dcsync)
+        self.assertTrue(ns.adcs)
+        self.assertTrue(ns.dangerous_permissions)
+        self.assertTrue(ns.rbcd)
+        self.assertTrue(ns.kerberoastable)
+        self.assertTrue(ns.as_rep_roastable)
+        self.assertTrue(ns.privileged_roast)
+        self.assertTrue(ns.unconstrained_delegation)
+        self.assertTrue(ns.shadow_credentials)
+        self.assertTrue(ns.laps)
+        self.assertTrue(ns.password_descriptions)
+        self.assertTrue(ns.password_not_required)
+        self.assertTrue(ns.sessions)
+        self.assertTrue(ns.shortest_paths)
+        self.assertTrue(ns.path_break)
+        self.assertEqual(ns.busiest_paths, "short")
+        self.assertTrue(ns.fast)
+        self.assertTrue(ns.verbose)
+        self.assertTrue(ns.all_findings)
+        # Not a full --all dump
+        self.assertFalse(ns.all)
+        self.assertFalse(ns.deep_analysis)
+        self.assertFalse(ns.gpo_parsing)
+
+    def test_quick_wins_cli_flag_in_help(self):
+        out = self._capture_output(bloodbash_globals["print_structured_help"], "BloodBash.py")
+        clean = self._strip_ansi(out)
+        self.assertIn("--quick-wins", clean)
+        self.assertIn("Quick wins", clean)
+
+    def test_quick_wins_does_not_override_explicit_false_fast(self):
+        """User can still add flags; apply only turns checks on, doesn't force all."""
+        ns = bloodbash_globals["build_arg_parser"]().parse_args(
+            ["./data", "--quick-wins", "--dcsync"]
+        )
+        bloodbash_globals["apply_quick_wins_to_args"](ns)
+        self.assertTrue(ns.dcsync)
+        self.assertTrue(ns.privileged_roast)
+
     def test_csv_pack_computer_adminto_computer(self):
         G = nx.MultiDiGraph()
         G.add_node("C1", name="JUMP.LAB.LOCAL", type="Computer", props={}, is_azure=False)
@@ -2332,6 +2377,7 @@ class TestBloodBash(unittest.TestCase):
         self.assertIn("--csv-pack", out)
         self.assertIn("--list-domains", out)
         self.assertIn("--privileged-roast", out)
+        self.assertIn("--quick-wins", out)
         # Plenty of categorized examples
         self.assertIn("Examples — basics", out)
         self.assertIn("Examples — compromise dossier", out)

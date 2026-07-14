@@ -144,6 +144,11 @@ Replace `./sharpout` with your SharpHound/AzureHound directory or zip. Binary us
 # Help (tables + examples)
 python3 BloodBash.py --help
 
+# Quick wins — high-signal day-0 triage (not full --all)
+python3 BloodBash.py ./sharpout --quick-wins
+python3 BloodBash.py ./sharpout --quick-wins --domain CORP.LOCAL
+python3 BloodBash.py ./2024-collection.zip --quick-wins
+
 # Full analysis
 python3 BloodBash.py ./sharpout --all
 python3 BloodBash.py ./sharpout --all --fast
@@ -157,9 +162,23 @@ python3 BloodBash.py ./sharpout --all --domain CORP.LOCAL
 python3 BloodBash.py ./azureout --azure-privileged-roles --domain <tenantId>
 
 # In-repo samples
+python3 BloodBash.py SampleSharphoundADData --quick-wins
 python3 BloodBash.py SampleSharphoundADData --all --fast --all-findings
 python3 BloodBash.py SampleAzurehoundData --azure-privileged-roles --azure-guest-access --all-findings
 ```
+
+### What `--quick-wins` runs
+
+Curated high-signal set (implies `--fast`, verbose summary, full findings table). **Not** a full inventory/Azure dump:
+
+| Area | Modules |
+|------|---------|
+| Privilege | DCSync (unexpected), ADCS, dangerous ACLs, RBCD + can-configure, unconstrained (DC vs non-DC), constrained, shadow creds, LAPS (+ readers) |
+| Credentials | Kerberoast, AS-REP, **privileged roast**, password-in-description, PasswordNotRequired |
+| Ops | Sessions / local admin summary |
+| Paths | Shortest paths to HV, busiest short paths, path-break |
+
+Equivalent profile: `--profile quick-wins` (see `profiles/quick-wins.yaml`).
 
 ### Compromise dossier (newly owned / foothold user)
 
@@ -262,6 +281,7 @@ python3 BloodBash.py ./sharpout --owned alice --owned-inventory
 
 # Built-in YAML profiles (see profiles/)
 python3 BloodBash.py ./sharpout --profile quick
+python3 BloodBash.py ./sharpout --profile quick-wins   # same set as --quick-wins
 python3 BloodBash.py ./sharpout --profile adcs-heavy
 python3 BloodBash.py ./sharpout --profile hygiene
 python3 BloodBash.py ./sharpout --profile ./my-engagement.yaml
@@ -365,6 +385,7 @@ python3 BloodBash.py ./sharpout --profile adcs-heavy --path-break --busiest-path
 | Flag | Purpose |
 |------|---------|
 | `--all` | Run every analysis module |
+| `--quick-wins` | **High-signal day-0 triage only** (DCSync, ADCS, roast, RBCD, LAPS, short paths…; implies `--fast`) |
 | `--fast` | Limit pathfinding to top DA/EA-style targets (not a full skip) |
 | `--domain X` | Filter to one AD domain or Azure `tenantId` |
 | `--list-domains` | List AD domains / Azure tenants in the collection and exit |

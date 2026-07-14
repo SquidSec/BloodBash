@@ -3435,6 +3435,48 @@ def load_analysis_profile(profile_path: str) -> dict:
     return data
 
 
+# High-signal checks for --quick-wins (engagement day-0 triage).
+# Intentionally not --all: skips heavy inventory/Azure dumps and slow deep analysis.
+QUICK_WINS_CHECKS = (
+    "dcsync",
+    "adcs",
+    "dangerous_permissions",
+    "rbcd",
+    "kerberoastable",
+    "as_rep_roastable",
+    "privileged_roast",
+    "unconstrained_delegation",
+    "constrained_delegation",
+    "shadow_credentials",
+    "laps",
+    "password_descriptions",
+    "password_not_required",
+    "sessions",
+    "shortest_paths",
+    "path_break",
+)
+
+
+def apply_quick_wins_to_args(args):
+    """Enable the curated quick-wins check set (does not set --all)."""
+    for key in QUICK_WINS_CHECKS:
+        if hasattr(args, key):
+            setattr(args, key, True)
+    # Fast pathfinding + readable summary by default for this mode
+    if hasattr(args, "fast"):
+        args.fast = True
+    if hasattr(args, "verbose") and not getattr(args, "verbose", False):
+        args.verbose = True
+    if hasattr(args, "all_findings"):
+        args.all_findings = True
+    if hasattr(args, "busiest_paths") and not getattr(args, "busiest_paths", None):
+        args.busiest_paths = "short"
+    if hasattr(args, "all"):
+        # Explicitly avoid pulling every module
+        args.all = False
+    return args
+
+
 def apply_profile_to_args(args, profile: dict):
     """Merge profile keys into argparse namespace (CLI flags win when already set)."""
     if not profile:
@@ -5507,7 +5549,8 @@ HELP_TABLE_SECTIONS = [
         "Run mode",
         [
             ("--all", "Run every analysis module", "recommended for full reviews"),
-            ("--profile FILE|name", "YAML analysis profile", "quick, adcs-heavy, hygiene, or path"),
+            ("--quick-wins", "High-signal day-0 triage checks only", "DCSync, ADCS, roast, RBCD, LAPS, paths…"),
+            ("--profile FILE|name", "YAML analysis profile", "quick, quick-wins, adcs-heavy, hygiene, or path"),
             ("--fast", "Limit heavy pathfinding", "top DA/EA-style targets only"),
             ("--verbose", "Print verbose graph summary", ""),
             ("--debug", "Verbose parse/build logging", "troubleshooting"),
@@ -5619,6 +5662,8 @@ HELP_EXAMPLE_SECTIONS = [
             ("Show this help", "{prog} --help"),
             ("Full analysis (AD + Azure)", "{prog} ./sharpout --all"),
             ("Full analysis, large env (faster paths)", "{prog} ./sharpout --all --fast"),
+            ("Quick wins (high-signal triage)", "{prog} ./sharpout --quick-wins"),
+            ("Quick wins + one domain", "{prog} ./sharpout --quick-wins --domain CORP.LOCAL"),
             ("Default pass (no flags)", "{prog} ./sharpout"),
             ("Quiet-ish: one domain only", "{prog} ./sharpout --all --domain CORP.LOCAL"),
             ("List domains / tenants", "{prog} ./sharpout --list-domains"),
@@ -5844,6 +5889,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--verbose", action="store_true", help="Verbose graph summary")
     parser.add_argument("--all", action="store_true", help="Run every analysis module")
     parser.add_argument(
+        "--quick-wins",
+        action="store_true",
+        help=(
+            "Run high-signal day-0 triage only: unexpected DCSync, ADCS, dangerous ACLs, "
+            "RBCD (+ can configure), privileged roast, unconstrained (non-DC), shadow creds, "
+            "LAPS readers, sessions, short paths + path-break (implies --fast)"
+        ),
+    )
+    parser.add_argument(
         "--all-findings",
         action="store_true",
         help="At end of run, print a table of every finding (always shown, even if empty)",
@@ -5967,6 +6021,19 @@ def main():
             console.print(f"[red]Failed to load profile {args.profile}: {e}[/red]")
             sys.exit(2)
 
+    if getattr(args, "quick_wins", False):
+        if args.all:
+            console.print(
+                "[yellow]--quick-wins ignored because --all was also set "
+                "(running full analysis).[/yellow]"
+            )
+        else:
+            apply_quick_wins_to_args(args)
+            console.print(
+                "[green]Quick wins mode:[/green] high-signal triage checks "
+                f"({len(QUICK_WINS_CHECKS)} modules, --fast)"
+            )
+
     log_path = setup_run_logging(args.log_file)
     if log_path:
         console.print(f"[dim]Run log:[/dim] {log_path}")
@@ -6049,6 +6116,8 @@ def main():
         mode_str = f"Compromise dossier (--from-user {args.from_user})"
     elif args.all:
         mode_str = "Full analysis (AD + Azure) (--all)"
+    elif getattr(args, "quick_wins", False):
+        mode_str = "Quick wins (high-signal triage) (--quick-wins)"
     elif selected_checks:
         mode_str = "Selected checks (including AD and Azure features)"
     else:

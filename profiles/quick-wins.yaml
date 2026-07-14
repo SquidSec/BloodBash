@@ -1,0 +1,30 @@
+# BloodBash built-in profile: engagement quick wins (high-value triage)
+name: quick-wins
+description: >
+  Highest-signal AD checks for day-0 triage — unexpected DCSync, ADCS, dangerous
+  ACLs, RBCD (incl. can-configure), privileged roast, unconstrained non-DC,
+  shadow creds, LAPS readers, sessions, short paths + path-break. Fast pathfinding.
+all: false
+fast: true
+verbose: true
+all_findings: true
+checks:
+  - dcsync
+  - adcs
+  - dangerous-permissions
+  - rbcd
+  - kerberoastable
+  - as-rep-roastable
+  - privileged-roast
+  - unconstrained-delegation
+  - constrained-delegation
+  - shadow-credentials
+  - laps
+  - password-descriptions
+  - password-not-required
+  - sessions
+  - shortest-paths
+  - path-break
+busiest_paths: short
+busiest_paths_top: 5
+path_break_top: 10
