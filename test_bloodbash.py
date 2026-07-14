@@ -59,6 +59,14 @@ class TestBloodBash(unittest.TestCase):
     # ────────────────────────────────────────────────
     # Existing tests (kept 100% unchanged)
     # ────────────────────────────────────────────────
+    def test_adcs_no_objects_soft_message(self):
+        G = nx.MultiDiGraph()
+        G.add_node("U", name="ALICE@LAB.LOCAL", type="User", props={}, is_azure=False)
+        output = self._capture_output(bloodbash_globals["print_adcs_vulnerabilities"], G)
+        clean = self._strip_ansi(output)
+        self.assertIn("No ADCS objects in this collection", clean)
+        self.assertNotIn("No obvious ESC1", clean)
+
     def test_broad_principal_acls_detects_everyone_genericwrite(self):
         G = nx.MultiDiGraph()
         G.add_node("EV", name="EVERYONE@LAB.LOCAL", type="Group", props={}, is_azure=False)
