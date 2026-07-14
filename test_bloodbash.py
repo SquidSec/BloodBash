@@ -131,6 +131,46 @@ class TestBloodBash(unittest.TestCase):
         self.assertTrue(bloodbash_globals["is_expected_dcsync_principal"](G, "U"))
         self.assertFalse(bloodbash_globals["is_expected_dcsync_principal"](G, "X"))
 
+    def test_system_administrators_not_expected_dcsync_or_default_priv(self):
+        """'SYSTEM ADMINISTRATORS@…' must not match Builtin Administrators needles."""
+        self.assertFalse(
+            bloodbash_globals["_is_default_high_priv_name"](
+                "SYSTEM ADMINISTRATORS@LAB.LOCAL"
+            )
+        )
+        self.assertTrue(
+            bloodbash_globals["_is_default_high_priv_name"]("ADMINISTRATORS@LAB.LOCAL")
+        )
+        self.assertTrue(
+            bloodbash_globals["_is_default_high_priv_name"]("DOMAIN ADMINS@LAB.LOCAL")
+        )
+        G = nx.MultiDiGraph()
+        G.add_node(
+            "SA",
+            name="SYSTEM ADMINISTRATORS@LAB.LOCAL",
+            type="Group",
+            props={},
+            is_azure=False,
+        )
+        G.add_node(
+            "HD",
+            name="HELPDESK@LAB.LOCAL",
+            type="Group",
+            props={},
+            is_azure=False,
+        )
+        G.add_node(
+            "BA",
+            name="ADMINISTRATORS@LAB.LOCAL",
+            type="Group",
+            props={},
+            is_azure=False,
+        )
+        G.add_edge("HD", "SA", label="MemberOf")
+        self.assertFalse(bloodbash_globals["is_expected_dcsync_principal"](G, "SA"))
+        self.assertFalse(bloodbash_globals["is_expected_dcsync_principal"](G, "HD"))
+        self.assertTrue(bloodbash_globals["is_expected_dcsync_principal"](G, "BA"))
+
     def test_is_domain_controller_via_group(self):
         G = nx.MultiDiGraph()
         G.add_node(

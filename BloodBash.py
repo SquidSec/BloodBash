@@ -1629,23 +1629,71 @@ def _prop_raw_ci(props, keys, default=None):
                 return props[p_key]
     return default
 
+def _principal_sam(name: str) -> str:
+    """SAM / short account name from UPN, DOMAIN\\user, or plain name."""
+    if not name:
+        return ""
+    nl = str(name).lower().strip()
+    return nl.split("@")[0].split("\\")[-1].strip()
+
+
+def _is_builtin_administrators_name(name: str) -> bool:
+    """True only for Builtin Administrators — not 'System Administrators' etc."""
+    if not name:
+        return False
+    nl = str(name).lower().strip()
+    sam = _principal_sam(name)
+    if sam == "administrators":
+        return True
+    if nl.startswith("administrators@"):
+        return True
+    if "builtin\\administrators" in nl or nl.endswith("\\administrators"):
+        return True
+    return False
+
+
 def _is_default_high_priv_name(name):
     """Built-in / expected high-privilege principals (noise filters)."""
     if not name:
         return False
     nl = str(name).lower()
-    needles = (
-        'domain admins', 'enterprise admins', 'schema admins',
-        'administrators@', 'builtin\\administrators', 'nt authority',
-        'enterprise domain controllers', 'domain controllers@',
-        'enterprise key admins', 'key admins@',
-        'account operators', 'backup operators', 'print operators',
-        'server operators', 'krbtgt@',
-    )
-    if any(n in nl for n in needles):
+    sam = _principal_sam(name)
+    if _is_builtin_administrators_name(name):
         return True
-    # RID-style well-known admin groups often appear as short names
-    if nl in ('administrators', 'domain admins', 'enterprise admins'):
+    # Phrase matches (safe as multi-word / anchored SAM)
+    phrase_needles = (
+        "domain admins",
+        "enterprise admins",
+        "schema admins",
+        "nt authority",
+        "enterprise domain controllers",
+        "enterprise key admins",
+        "account operators",
+        "backup operators",
+        "print operators",
+        "server operators",
+    )
+    if any(n in nl for n in phrase_needles):
+        return True
+    # SAM / UPN-prefix matches (avoid 'administrators@' substring trap)
+    if sam in (
+        "domain admins",
+        "enterprise admins",
+        "schema admins",
+        "domain controllers",
+        "enterprise domain controllers",
+        "enterprise key admins",
+        "key admins",
+        "krbtgt",
+        "account operators",
+        "backup operators",
+        "print operators",
+        "server operators",
+    ):
+        return True
+    if nl.startswith("domain controllers@") or nl.startswith("key admins@"):
+        return True
+    if nl.startswith("krbtgt@"):
         return True
     return False
 
@@ -2758,18 +2806,41 @@ def print_gpo_abuse(G, domain_filter=None):
     else:
         console.print("[green]No dangerous GPO rights found[/green]")
 
-# Principals that normally hold DCSync (name match + nested membership).
+# Multi-word / unambiguous DCSync holder phrases (substring-safe).
 EXPECTED_DCSYNC_NAME_NEEDLES = (
     "domain admins",
     "enterprise admins",
     "schema admins",
-    "administrators@",
-    "builtin\\administrators",
-    "domain controllers",
     "enterprise domain controllers",
     "enterprise read-only domain controllers",
     "read-only domain controllers",
 )
+
+
+def _is_expected_dcsync_name(name: str) -> bool:
+    """True if display name is a built-in DCSync holder (not 'System Administrators')."""
+    if not name:
+        return False
+    nl = str(name).lower().strip()
+    sam = _principal_sam(name)
+    if _is_builtin_administrators_name(name):
+        return True
+    if any(k in nl for k in EXPECTED_DCSYNC_NAME_NEEDLES):
+        return True
+    if sam in (
+        "domain admins",
+        "enterprise admins",
+        "schema admins",
+        "domain controllers",
+        "enterprise domain controllers",
+        "enterprise read-only domain controllers",
+        "read-only domain controllers",
+        "administrators",
+    ):
+        return True
+    if nl.startswith("domain controllers@"):
+        return True
+    return False
 
 
 def is_expected_dcsync_principal(G, oid: str, max_depth: int = 25) -> bool:
@@ -2778,10 +2849,7 @@ def is_expected_dcsync_principal(G, oid: str, max_depth: int = 25) -> bool:
         return False
     nd = G.nodes[oid]
     name = nd.get("name") or ""
-    nl = name.lower()
-    if any(k in nl for k in EXPECTED_DCSYNC_NAME_NEEDLES):
-        return True
-    if nl in ("administrators", "domain admins", "enterprise admins"):
+    if _is_expected_dcsync_name(name):
         return True
     # Nested MemberOf into an expected group
     seen = set()
@@ -2796,8 +2864,8 @@ def is_expected_dcsync_principal(G, oid: str, max_depth: int = 25) -> bool:
             if label not in ("memberof", "member_of", "member"):
                 continue
             dnd = G.nodes.get(dst) or {}
-            dname = (dnd.get("name") or "").lower()
-            if any(k in dname for k in EXPECTED_DCSYNC_NAME_NEEDLES):
+            dname = dnd.get("name") or ""
+            if _is_expected_dcsync_name(dname):
                 return True
             if depth + 1 <= max_depth:
                 stack.append((dst, depth + 1))
