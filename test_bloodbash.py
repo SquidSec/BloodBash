@@ -1567,7 +1567,7 @@ class TestBloodBash(unittest.TestCase):
     def test_azure_guest_access(self):
         G = self._load_and_build_graph(AZURE_TEST_DIR)
         output = self._capture_output(bloodbash_globals['print_azure_guest_access'], G)
-        self._assert_output_contains(output, "Azure guest user", "Has role")
+        self._assert_output_contains(output, "Azure guest", "HasRole")
         self.assertTrue(any("Azure Guest Access" in f[1] for f in bloodbash_globals['global_findings']))
     def test_azure_service_principal_abuse(self):
         G = self._load_and_build_graph(AZURE_TEST_DIR)

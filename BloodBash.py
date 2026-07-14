@@ -1398,6 +1398,23 @@ def get_bool_prop_ci(props, keys, default=False):
                 return bool(val)
     return default
 
+
+def _account_is_enabled(props, default=True) -> bool:
+    """Resolve enabled state from explicit bool and/or UAC ACCOUNTDISABLE (0x2)."""
+    if not isinstance(props, dict):
+        return default
+    raw_enabled = _prop_raw_ci(props, ['enabled', 'Enabled'])
+    if raw_enabled is not None:
+        return get_bool_prop_ci(props, ['enabled', 'Enabled'], default=default)
+    uac_raw = _prop_raw_ci(props, ['useraccountcontrol', 'UserAccountControl'])
+    try:
+        if uac_raw is not None and int(uac_raw) & 0x2:
+            return False
+    except (TypeError, ValueError):
+        pass
+    return default
+
+
 def _prop_raw_ci(props, keys, default=None):
     """Case-insensitive property lookup returning the raw value."""
     if not isinstance(props, dict):
@@ -1430,15 +1447,19 @@ def _is_default_high_priv_name(name):
 
 def get_high_value_targets(G, domain_filter=None):
     # Prefer full group/role phrases; avoid bare "dc" which matches CDC-FILESERVER etc.
+    # Do not treat every Certificate Template as HV (was: 'ca' in typ).
     ad_keywords = [
         'domain admins', 'enterprise admins', 'schema admins', 'administrators',
         'krbtgt', 'domain controllers', 'dnsadmins', 'enterprise key admins',
-        'certificate template', 'enterprise ca', 'root ca', 'ntauth store', 'ntauth',
+        'enterprise ca', 'root ca', 'ntauth store', 'ntauth',
     ]
     azure_keywords = [
         'global admin', 'user admin', 'application admin', 'exchange admin', 'sharepoint admin',
         'azure ad join', 'intune admin', 'security admin', 'conditional access admin', 'privileged role admin'
     ]
+    ca_types = {
+        'enterprise ca', 'root ca', 'aia ca', 'ntauth store', 'nt auth store',
+    }
     targets = []
     for n, d in G.nodes(data=True):
         if not _domain_matches(d, domain_filter):
@@ -1452,30 +1473,37 @@ def get_high_value_targets(G, domain_filter=None):
             targets.append((n, d['name'], d['type']))
             continue
         keywords = azure_keywords if is_azure else ad_keywords
-        if any(k in name for k in keywords) or ('ca' in typ and not is_azure) or ('role' in typ and is_azure):
+        is_ca_type = (not is_azure) and (typ in ca_types or typ.endswith(' ca'))
+        is_azure_role = is_azure and 'role' in typ
+        if any(k in name for k in keywords) or is_ca_type or is_azure_role:
             targets.append((n, d['name'], d['type']))
     return sorted(targets, key=lambda x: x[1])
 def format_path(G, path):
     if not path or len(path) < 1:
         return "[dim]Invalid path[/dim]"
     if len(path) == 1:
-        return f"[bold cyan]{G.nodes[path[0]]['name']}[/bold cyan] (self)"
+        return f"[bold cyan]{G.nodes[path[0]].get('name', path[0])}[/bold cyan] (self)"
     parts = []
     for i in range(len(path)-1):
         u, v = path[i], path[i+1]
         edges = G.get_edge_data(u, v)
         label = next(iter(edges.values()))['label'] if edges else '???'
-        parts.append(f"[bold cyan]{G.nodes[u]['name']}[/bold cyan] --[[yellow]{label}[/yellow]]-->")
-    parts.append(f"[bold red]{G.nodes[path[-1]]['name']}[/bold red]")
+        uname = G.nodes[u].get('name', u) if u in G.nodes else u
+        parts.append(f"[bold cyan]{uname}[/bold cyan] --[[yellow]{label}[/yellow]]-->")
+    last = path[-1]
+    lname = G.nodes[last].get('name', last) if last in G.nodes else last
+    parts.append(f"[bold red]{lname}[/bold red]")
     return " ".join(parts)
 def get_indirect_paths(G, source, target, max_depth=5):
     paths = []
+    if source not in G or target not in G:
+        return []
     try:
         for path in nx.all_simple_paths(G, source, target, cutoff=max_depth):
             if len(path) > 2:
                 paths.append(path)
         return paths[:5]
-    except nx.NetworkXNoPath:
+    except (nx.NetworkXNoPath, nx.NodeNotFound, nx.NetworkXError):
         return []
 # ────────────────────────────────────────────────
 # All analysis functions (unchanged except where noted)
@@ -1528,7 +1556,7 @@ def print_password_never_expires(G, domain_filter=None):
                 password_never_expires = bool(int(uac_raw) & 0x10000)
             except (TypeError, ValueError):
                 pass
-        if password_never_expires:
+        if password_never_expires and _account_is_enabled(props):
             found = True
             hits += 1
             uac_raw = _prop_raw_ci(props, ['useraccountcontrol', 'UserAccountControl'])
@@ -1564,7 +1592,7 @@ def print_password_not_required(G, domain_filter=None):
                 password_not_required = bool(int(uac_raw) & 0x20)
             except (TypeError, ValueError):
                 pass
-        if password_not_required:
+        if password_not_required and _account_is_enabled(props):
             found = True
             uac_raw = _prop_raw_ci(props, ['useraccountcontrol', 'UserAccountControl'])
             uac_str = f" | UAC: {decode_uac(uac_raw)}" if uac_raw is not None else ""
@@ -1803,28 +1831,59 @@ def print_constrained_delegation(G, domain_filter=None):
             continue
         if not _domain_matches(d, domain_filter):
             continue
-        if d['type'].lower() == 'computer':
-            props = d.get('props') or {}
-            # SharpHound CE: trustedtoauth, allowedtodelegate (and top-level AllowedToDelegate)
-            trusted_to_auth = get_bool_prop_ci(
-                props,
-                ['trustedtoauthfordelegation', 'TrustedToAuthForDelegation', 'trustedtoauth'],
+        typ = str(d.get('type', '')).lower()
+        if typ not in ('computer', 'user'):
+            continue
+        props = dict(d.get('props') or {})
+        # Top-level SharpHound AllowedToDelegate may not be under Properties
+        for key in (
+            'AllowedToDelegate', 'allowedtodelegate', 'allowedtodelegateto',
+            'msds-allowedtodelegateto', 'TrustedToAuthForDelegation', 'trustedtoauth',
+        ):
+            if key in d and key not in props:
+                props[key] = d[key]
+        trusted_to_auth = get_bool_prop_ci(
+            props,
+            [
+                'trustedtoauthfordelegation',
+                'TrustedToAuthForDelegation',
+                'trustedtoauth',
+            ],
+        )
+        if not trusted_to_auth:
+            uac_raw = _prop_raw_ci(props, ['useraccountcontrol', 'UserAccountControl'])
+            try:
+                # TRUSTED_TO_AUTH_FOR_DELEGATION
+                trusted_to_auth = bool(int(uac_raw) & 0x1000000)
+            except (TypeError, ValueError):
+                pass
+        allowed_to_delegate_to = (
+            props.get('msds-allowedtodelegateto')
+            or props.get('allowedtodelegateto')
+            or props.get('allowedtodelegate')
+            or props.get('AllowedToDelegate')
+            or []
+        )
+        if not isinstance(allowed_to_delegate_to, list):
+            allowed_to_delegate_to = [allowed_to_delegate_to] if allowed_to_delegate_to else []
+        if not trusted_to_auth and not allowed_to_delegate_to:
+            continue
+        found = True
+        kind = "User" if typ == "user" else "Computer"
+        console.print(
+            f"[yellow]Constrained Delegation enabled[/yellow]: "
+            f"[bold cyan]{d['name']}[/bold cyan] ({kind})"
+        )
+        if allowed_to_delegate_to:
+            console.print(
+                f"  → Allowed to delegate to: {', '.join(str(x) for x in allowed_to_delegate_to)}"
             )
-            allowed_to_delegate_to = (
-                props.get('msds-allowedtodelegateto')
-                or props.get('allowedtodelegateto')
-                or props.get('allowedtodelegate')
-                or props.get('AllowedToDelegate')
-                or []
-            )
-            if not isinstance(allowed_to_delegate_to, list):
-                allowed_to_delegate_to = [allowed_to_delegate_to] if allowed_to_delegate_to else []
-            if trusted_to_auth or allowed_to_delegate_to:
-                found = True
-                console.print(f"[yellow]Constrained Delegation enabled[/yellow]: [bold cyan]{d['name']}[/bold cyan]")
-                if allowed_to_delegate_to:
-                    console.print(f"  → Allowed to delegate to: {', '.join(allowed_to_delegate_to)}")
-                add_finding("Constrained Delegation", f"Computer {d['name']} has Constrained Delegation")
+        if trusted_to_auth:
+            console.print("  → Protocol transition (TRUSTED_TO_AUTH_FOR_DELEGATION) enabled")
+        add_finding(
+            "Constrained Delegation",
+            f"{kind} {d['name']} has Constrained Delegation",
+        )
     if found:
         print_abuse_panel("Constrained Delegation")
     else:
@@ -2127,6 +2186,11 @@ def print_adcs_vulnerabilities(G, domain_filter=None):
         return str(raw)
 
     def _has_no_security_extension(props):
+        if get_bool_prop_ci(
+            props,
+            ['nosecurityextension', 'NoSecurityExtension', 'no_security_extension'],
+        ):
+            return True
         text = _enrollment_flag_text(props).upper()
         if 'NO_SECURITY_EXTENSION' in text or 'NOSECURITYEXTENSION' in text.replace('_', ''):
             return True
@@ -2216,7 +2280,8 @@ def print_adcs_vulnerabilities(G, domain_filter=None):
             or EKU_SMART_CARD in eku_set
             or EKU_ANY_PURPOSE in eku_set
         )
-        has_any_purpose = EKU_ANY_PURPOSE in eku_set or len(eku_set) == 0
+        # Empty EKU set is missing collection, not "Any Purpose"
+        has_any_purpose = EKU_ANY_PURPOSE in eku_set
         has_cert_request_agent = EKU_CERT_REQUEST_AGENT in eku_set
         dangerous_on_object = {r for r in rights if r in DANGEROUS_TEMPLATE_RIGHTS}
         no_sec_ext = _has_no_security_extension(props)
@@ -2249,6 +2314,7 @@ def print_adcs_vulnerabilities(G, domain_filter=None):
                 console.print(f"  → [green]{uname}[/green] --[{lab}]-->")
 
         # ── ESC1: ESS + client auth path + enroll + no manager approval ──
+        # Empty EKU with ESS still treated as auth-capable (common incomplete export).
         if obj_type == 'certificate template' and can_enroll and enrollee_supplies and no_approval:
             if has_client_auth or not eku_set:
                 found = True
@@ -2259,7 +2325,7 @@ def print_adcs_vulnerabilities(G, domain_filter=None):
                 _print_enrollers()
                 add_finding("ESC1-ESC8", f"ESC1 on {name}")
 
-        # ── ESC2: Any Purpose / no EKU + enroll + no approval (without ESS) ──
+        # ── ESC2: Any Purpose EKU + enroll + no approval (without ESS) ──
         if (
             obj_type == 'certificate template'
             and can_enroll
@@ -2271,17 +2337,22 @@ def print_adcs_vulnerabilities(G, domain_filter=None):
             found = True
             console.print(
                 f"[red]ESC2[/red]: [bold cyan]{name}[/bold cyan] "
-                f"(Enroll + Any Purpose/no EKU + no manager approval)"
+                f"(Enroll + Any Purpose EKU + no manager approval)"
             )
             _print_enrollers()
             add_finding("ESC1-ESC8", f"ESC2 on {name}")
 
-        # ── ESC3: Enrollment Agent (Certificate Request Agent EKU) ──
-        if obj_type == 'certificate template' and has_cert_request_agent:
+        # ── ESC3: Enrollment Agent (CRA EKU) with enroll + no manager approval ──
+        if (
+            obj_type == 'certificate template'
+            and has_cert_request_agent
+            and can_enroll
+            and no_approval
+        ):
             found = True
             console.print(
                 f"[red]ESC3[/red]: [bold cyan]{name}[/bold cyan] "
-                f"(Certificate Request Agent / Enrollment Agent EKU)"
+                f"(Certificate Request Agent / Enrollment Agent EKU + Enroll)"
             )
             _print_enrollers()
             add_finding("ESC1-ESC8", f"ESC3 on {name}")
@@ -2444,7 +2515,9 @@ def print_adcs_vulnerabilities(G, domain_filter=None):
 def print_gpo_abuse(G, domain_filter=None):
     console.rule("[bold magenta]GPO Abuse Risks (AD)[/bold magenta]")
     found = False
-    high_value_keywords = ['domain controllers', 'domain admins', 'enterprise admins', 'administrators', 'dc']
+    high_value_keywords = [
+        'domain controllers', 'domain admins', 'enterprise admins', 'administrators',
+    ]
     for n, d in G.nodes(data=True):
         if d.get('is_azure', False):
             continue
@@ -2571,6 +2644,17 @@ def print_dcsync_rights(G, domain_filter=None):
             has_gc = bool(labels & get_changes_labels)
             has_gca = bool(labels & get_changes_all_labels)
             has_filtered = bool(labels & filtered_set_labels)
+            # SharpHound often emits AllExtendedRights / GenericAll on the domain
+            # instead of the pair of replication rights; both imply full DCSync.
+            full_control = bool(labels & {
+                'allextendedrights',
+                'all extended rights',
+                'genericall',
+                'owns',
+            })
+            if full_control:
+                has_gc = True
+                has_gca = True
             if has_gc and has_gca:
                 found = True
                 if is_expected_dcsync_principal(G, u):
@@ -2934,11 +3018,7 @@ def print_kerberoastable(G, domain_filter=None):
         hasspn = _user_has_spn(props)
         # Case-insensitive booleans (SharpHound CE uses lowercase keys)
         sensitive = get_bool_prop_ci(props, ['sensitive', 'Sensitive'], default=False)
-        # Default enabled=True when attribute missing (matches BloodHound semantics)
-        if _prop_raw_ci(props, ['enabled', 'Enabled']) is None:
-            enabled = True
-        else:
-            enabled = get_bool_prop_ci(props, ['enabled', 'Enabled'], default=True)
+        enabled = _account_is_enabled(props, default=True)
         # krbtgt always has an SPN but is not a practical Kerberoast target here
         name = d.get('name') or ''
         if name.upper().startswith('KRBTGT@') or name.upper() == 'KRBTGT':
@@ -2973,12 +3053,18 @@ def print_as_rep_roastable(G, domain_filter=None):
         if str(d.get('type', '')).lower() != 'user':
             continue
         props = d.get('props') or {}
-        dontreqpreauth = get_bool_prop_ci(props, ['dontreqpreauth', 'dontReqPreauth', 'dont_req_preauth'])
+        dontreqpreauth = get_bool_prop_ci(
+            props, ['dontreqpreauth', 'dontReqPreauth', 'dont_req_preauth']
+        )
+        if not dontreqpreauth:
+            uac_raw = _prop_raw_ci(props, ['useraccountcontrol', 'UserAccountControl'])
+            try:
+                # DONT_REQ_PREAUTH
+                dontreqpreauth = bool(int(uac_raw) & 0x400000)
+            except (TypeError, ValueError):
+                pass
         sensitive = get_bool_prop_ci(props, ['sensitive', 'Sensitive'], default=False)
-        if _prop_raw_ci(props, ['enabled', 'Enabled']) is None:
-            enabled = True
-        else:
-            enabled = get_bool_prop_ci(props, ['enabled', 'Enabled'], default=True)
+        enabled = _account_is_enabled(props, default=True)
         if dontreqpreauth and not sensitive and enabled:
             hits.append(d)
     for i, d in enumerate(hits):
@@ -3552,18 +3638,26 @@ def print_azure_privileged_roles(G, domain_filter=None):
             continue
         if d['type'].lower() == 'azure role':
             role_name = d['name'].lower()
-            if any(pr in role_name for pr in privileged_roles):
-                found = True
-                console.print(f"[red]Privileged Azure role[/red]: [bold cyan]{d['name']}[/bold cyan]")
-                incoming = list(G.in_edges(n, data=True))
-                for u, _, edata in incoming:
-                    if edata.get('label') == 'HasRole':
-                        console.print(f"  → [green]{G.nodes[u]['name']}[/green] has this role")
-                add_finding("Azure Privileged Roles", f"Privileged role: {d['name']}")
+            if not any(pr in role_name for pr in privileged_roles):
+                continue
+            holders = [
+                u for u, _, edata in G.in_edges(n, data=True)
+                if (edata.get('label') or '').lower() in ('hasrole', 'member', 'memberof')
+            ]
+            if not holders:
+                continue
+            found = True
+            console.print(f"[red]Privileged Azure role[/red]: [bold cyan]{d['name']}[/bold cyan]")
+            for u in holders:
+                console.print(f"  → [green]{G.nodes[u]['name']}[/green] has this role")
+            add_finding(
+                "Azure Privileged Roles",
+                f"Privileged role assigned: {d['name']} ({len(holders)} holder(s))",
+            )
     if found:
         print_abuse_panel("Azure Privileged Roles")
     else:
-        console.print("[green]No privileged Azure roles detected[/green]")
+        console.print("[green]No privileged Azure role assignments detected[/green]")
 def print_azure_app_secrets(G, domain_filter=None):
     console.rule("[bold magenta]Azure Application Secrets/Certificates Exposure[/bold magenta]")
     found = False
@@ -3659,23 +3753,42 @@ def print_azure_mfa_bypass(G, domain_filter=None):
 def print_azure_guest_access(G, domain_filter=None):
     console.rule("[bold magenta]Azure Guest User Access Risks[/bold magenta]")
     found = False
+    elev_labels = {
+        'hasrole', 'owns', 'genericall', 'genericwrite', 'writedacl', 'writeowner',
+        'addsecret', 'addcertificate', 'addowner', 'addmembers', 'resetpassword',
+    }
     for n, d in G.nodes(data=True):
         if not d.get('is_azure', False):
             continue
         if not _domain_matches(d, domain_filter):
             continue
         if d['type'].lower() == 'azure user':
-            props = d.get('props', {})
-            user_type = props.get('userType', '').lower()
-            if user_type == 'guest':
-                found = True
-                console.print(f"[yellow]Azure guest user[/yellow]: [green]{d['name']}[/green]")
-                outgoing = list(G.out_edges(n, data=True))
-                for _, v, edata in outgoing:
-                    if edata.get('label') == 'HasRole':
-                        role_name = G.nodes[v]['name']
-                        console.print(f"  → Has role: [cyan]{role_name}[/cyan]")
-                add_finding("Azure Guest Access", f"Guest user: {d['name']}")
+            props = d.get('props', {}) or {}
+            user_type = str(
+                props.get('userType') or props.get('usertype') or props.get('UserType') or ''
+            ).lower()
+            if user_type != 'guest':
+                continue
+            elev = [
+                (v, edata.get('label'))
+                for _, v, edata in G.out_edges(n, data=True)
+                if (edata.get('label') or '').lower() in elev_labels
+            ]
+            if not elev:
+                continue
+            found = True
+            console.print(
+                f"[yellow]Azure guest with elevated access[/yellow]: "
+                f"[green]{d['name']}[/green]"
+            )
+            for v, lab in elev:
+                console.print(
+                    f"  → --[{lab}]--> [cyan]{G.nodes[v].get('name', v)}[/cyan]"
+                )
+            add_finding(
+                "Azure Guest Access",
+                f"Guest user with elevated access: {d['name']}",
+            )
     if found:
         print_abuse_panel("Azure Guest Access")
     else:
