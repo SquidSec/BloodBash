@@ -469,6 +469,41 @@ class TestBloodBash(unittest.TestCase):
         self.assertEqual(len(rbcd), 1)
         self.assertIn("5 computer", rbcd[0][2])
 
+    def test_resolve_principal_display_name_prefers_props(self):
+        G = nx.MultiDiGraph()
+        sid = "S-1-5-21-1-2-3-1100"
+        G.add_node(
+            sid,
+            name=sid,
+            type="User",
+            props={"name": "HELP@LAB.LOCAL", "samaccountname": "help"},
+            is_azure=False,
+        )
+        self.assertEqual(
+            bloodbash_globals["resolve_principal_display_name"](G, sid),
+            "HELP@LAB.LOCAL",
+        )
+
+    def test_rbcd_filter_uses_admin_not_dcsync_dc_groups(self):
+        """Nested only into Domain Controllers must not be treated as expected admin."""
+        G = nx.MultiDiGraph()
+        G.add_node("T", name="PC$.LAB.LOCAL", type="Computer", props={}, is_azure=False)
+        G.add_node("U", name="SVC@LAB.LOCAL", type="User", props={}, is_azure=False)
+        G.add_node(
+            "DCG",
+            name="DOMAIN CONTROLLERS@LAB.LOCAL",
+            type="Group",
+            props={},
+            is_azure=False,
+        )
+        G.add_edge("U", "DCG", label="MemberOf")
+        G.add_edge("U", "T", label="GenericWrite")
+        # DCSync expected yes for DCG membership, admin-expected no
+        self.assertTrue(bloodbash_globals["is_expected_dcsync_principal"](G, "U"))
+        self.assertFalse(bloodbash_globals["is_expected_admin_principal"](G, "U"))
+        rows = bloodbash_globals["collect_can_configure_rbcd"](G)
+        self.assertTrue(any(r["principal"] == "SVC@LAB.LOCAL" for r in rows))
+
     def test_can_configure_rbcd_keeps_best_right_per_pair(self):
         """Owns + WAR + AllExtendedRights on same host → one row (strongest)."""
         G = nx.MultiDiGraph()
