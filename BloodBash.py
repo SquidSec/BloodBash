@@ -3938,7 +3938,11 @@ def apply_profile_to_args(args, profile: dict):
         for raw in checks:
             key = str(raw).strip().lstrip("-").replace("-", "_")
             if key in check_flags and not getattr(args, key, False):
-                setattr(args, key, True)
+                # busiest_paths is a mode string, not a bare boolean
+                if key == "busiest_paths":
+                    setattr(args, key, "short")
+                else:
+                    setattr(args, key, True)
     for key in check_flags:
         if key in profile and not getattr(args, key, False):
             setattr(args, key, profile[key])
@@ -3991,7 +3995,10 @@ def apply_profile_to_args(args, profile: dict):
 
 
 def parse_ad_timestamp(value) -> Optional[float]:
-    """Parse SharpHound pwdlastset/lastlogon values (unix seconds or Windows FILETIME)."""
+    """Parse SharpHound pwdlastset/lastlogon values.
+
+    Supports unix seconds, unix milliseconds, and Windows FILETIME (100ns since 1601).
+    """
     if value is None:
         return None
     try:
@@ -4000,9 +4007,11 @@ def parse_ad_timestamp(value) -> Optional[float]:
         return None
     if v in (0, -1):
         return None
-    # Windows FILETIME (100ns since 1601) is typically >> unix seconds
-    if v > 10_000_000_000:
+    # FILETIME is ~1e17 for modern dates; unix ms is ~1e12; unix seconds ~1e9
+    if v >= 10_000_000_000_000:  # >= 1e13 → FILETIME (100-ns ticks)
         return (v / 10_000_000.0) - 11644473600.0
+    if v >= 100_000_000_000:  # >= 1e11 → unix milliseconds
+        return v / 1000.0
     return float(v)
 
 
@@ -4130,6 +4139,10 @@ def collect_busiest_paths(
     Rank intermediate principals by how many shortest (or all) paths to high-value
     targets pass through them (PlumHound/BlueHound-style busiest-path analysis).
     """
+    if mode is True or not isinstance(mode, str) or mode.lower() not in ("short", "all"):
+        mode = "short"
+    else:
+        mode = mode.lower()
     max_sources = 80 if fast else 200
     max_targets = 2 if fast else 3
     paths = collect_paths_to_high_value(
@@ -4198,29 +4211,35 @@ def collect_path_breaks(
         max_sources=60 if fast else 150,
         cutoff=8 if fast else 10,
     )
-    edge_paths = defaultdict(set)  # edge_key -> set of source ids broken
+    edge_paths = defaultdict(set)  # edge_key -> set of path instance ids
     edge_examples = {}
     for p in paths:
+        path_id = (
+            p.get("source_id"),
+            p.get("target_id"),
+            tuple(p.get("path") or ()),
+        )
         for u, v, label in _path_edge_keys(G, p["path"]):
             key = (u, v, label)
-            edge_paths[key].add(p["source_id"])
+            edge_paths[key].add(path_id)
             if key not in edge_examples:
                 edge_examples[key] = p
     ranked = []
-    for (u, v, label), sources in sorted(edge_paths.items(), key=lambda kv: len(kv[1]), reverse=True):
+    for (u, v, label), path_ids in sorted(edge_paths.items(), key=lambda kv: len(kv[1]), reverse=True):
         example = edge_examples[(u, v, label)]
+        broken = len(path_ids)
         ranked.append({
             "from_id": u,
             "to_id": v,
             "from": G.nodes[u]["name"],
             "to": G.nodes[v]["name"],
             "relationship": label,
-            "paths_broken": len(sources),
+            "paths_broken": broken,
             "example_source": example["source"],
             "example_target": example["target"],
             "recommendation": (
                 f"Remove relationship {label} between {G.nodes[u]['name']} and "
-                f"{G.nodes[v]['name']} (breaks {len(sources)} path(s) toward high-value)"
+                f"{G.nodes[v]['name']} (breaks {broken} path(s) toward high-value)"
             ),
         })
         if len(ranked) >= top:
@@ -5034,10 +5053,10 @@ def export_compromise_dossier(dossier: dict, export_dir: str) -> List[str]:
             t = r.get("target") or ""
             if not t or t in seen_hosts:
                 continue
-            if str(r.get("target_type") or "").lower() not in ("computer", "?", ""):
-                # still include if name looks like a host
-                if "$" not in t and "." not in t and not t.upper().endswith("$"):
-                    pass
+            ttype = str(r.get("target_type") or "").lower()
+            looks_like_host = ("$" in t or "." in t or t.upper().endswith("$"))
+            if ttype not in ("computer", "?", "") and not looks_like_host:
+                continue
             seen_hosts.add(t)
             admin_hosts.append({
                 "host": t,
@@ -5128,12 +5147,19 @@ def run_compromise_dossiers(
         print_compromise_dossier(dossier)
         if export_dir is not None:
             # Per-principal subdir when multiple names or explicit export root
-            safe = re.sub(r"[^A-Za-z0-9._@-]+", "_", dossier.get("name") or name)
+            safe = re.sub(r"[^A-Za-z0-9._@-]+", "_", dossier.get("name") or name).strip("._")
+            if not safe or safe in (".", "..") or ".." in safe:
+                safe = "principal"
+            root = os.path.abspath(export_dir or "compromise-dossiers")
             if len(names) == 1 and export_dir:
-                out = export_dir
+                out = root
             else:
-                out = os.path.join(export_dir or "compromise-dossiers", safe)
-            export_compromise_dossier(dossier, out)
+                out = os.path.join(root, safe)
+            # Ensure we never write outside the export root
+            out_abs = os.path.abspath(out)
+            if os.path.commonpath([root, out_abs]) != root:
+                out_abs = os.path.join(root, "principal")
+            export_compromise_dossier(dossier, out_abs)
         dossiers.append(dossier)
     return dossiers
 
@@ -6454,6 +6480,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def main():
     parser = build_arg_parser()
     args = parser.parse_args()
+    global_findings.clear()
 
     if args.profile:
         try:
@@ -6664,7 +6691,7 @@ def main():
         console.print("[yellow]--owned-inventory requires --owned[/yellow]")
 
     busiest_mode = args.busiest_paths if args.busiest_paths else ("short" if run_all else None)
-    if busiest_mode is True:
+    if busiest_mode is True or (isinstance(busiest_mode, str) and busiest_mode.lower() not in ("short", "all")):
         busiest_mode = "short"
     if busiest_mode:
         print_busiest_paths(
