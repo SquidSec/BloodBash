@@ -1199,6 +1199,102 @@ class TestBloodBash(unittest.TestCase):
             "Computer",
             "LocalAdmin right",
         )
+
+    def test_collect_domain_stats_percentages(self):
+        now = 1_700_000_000.0
+        G = nx.MultiDiGraph()
+        G.add_node(
+            "DA",
+            name="DOMAIN ADMINS@LAB.LOCAL",
+            type="Group",
+            props={"domain": "LAB.LOCAL"},
+            is_azure=False,
+        )
+        G.add_node(
+            "U1",
+            name="ADMIN@LAB.LOCAL",
+            type="User",
+            props={
+                "domain": "LAB.LOCAL",
+                "enabled": True,
+                "hasspn": True,
+                "pwdlastset": int(now - 400 * 86400),
+                "lastlogontimestamp": int(now - 200 * 86400),
+            },
+            is_azure=False,
+        )
+        G.add_node(
+            "U2",
+            name="USER@LAB.LOCAL",
+            type="User",
+            props={
+                "domain": "LAB.LOCAL",
+                "enabled": True,
+                "dontreqpreauth": True,
+                "pwdlastset": int(now - 10 * 86400),
+                "lastlogontimestamp": int(now - 5 * 86400),
+            },
+            is_azure=False,
+        )
+        G.add_node(
+            "U3",
+            name="DISABLED@LAB.LOCAL",
+            type="User",
+            props={"domain": "LAB.LOCAL", "enabled": False},
+            is_azure=False,
+        )
+        G.add_node(
+            "C1",
+            name="PC1.LAB.LOCAL",
+            type="Computer",
+            props={"domain": "LAB.LOCAL", "haslaps": True},
+            is_azure=False,
+        )
+        G.add_node(
+            "C2",
+            name="PC2.LAB.LOCAL",
+            type="Computer",
+            props={"domain": "LAB.LOCAL", "haslaps": False},
+            is_azure=False,
+        )
+        G.add_edge("U1", "DA", label="MemberOf")
+        stats = bloodbash_globals["collect_domain_stats"](G, now=now)
+        self.assertEqual(stats["all_users"], 3)
+        self.assertEqual(stats["enabled_users"], 2)
+        self.assertEqual(stats["disabled_users"], 1)
+        self.assertEqual(stats["spn_users"], 1)
+        self.assertEqual(stats["asrep_users"], 1)
+        self.assertEqual(stats["da_users"], 1)
+        self.assertEqual(stats["all_computers"], 2)
+        self.assertEqual(stats["laps_computers"], 1)
+        self.assertEqual(stats["pwd_gt_1y"], 1)
+        self.assertAlmostEqual(stats["enabled_pct"], 66.67, places=1)
+        self.assertAlmostEqual(stats["laps_pct"], 50.0, places=1)
+
+    def test_stats_dashboard_shows_percentage_table(self):
+        now = 1_700_000_000.0
+        G = nx.MultiDiGraph()
+        G.add_node(
+            "U1",
+            name="A@LAB.LOCAL",
+            type="User",
+            props={"enabled": True, "hasspn": True, "domain": "LAB.LOCAL"},
+            is_azure=False,
+        )
+        G.add_node(
+            "C1",
+            name="PC.LAB.LOCAL",
+            type="Computer",
+            props={"haslaps": True, "domain": "LAB.LOCAL"},
+            is_azure=False,
+        )
+        output = self._capture_output(
+            bloodbash_globals["print_stats_dashboard"], G, None
+        )
+        clean = self._strip_ansi(output)
+        self.assertIn("Percentage", clean)
+        self.assertIn("Users with SPN", clean)
+        self.assertIn("LAPS Computers", clean)
     def test_export_bloodhound_compatible(self):
         G = nx.MultiDiGraph()
         G.add_node("1", name="User1", type="User", props={"enabled": True})
