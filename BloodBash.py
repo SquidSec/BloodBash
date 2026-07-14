@@ -369,13 +369,85 @@ def _resolve_object_type(meta_type: str, item: dict, filename: str = "") -> str:
         return from_file
     return "Unknown"
 
+# AzureHound entity kinds (exact) → BloodBash type labels
+AZURE_ENTITY_KIND_MAP = {
+    "aztenant": "Azure Tenant",
+    "azuser": "Azure User",
+    "azgroup": "Azure Group",
+    "azapp": "Azure Application",
+    "azapplication": "Azure Application",
+    "azserviceprincipal": "Azure Service Principal",
+    "azdevice": "Azure Device",
+    "azrole": "Azure Role",
+    "azkeyvault": "Azure Key Vault",
+    "azsubscription": "Azure Subscription",
+    "azresourcegroup": "Azure Resource Group",
+    "azmanagementgroup": "Azure Management Group",
+    "azvm": "Azure VM",
+    "azvmscaleset": "Azure VM Scale Set",
+    "azfunctionapp": "Azure Function App",
+    "azwebapp": "Azure Web App",
+    "azautomationaccount": "Azure Automation Account",
+    "azlogicapp": "Azure Logic App",
+    "azcontainerregistry": "Azure Container Registry",
+    "azmanagedcluster": "Azure Managed Cluster",
+}
+
+# AzureHound relationship kinds → (edge label, source field, target field, list field)
+# list field holds principal refs; source/target fields are scalar resource ids.
+AZURE_REL_KIND_MAP = {
+    "azgroupmember": ("MemberOf", "members", "groupId"),
+    "azgroupowner": ("Owns", "owners", "groupId"),
+    "azappowner": ("Owns", "owners", "appId"),
+    "azserviceprincipalowner": ("Owns", "owners", "servicePrincipalId"),
+    "azdeviceowner": ("Owns", "owners", "deviceId"),
+    "azroleassignment": ("HasRole", "roleAssignments", "roleDefinitionId"),
+    "azapproleassignment": ("HasAppRole", "appRoleAssignments", "resourceId"),
+    "azvmowner": ("Owns", "owners", "vmId"),
+    "azvmcontributor": ("Contributor", "contributors", "vmId"),
+    "azvmuseraccessadmin": ("UserAccessAdmin", "userAccessAdmins", "vmId"),
+    "azvmadminlogin": ("AdminLogin", "adminLogins", "vmId"),
+    "azvmaverecontributor": ("AvereContributor", "avereContributors", "vmId"),
+    "azresourcegroupowner": ("Owns", "owners", "resourceGroupId"),
+    "azresourcegroupuseraccessadmin": ("UserAccessAdmin", "userAccessAdmins", "resourceGroupId"),
+    "azsubscriptionowner": ("Owns", "owners", "subscriptionId"),
+    "azsubscriptionuseraccessadmin": ("UserAccessAdmin", "userAccessAdmins", "subscriptionId"),
+    "azkeyvaultaccesspolicy": ("KeyVaultAccess", "accessPolicies", "keyVaultId"),
+}
+
+
+def _azure_ref_id(ref) -> Optional[str]:
+    """Extract an object id from an AzureHound nested principal/ref object."""
+    if ref is None:
+        return None
+    if isinstance(ref, str):
+        return ref
+    if isinstance(ref, dict):
+        for key in (
+            "id", "objectId", "objectid", "ObjectId", "principalId",
+            "principalObjectId", "appId", "deviceId", "userId", "groupId",
+        ):
+            if ref.get(key):
+                return str(ref[key])
+        owner = ref.get("owner") or ref.get("member") or ref.get("principal")
+        if isinstance(owner, dict):
+            return _azure_ref_id(owner)
+        if isinstance(owner, str):
+            return owner
+    return None
+
+
 def get_object_id(item):
+    # Prefer SharpHound ObjectIdentifier before nested Azure data.id
+    oid = _get_prop_ci(item, ('ObjectIdentifier', 'objectid', 'objectId', 'ObjectId'))
+    if oid:
+        return oid
     data = item.get('data')
     if isinstance(data, dict):
         oid = _get_prop_ci(data, ('id', 'objectid', 'objectId', 'ObjectId', 'ObjectIdentifier'))
         if oid:
             return oid
-    oid = _get_prop_ci(item, ('ObjectIdentifier', 'objectid', 'objectId', 'ObjectId', 'id'))
+    oid = _get_prop_ci(item, ('id',))
     if oid:
         return oid
     # Stable fallback for incomplete records (never use builtin hash() — it is
@@ -414,6 +486,7 @@ def _safe_extract_zip(zip_path, extract_to):
 
 def load_json_dir(directory, debug=False):
     nodes = {}
+    azure_pending_edges = []  # (src, dst, label) from AzureHound relationship kinds
     try:
         path_obj = Path(directory)
         if path_obj.suffix.lower() == '.zip':
@@ -440,9 +513,17 @@ def load_json_dir(directory, debug=False):
                 with open(path, 'r', encoding='utf-8-sig') as f:
                     raw = json.load(f)
                     if debug:
-                        console.print(f"[blue]DEBUG: Top-level keys: {list(raw.keys())}[/blue]")
-                    meta_type = raw.get("meta", {}).get("type", "").lower()
-                    data = raw.get('data') or raw.get('Results') or raw.get('objects') or raw
+                        console.print(f"[blue]DEBUG: Top-level keys: {list(raw.keys()) if isinstance(raw, dict) else type(raw)}[/blue]")
+                    meta = raw.get("meta") if isinstance(raw, dict) else None
+                    meta_type = (meta or {}).get("type", "") if isinstance(meta, dict) else ""
+                    meta_type = str(meta_type or "").lower()
+                    # AzureHound bulk export: top-level list or {"data":[...]} of {kind,data}
+                    if isinstance(raw, list):
+                        data = raw
+                    elif isinstance(raw, dict):
+                        data = raw.get('data') or raw.get('Results') or raw.get('objects') or raw
+                    else:
+                        data = []
                     if debug:
                         console.print(f"[blue]DEBUG: data type: {type(data)}, len if list: {len(data) if isinstance(data, list) else 'not list'}[/blue]")
                     if not isinstance(data, list):
@@ -451,45 +532,140 @@ def load_json_dir(directory, debug=False):
                     for item in data:
                         if not isinstance(item, dict):
                             continue
+                        kind_raw = item.get('kind') or item.get('Kind') or ''
+                        kind_l = str(kind_raw).lower()
                         # Detect Azure (case-insensitive checks, expanded)
                         item_lower = {k.lower(): v for k, v in item.items()}
-                        is_azure = meta_type.startswith("azure") or any(k in ['@odata.context', 'odata.context', 'cloudanchorobject'] for k in item_lower.keys()) or any(v and isinstance(v, str) and ('microsoft.com' in v.lower() or 'azure' in v.lower()) for v in item_lower.values() if isinstance(v, str))
-                        # Infer type for Azure using 'kind' field (from AzureHound structure)
+                        is_azure = (
+                            meta_type.startswith("azure")
+                            or bool(kind_l.startswith("az"))
+                            or any(k in ['@odata.context', 'odata.context', 'cloudanchorobject'] for k in item_lower.keys())
+                            or any(
+                                v and isinstance(v, str) and ('microsoft.com' in v.lower() or 'azure' in v.lower())
+                                for v in item_lower.values() if isinstance(v, str)
+                            )
+                        )
+                        # AzureHound relationship kinds → pending edges (not entity nodes)
+                        rel_spec = AZURE_REL_KIND_MAP.get(kind_l)
+                        is_rel_kind = bool(rel_spec) or (
+                            kind_l.startswith("az")
+                            and any(
+                                kind_l.endswith(sfx)
+                                for sfx in (
+                                    "owner", "owners", "member", "members",
+                                    "roleassignment", "roleassignments",
+                                    "accesspolicy", "accesspolicies",
+                                    "useraccessadmin", "contributor",
+                                    "adminlogin", "averecontributor",
+                                )
+                            )
+                            and kind_l not in AZURE_ENTITY_KIND_MAP
+                        )
+                        if is_azure and is_rel_kind:
+                            if rel_spec:
+                                label, list_key, target_key = rel_spec
+                            else:
+                                # Generic: infer label from kind suffix
+                                if kind_l.endswith("member") or kind_l.endswith("members"):
+                                    label, list_key, target_key = "MemberOf", "members", "groupId"
+                                elif "owner" in kind_l:
+                                    label, list_key, target_key = "Owns", "owners", "id"
+                                elif "roleassignment" in kind_l:
+                                    label, list_key, target_key = "HasRole", "roleAssignments", "roleDefinitionId"
+                                elif "useraccessadmin" in kind_l:
+                                    label, list_key, target_key = "UserAccessAdmin", "userAccessAdmins", "id"
+                                elif "contributor" in kind_l:
+                                    label, list_key, target_key = "Contributor", "contributors", "id"
+                                else:
+                                    label, list_key, target_key = kind_raw or "Related", "principals", "id"
+                            payload = item.get('data') if isinstance(item.get('data'), dict) else item
+                            target = (
+                                payload.get(target_key)
+                                or payload.get('groupId')
+                                or payload.get('appId')
+                                or payload.get('servicePrincipalId')
+                                or payload.get('deviceId')
+                                or payload.get('roleDefinitionId')
+                                or payload.get('resourceId')
+                                or payload.get('vmId')
+                                or payload.get('resourceGroupId')
+                                or payload.get('subscriptionId')
+                                or payload.get('keyVaultId')
+                                or payload.get('id')
+                            )
+                            refs = payload.get(list_key)
+                            if refs is None:
+                                refs = []
+                            if not isinstance(refs, list):
+                                refs = [refs] if refs else []
+                            for ref in refs:
+                                src = _azure_ref_id(ref)
+                                if not src:
+                                    continue
+                                if label == "MemberOf":
+                                    if target:
+                                        azure_pending_edges.append((src, str(target), label))
+                                elif label == "HasRole":
+                                    if isinstance(ref, dict) and ref.get('principalId'):
+                                        src = str(ref.get('principalId'))
+                                    role_id = str(target or (ref.get('roleDefinitionId') if isinstance(ref, dict) else '') or '')
+                                    if src and role_id:
+                                        azure_pending_edges.append((src, role_id, label))
+                                else:
+                                    if src and target:
+                                        azure_pending_edges.append((src, str(target), label))
+                            continue  # do not create a fake entity node for relationship kinds
                         if is_azure:
                             item['IsAzure'] = True
-                            obj_type = "Unknown Azure"
-                            kind = item.get('kind', '').lower()
-                            if 'tenant' in kind:
-                                obj_type = "Azure Tenant"
-                            elif 'device' in kind:
-                                obj_type = "Azure Device"
-                            elif 'user' in kind:
-                                obj_type = "Azure User"
-                            elif 'group' in kind:
-                                obj_type = "Azure Group"
-                            elif 'role' in kind:
-                                obj_type = "Azure Role"
-                            elif 'application' in kind:
-                                obj_type = "Azure Application"
-                            elif 'serviceprincipal' in kind or 'sp' in kind:
-                                obj_type = "Azure Service Principal"
-                            elif 'keyvault' in kind:
-                                obj_type = "Azure Key Vault"
-                            # Fallback to 'type' field if available
+                            # Exact map first (AZUser / azuser); then bare AzureHound kinds (User, Group)
+                            obj_type = AZURE_ENTITY_KIND_MAP.get(kind_l)
+                            if not obj_type and kind_l.startswith("az"):
+                                # az + entity name without substring traps on relationship kinds
+                                if kind_l not in AZURE_REL_KIND_MAP:
+                                    bare = kind_l[2:]
+                                    obj_type = AZURE_ENTITY_KIND_MAP.get("az" + bare)
+                                    if not obj_type:
+                                        obj_type = f"Azure {kind_raw[2:]}" if len(str(kind_raw)) > 2 else "Unknown Azure"
+                            if not obj_type:
+                                bare_map = {
+                                    "user": "Azure User",
+                                    "group": "Azure Group",
+                                    "role": "Azure Role",
+                                    "application": "Azure Application",
+                                    "app": "Azure Application",
+                                    "serviceprincipal": "Azure Service Principal",
+                                    "device": "Azure Device",
+                                    "tenant": "Azure Tenant",
+                                    "keyvault": "Azure Key Vault",
+                                    "subscription": "Azure Subscription",
+                                    "resourcegroup": "Azure Resource Group",
+                                    "managementgroup": "Azure Management Group",
+                                    "vm": "Azure VM",
+                                }
+                                obj_type = bare_map.get(kind_l.replace(" ", ""), "Unknown Azure")
                             if obj_type == "Unknown Azure":
                                 typ = item.get('type') or item.get('Type')
                                 if typ:
-                                    obj_type = f"Azure {typ.title()}"
+                                    obj_type = f"Azure {str(typ).title()}"
                         else:
                             obj_type = _resolve_object_type(meta_type, item, filename)
                         item['ObjectType'] = obj_type
-                        oid = get_object_id(item)
+                        # Prefer objectId on flat AzureHound fixture items
+                        oid = (
+                            item.get('objectId')
+                            or item.get('ObjectId')
+                            or item.get('objectid')
+                            or get_object_id(item)
+                        )
+                        if oid in nodes and debug:
+                            console.print(f"[yellow]DEBUG: OID collision, last write wins: {oid}[/yellow]")
                         nodes[oid] = item
                         added += 1
                         if debug and added <= 3:  # Print first 3 items for inspection
                             console.print(f"[blue]DEBUG: Sample item keys: {list(item.keys())}[/blue]")
                             console.print(f"[blue]DEBUG: Sample item type: {obj_type}[/blue]")
-                            console.print(f"[blue]DEBUG: Sample item sample data: {dict(list(item.get('data', {}).items())[:10])}[/blue]")
+                            sample_data = item.get('data') if isinstance(item.get('data'), dict) else {}
+                            console.print(f"[blue]DEBUG: Sample item sample data: {dict(list(sample_data.items())[:10])}[/blue]")
                     if debug:
                         console.print(f"[blue]DEBUG: {filename} → {added} objects added[/blue]")
             except Exception as e:
@@ -497,6 +673,15 @@ def load_json_dir(directory, debug=False):
                 if debug:
                     console.print(f"[red]DEBUG: Full traceback for {filename}:[/red]\n{traceback.format_exc()}")
             progress.advance(task)
+    # Stash Azure relationship edges for build_graph (attached as special key)
+    if azure_pending_edges:
+        nodes["__azure_pending_edges__"] = {
+            "ObjectIdentifier": "__azure_pending_edges__",
+            "ObjectType": "Meta",
+            "IsAzure": True,
+            "Properties": {},
+            "_pending_edges": azure_pending_edges,
+        }
     console.print(f"[green]✓ Loaded {len(nodes)} objects from {len(files)} files[/green]")
     return nodes
 
@@ -677,8 +862,16 @@ def build_graph(nodes, db_path=None, debug=False):
     placeholder_counter = 0
     if debug:
         console.print(f"[blue]DEBUG: Starting graph build with {len(nodes)} raw nodes[/blue]")
+    azure_pending = []
+    meta_pending = nodes.pop("__azure_pending_edges__", None)
+    if isinstance(meta_pending, dict):
+        azure_pending = list(meta_pending.get("_pending_edges") or [])
+
     with tqdm(total=len(nodes), desc="Building graph", unit="node") as pbar:
         for oid, node in nodes.items():
+            if oid == "__azure_pending_edges__":
+                pbar.update(1)
+                continue
             is_azure = node.get('IsAzure', False)
             # SharpHound: Properties / properties; Azure: data
             props = _extract_node_props(node, is_azure=is_azure)
@@ -1071,6 +1264,17 @@ def build_graph(nodes, db_path=None, debug=False):
             pbar.update(1)
     if debug:
         console.print(f"[blue]DEBUG: Main graph build complete - {G.number_of_nodes()} nodes, {G.number_of_edges()} edges[/blue]")
+    # AzureHound relationship-kind edges collected during load
+    azure_edges_added = 0
+    for src, dst, label in azure_pending:
+        if not src or not dst or not label:
+            continue
+        _ensure_graph_node(G, nodes, name_to_oid, src, name=str(src), typ='Unknown', is_azure=True)
+        _ensure_graph_node(G, nodes, name_to_oid, dst, name=str(dst), typ='Unknown', is_azure=True)
+        if _add_unique_edge(G, src, dst, label):
+            azure_edges_added += 1
+    if azure_edges_added:
+        console.print(f"[green]Added {azure_edges_added} AzureHound relationship edges[/green]")
     console.print("[cyan]Processing standalone relationships...[/cyan]")
     added = 0
     placeholders_added = 0
