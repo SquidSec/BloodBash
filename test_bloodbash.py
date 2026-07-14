@@ -68,6 +68,42 @@ class TestBloodBash(unittest.TestCase):
         self.assertIn("Weak GPO", output)
         self.assertIn("High-risk", output)
         self.assertIn("Vulnerable-GPO", output)
+
+    def test_gpo_abuse_detects_link_via_container_in_edge(self):
+        """BloodHound GPLink is container → GPO; must not report 'No links'."""
+        G = nx.MultiDiGraph()
+        G.add_node(
+            "GPO",
+            name="SOFTWARE-DEPLOY@LAB.LOCAL",
+            type="GPO",
+            props={"domain": "LAB.LOCAL"},
+            is_azure=False,
+        )
+        G.add_node(
+            "OU",
+            name="WORKSTATIONS@LAB.LOCAL",
+            type="OU",
+            props={"domain": "LAB.LOCAL"},
+            is_azure=False,
+        )
+        G.add_node(
+            "AU",
+            name="AUTHENTICATED USERS@LAB.LOCAL",
+            type="Group",
+            props={"domain": "LAB.LOCAL"},
+            is_azure=False,
+        )
+        G.add_edge("OU", "GPO", label="GPLink")  # correct direction
+        G.add_edge("AU", "GPO", label="GenericWrite")
+        bloodbash_globals["global_findings"] = []
+        output = self._capture_output(bloodbash_globals["print_gpo_abuse"], G)
+        clean = self._strip_ansi(output)
+        self.assertIn("SOFTWARE-DEPLOY", clean)
+        self.assertIn("WORKSTATIONS", clean)
+        self.assertNotIn("No links detected", clean)
+        self.assertTrue(
+            any("SOFTWARE-DEPLOY" in f[2] for f in bloodbash_globals["global_findings"] if f[1] == "GPO Abuse")
+        )
     def test_dcsync_rights(self):
         try:
             G = self._load_and_build_graph("dcsync-tests")
