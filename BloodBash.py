@@ -4496,7 +4496,8 @@ def export_compromise_dossier(dossier: dict, export_dir: str) -> List[str]:
         if n:
             lines.append(f"| {lab} | {n} |")
     lines += ["", "## Files", "", "- `membership_direct.txt`", "- `membership_effective.txt`",
-              "- `rights/*.txt`", "- `paths_to_high_value.txt`", "- `paths_to_high_value.csv`",
+              "- `rights/*.txt`", "- `adminto_hosts.txt` / `adminto_hosts.csv` (bulk AdminTo host list)",
+              "- `paths_to_high_value.txt`", "- `paths_to_high_value.csv`",
               "- `counts.csv`", "- `dossier.json`", ""]
     with open(summary_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
@@ -4539,6 +4540,40 @@ def export_compromise_dossier(dossier: dict, export_dir: str) -> List[str]:
             [[r["target"], r.get("target_type"), r.get("via"), r.get("relationship")] for r in rows],
         )
         written.append(cpath)
+
+    # Bulk AdminTo / LocalAdmin host list (operator-friendly flat list)
+    admin_hosts = []
+    seen_hosts = set()
+    for lab in ("AdminTo", "LocalAdmin"):
+        for r in rights.get(lab) or []:
+            t = r.get("target") or ""
+            if not t or t in seen_hosts:
+                continue
+            if str(r.get("target_type") or "").lower() not in ("computer", "?", ""):
+                # still include if name looks like a host
+                if "$" not in t and "." not in t and not t.upper().endswith("$"):
+                    pass
+            seen_hosts.add(t)
+            admin_hosts.append({
+                "host": t,
+                "right": r.get("relationship") or lab,
+                "via": r.get("via") or "",
+            })
+    admin_hosts.sort(key=lambda x: x["host"].lower())
+    hosts_txt = os.path.join(export_dir, "adminto_hosts.txt")
+    with open(hosts_txt, "w", encoding="utf-8") as f:
+        f.write(f"# Bulk AdminTo/LocalAdmin hosts for {dossier.get('name')}\n")
+        f.write(f"# Count: {len(admin_hosts)}\n")
+        for h in admin_hosts:
+            f.write(f"{h['host']}\n")
+    written.append(hosts_txt)
+    hosts_csv = os.path.join(export_dir, "adminto_hosts.csv")
+    write_csv_file(
+        hosts_csv,
+        ["Host", "Right", "Via"],
+        [[h["host"], h["right"], h["via"]] for h in admin_hosts],
+    )
+    written.append(hosts_csv)
 
     # paths
     paths_txt = os.path.join(export_dir, "paths_to_high_value.txt")
