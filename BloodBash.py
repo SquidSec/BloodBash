@@ -2966,9 +2966,139 @@ def print_group_analysis(G, domain_filter=None, deep_analysis=False):
     else:
         console.print("[dim]Cycle detection skipped for performance (use --deep-analysis to enable)[/dim]")
 
+def collect_domain_stats(G, domain_filter=None, now: Optional[float] = None) -> dict:
+    """Quickwin-style domain hygiene stats with counts and percentages."""
+    now = time.time() if now is None else now
+    users = []
+    computers = []
+    for n, d in G.nodes(data=True):
+        if d.get("is_azure", False):
+            continue
+        if not _domain_matches(d, domain_filter):
+            continue
+        t = str(d.get("type") or "").lower()
+        if t == "user":
+            users.append((n, d))
+        elif t == "computer":
+            computers.append((n, d))
+
+    def _enabled(props):
+        if _prop_raw_ci(props, ["enabled", "Enabled"]) is None:
+            return True
+        return get_bool_prop_ci(props, ["enabled", "Enabled"], default=True)
+
+    all_users = len(users)
+    enabled_users = sum(1 for _, d in users if _enabled(d.get("props") or {}))
+    disabled_users = sum(1 for _, d in users if not _enabled(d.get("props") or {}))
+    spn_users = sum(
+        1
+        for _, d in users
+        if _enabled(d.get("props") or {}) and _user_has_spn(d.get("props") or {})
+    )
+    asrep_users = sum(
+        1
+        for _, d in users
+        if _enabled(d.get("props") or {})
+        and get_bool_prop_ci(
+            d.get("props") or {},
+            ["dontreqpreauth", "dontReqPreauth", "dont_req_preauth"],
+        )
+    )
+    da_users = 0
+    for n, d in users:
+        if not _enabled(d.get("props") or {}):
+            continue
+        is_priv, _ = is_member_of_privileged_group(G, n)
+        if is_priv:
+            da_users += 1
+
+    stale_6m = 0
+    for _, d in users:
+        props = d.get("props") or {}
+        if not _enabled(props):
+            continue
+        raw = _prop_raw_ci(
+            props,
+            ["lastlogontimestamp", "lastLogonTimestamp", "lastlogon", "lastLogon"],
+        )
+        if raw is None:
+            continue
+        try:
+            v = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if v in (0, -1):
+            continue
+        ts = parse_ad_timestamp(v)
+        days = _days_since(ts, now=now)
+        if days is not None and days >= 180:
+            stale_6m += 1
+
+    pwd_gt_1y = pwd_gt_2y = pwd_gt_5y = pwd_gt_10y = 0
+    for _, d in users:
+        props = d.get("props") or {}
+        if not _enabled(props):
+            continue
+        raw = _prop_raw_ci(props, ["pwdlastset", "pwdLastSet", "PwdLastSet"])
+        ts = parse_ad_timestamp(raw)
+        days = _days_since(ts, now=now)
+        if days is None:
+            continue
+        if days >= 365 * 10:
+            pwd_gt_10y += 1
+        if days >= 365 * 5:
+            pwd_gt_5y += 1
+        if days >= 365 * 2:
+            pwd_gt_2y += 1
+        if days >= 365:
+            pwd_gt_1y += 1
+
+    all_computers = len(computers)
+    laps_computers = sum(
+        1 for _, d in computers if _has_laps_enabled(d.get("props") or {})
+    )
+
+    def _pct(num, den):
+        if not den:
+            return 0.0
+        return round(num * 100.0 / den, 2)
+
+    return {
+        "all_users": all_users,
+        "enabled_users": enabled_users,
+        "disabled_users": disabled_users,
+        "enabled_pct": _pct(enabled_users, all_users),
+        "disabled_pct": _pct(disabled_users, all_users),
+        "da_users": da_users,
+        "da_pct": _pct(da_users, enabled_users),
+        "stale_6m": stale_6m,
+        "stale_6m_pct": _pct(stale_6m, enabled_users),
+        "pwd_gt_1y": pwd_gt_1y,
+        "pwd_gt_1y_pct": _pct(pwd_gt_1y, enabled_users),
+        "pwd_gt_2y": pwd_gt_2y,
+        "pwd_gt_2y_pct": _pct(pwd_gt_2y, enabled_users),
+        "pwd_gt_5y": pwd_gt_5y,
+        "pwd_gt_5y_pct": _pct(pwd_gt_5y, enabled_users),
+        "pwd_gt_10y": pwd_gt_10y,
+        "pwd_gt_10y_pct": _pct(pwd_gt_10y, enabled_users),
+        "spn_users": spn_users,
+        "spn_pct": _pct(spn_users, enabled_users),
+        "asrep_users": asrep_users,
+        "asrep_pct": _pct(asrep_users, enabled_users),
+        "all_computers": all_computers,
+        "laps_computers": laps_computers,
+        "laps_pct": _pct(laps_computers, all_computers),
+    }
+
+
 def print_stats_dashboard(G, domain_filter=None):
     console.rule("[bold magenta]AD & Azure Statistics Dashboard[/bold magenta]")
-    filtered_nodes = [(n, d) for n, d in G.nodes(data=True) if not domain_filter or d.get('props', {}).get('domain') == domain_filter or d.get('props', {}).get('tenantId') == domain_filter]
+    filtered_nodes = [
+        (n, d)
+        for n, d in G.nodes(data=True)
+        if not domain_filter
+        or _domain_matches(d, domain_filter)
+    ]
     total = len(filtered_nodes)
     by_type = defaultdict(int)
     azure_count = 0
@@ -2985,6 +3115,31 @@ def print_stats_dashboard(G, domain_filter=None):
     for t, c in sorted(by_type.items(), key=lambda x: x[1], reverse=True):
         table.add_row(t, str(c))
     console.print(table)
+
+    stats = collect_domain_stats(G, domain_filter)
+    pct_table = Table(title="Domain Hygiene Stats")
+    pct_table.add_column("Description", style="cyan")
+    pct_table.add_column("Percentage", justify="right")
+    pct_table.add_column("Total", justify="right")
+    pct_rows = [
+        ("All users", "N/A", stats["all_users"]),
+        ("All users (enabled)", f"{stats['enabled_pct']}%", stats["enabled_users"]),
+        ("All users (disabled)", f"{stats['disabled_pct']}%", stats["disabled_users"]),
+        ("Users with privileged-group rights", f"{stats['da_pct']}%", stats["da_users"]),
+        ("Not logged (enabled) ≥ 6 months", f"{stats['stale_6m_pct']}%", stats["stale_6m"]),
+        ("Password not changed > 1 y (enabled)", f"{stats['pwd_gt_1y_pct']}%", stats["pwd_gt_1y"]),
+        ("Password not changed > 2 y (enabled)", f"{stats['pwd_gt_2y_pct']}%", stats["pwd_gt_2y"]),
+        ("Password not changed > 5 y (enabled)", f"{stats['pwd_gt_5y_pct']}%", stats["pwd_gt_5y"]),
+        ("Password not changed > 10 y (enabled)", f"{stats['pwd_gt_10y_pct']}%", stats["pwd_gt_10y"]),
+        ("Users with SPN", f"{stats['spn_pct']}%", stats["spn_users"]),
+        ("Users with AS-REP roast", f"{stats['asrep_pct']}%", stats["asrep_users"]),
+        ("All Computers", "N/A", stats["all_computers"]),
+        ("LAPS Computers", f"{stats['laps_pct']}%", stats["laps_computers"]),
+    ]
+    for desc, pct, tot in pct_rows:
+        pct_table.add_row(desc, str(pct), str(tot))
+    console.print(pct_table)
+
     computers = sum(1 for _, d in filtered_nodes if d['type'].lower() == 'computer')
     local_admins = len({u for u, v, d in G.edges(data=True) if d.get('label') == 'LocalAdmin' and G.nodes[v]['type'].lower() == 'computer'})
     console.print(f"[cyan]Computers with at least one LocalAdmin right: {local_admins}/{computers} ({local_admins/computers*100 if computers else 0:.1f}%)[/cyan]")
