@@ -2329,6 +2329,9 @@ class TestBloodBash(unittest.TestCase):
         self.assertIn("--from-user-export", out)
         self.assertIn("--busiest-paths", out)
         self.assertIn("--report-pack", out)
+        self.assertIn("--csv-pack", out)
+        self.assertIn("--list-domains", out)
+        self.assertIn("--privileged-roast", out)
         # Plenty of categorized examples
         self.assertIn("Examples — basics", out)
         self.assertIn("Examples — compromise dossier", out)
@@ -2336,6 +2339,7 @@ class TestBloodBash(unittest.TestCase):
         self.assertIn("Examples — selective AD", out)
         self.assertIn("Examples — inventory", out)
         self.assertIn("Examples — Azure", out)
+        self.assertIn("PlumHound-style multi-CSV pack", out)
 
     def test_print_structured_help_callable(self):
         out = self._capture_output(bloodbash_globals["print_structured_help"], "BloodBash.py")
@@ -2344,6 +2348,9 @@ class TestBloodBash(unittest.TestCase):
         self.assertIn("Inventory", clean)
         self.assertIn("--path-break", clean)
         self.assertIn("--all-findings", clean)
+        self.assertIn("--csv-pack", clean)
+        self.assertIn("--list-domains", clean)
+        self.assertIn("--privileged-roast", clean)
 
     def test_all_findings_table_empty(self):
         """--all-findings always prints a table, even with zero findings."""

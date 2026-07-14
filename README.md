@@ -117,15 +117,16 @@ python3 BloodBash.py --help   # structured flag tables + many example commands
 
 | Area | Checks |
 |------|--------|
-| **AD privilege** | DCSync (GetChanges+GetChangesAll), dangerous ACLs on high-value objects, GPO abuse, RBCD, constrained/unconstrained delegation (DCs noted but not scored), SID history |
-| **AD credentials** | Kerberoastable, AS-REP roastable, shadow credentials (`AddKeyCredentialLink` + non-default ACL paths), password in description, PasswordNeverExpires / PasswordNotRequired |
+| **AD privilege** | DCSync (GetChanges+GetChangesAll; nested DA/EA treated as expected), dangerous ACLs on high-value objects, GPO abuse, RBCD (configured + *can configure*), constrained/unconstrained delegation (**DC vs non-DC** sections), SID history |
+| **AD credentials** | Kerberoastable, AS-REP roastable (with **AdminCount / OWNED / LASTLOG** tags), **privileged roast** (`--privileged-roast`: roastable + nested DA/EA), shadow credentials, password in description, PasswordNeverExpires / PasswordNotRequired |
 | **ADCS** | ESC1–ESC7 (+ ESC8/ESC9/ESC13 when collector props exist). ESC10–12 need registry/HTTP role data often absent from SharpHound |
 | **Azure / Entra** | Privileged roles, app/SP credential *control* paths, explicit MFA disable, guest users, SP abuse rights |
 | **Paths** | Shortest paths to high-value targets (limited set in `--fast`), owned principals (`--owned` = inbound), custom `--path-from` / `--path-to` |
-| **Compromise dossier** | `--from-user` / `--compromise`: outbound membership, AdminTo/RDP/ACL counts, nested groups, auto paths to HV, txt/csv export |
+| **Compromise dossier** | `--from-user` / `--compromise`: outbound membership, AdminTo/RDP/ACL counts, nested groups, auto paths to HV, txt/csv export including **bulk AdminTo host lists** |
 | **Path remediation** | Busiest-path ranking (`--busiest-paths`), edge removal recommendations (`--path-break`) |
-| **Inventory** | Password-age ladders, stale/inactive accounts, privilege groups, structural (domains/DCs/trusts), owned-object inventory |
-| **Other** | LAPS via `haslaps`, GPO XML (`--gpo-content-dir`), domain `Trusts[]` edges, group nesting |
+| **Inventory** | Password-age ladders, stale/inactive accounts, privilege groups, structural (domains/DCs/trusts), owned-object inventory, **stats dashboard with %** |
+| **PlumHound-style CSV pack** | `--csv-pack DIR`: multi-CSV inventory (domains, DA, roastables, LAPS, Everyone/overpriv edges, computer AdminTo computer, dual priv+local admin, bulk AdminTo hosts) + `index.csv` |
+| **Other** | LAPS coverage (`haslaps`) + **LAPS password readers** (`ReadLAPSPassword`), GPO XML (`--gpo-content-dir`), domain `Trusts[]` edges, group nesting, `--list-domains` |
 
 Findings are scored and summarized in a **Prioritized Findings** table (use `--all-findings` for every row). Abuse panels suggest tools/commands per category.
 
@@ -202,6 +203,7 @@ python3 BloodBash.py ./sharpout --owned alice --owned-inventory --shortest-paths
 compromise-alice/
   summary.md              README.txt           counts.csv
   membership_direct.txt   membership_effective.txt
+  adminto_hosts.txt       adminto_hosts.csv    # bulk AdminTo/LocalAdmin host list
   paths_to_high_value.txt paths_to_high_value.csv
   dossier.json
   rights/
@@ -231,15 +233,17 @@ python3 BloodBash.py ./sharpout --inspect 'DOMAIN ADMINS@CORP.LOCAL'
 python3 BloodBash.py ./sharpout --dcsync --adcs --dangerous-permissions --verbose
 python3 BloodBash.py ./sharpout --dcsync --adcs --dangerous-permissions --all-findings
 
-# Credentials
+# Credentials (+ privilege-context tags on roast findings)
 python3 BloodBash.py ./sharpout --kerberoastable --as-rep-roastable --password-descriptions
+# High-priority: roastable users nested into DA/EA/…
+python3 BloodBash.py ./sharpout --privileged-roast
 python3 BloodBash.py ./sharpout --password-never-expires --password-not-required --password-age
 
-# Delegation / RBCD / shadow creds
+# Delegation / RBCD (configured + who can configure AllowedToAct) / shadow creds
 python3 BloodBash.py ./sharpout --unconstrained-delegation --constrained-delegation --rbcd
 python3 BloodBash.py ./sharpout --shadow-credentials
 
-# Sessions, LAPS, SID history, GPO
+# Sessions, LAPS (coverage + ReadLAPSPassword readers), SID history, GPO
 python3 BloodBash.py ./sharpout --sessions --laps --sid-history
 python3 BloodBash.py ./sharpout --gpo-abuse --gpo-parsing
 python3 BloodBash.py ./sharpout --gpo-abuse --gpo-content-dir ./sysvol-gpo-xml
@@ -248,7 +252,10 @@ python3 BloodBash.py ./sharpout --gpo-abuse --gpo-content-dir ./sysvol-gpo-xml
 ### Inventory, profiles, and deliverables
 
 ```bash
-# Inventory modules
+# List domains / tenants in a collection (then exit)
+python3 BloodBash.py ./sharpout --list-domains
+
+# Inventory modules (+ stats dashboard percentages under --all / deep paths)
 python3 BloodBash.py ./sharpout --inventory
 python3 BloodBash.py ./sharpout --stale-accounts --password-age --privilege-inventory
 python3 BloodBash.py ./sharpout --owned alice --owned-inventory
@@ -263,6 +270,11 @@ python3 BloodBash.py ./sharpout --profile ./my-engagement.yaml
 python3 BloodBash.py ./sharpout --inventory --busiest-paths short --path-break \
   --report-pack ./reports --export-zip bloodbash-reports.zip --log-file ./bloodbash.log
 
+# PlumHound-style multi-CSV pack (task CSVs + index.csv; optional zip)
+python3 BloodBash.py ./sharpout --csv-pack ./ph-reports
+python3 BloodBash.py ./sharpout --csv-pack ./ph-reports --export-zip ph-reports.zip
+python3 BloodBash.py ./sharpout --all --fast --csv-pack ./ph-full --export-zip ph-full.zip
+
 # Single-file exports
 python3 BloodBash.py ./sharpout --all --export=md
 python3 BloodBash.py ./sharpout --all --export=html
@@ -274,6 +286,27 @@ python3 BloodBash.py ./sharpout --all --export=yaml
 python3 BloodBash.py ./sharpout --all --db bloodbash.db
 python3 BloodBash.py . --db bloodbash.db --from-user alice --from-user-export
 ```
+
+### PlumHound-style CSV pack contents
+
+`--csv-pack DIR` writes one CSV per inventory task plus `index.csv` / `README.txt` (no Neo4j):
+
+| CSV | Description |
+|-----|-------------|
+| `domains.csv` | AD domains in the collection |
+| `domain_admins.csv` | Principals nested into DA/EA-style groups |
+| `users.csv` / `computers.csv` / `groups.csv` | Core object inventory |
+| `kerberoastable.csv` / `asrep_roastable.csv` | Credential roast candidates (+ tags) |
+| `password_never_expires.csv` | PNE users |
+| `laps_not_enabled.csv` | Computers without LAPS |
+| `local_admins_users.csv` | User/group → computer AdminTo/LocalAdmin |
+| `user_sessions.csv` | HasSession computer ↔ user |
+| `relationships_everyone.csv` (and Auth Users, Domain Users, …) | Edges from over-broad principals |
+| `overprivileged_relationships.csv` | Combined Everyone/Auth/Domain Users/… edges |
+| `computer_adminto_computer.csv` | Machine → machine AdminTo |
+| `dual_privileged_and_local_admin.csv` | DA/EA members that also have AdminTo (tiering) |
+| `bulk_adminto_hosts.csv` | Principals ranked by AdminTo host count |
+| `index.csv` | Report index (file → row count) |
 
 ### Azure / Entra
 
@@ -314,14 +347,15 @@ python3 BloodBash.py ./sharpout --profile adcs-heavy --path-break --busiest-path
 | Flag | Purpose |
 |------|---------|
 | `--from-user` / `--compromise USER` | **Compromise dossier** (outbound): nested groups, AdminTo/RDP/ACL counts, paths to high-value |
-| `--from-user-export [DIR]` | Export dossier txt/csv/json (default `compromise-<user>/`) |
+| `--from-user-export [DIR]` | Export dossier txt/csv/json + **adminto_hosts** lists (default `compromise-<user>/`) |
 | `--busiest-paths [short\|all]` | Rank principals on the most paths to high-value targets |
 | `--path-break` | Recommend which relationships to remove to break the most attack paths |
 | `--inventory` | Structural + password-age + stale + privilege inventories |
 | `--password-age` / `--stale-accounts` / `--privilege-inventory` | Individual inventory modules |
 | `--owned-inventory` | AdminTo / MemberOf inventory for `--owned` principals |
 | `--report-pack DIR` | Multi-page HTML suite + `index.html` + per-section CSVs |
-| `--export-zip [FILE]` | Zip a report pack into one engagement deliverable |
+| `--csv-pack DIR` | **PlumHound-style multi-CSV pack** (inventory + overpriv + AdminTo reports + `index.csv`) |
+| `--export-zip [FILE]` | Zip a `--report-pack` or `--csv-pack` directory into one deliverable |
 | `--profile FILE\|name` | YAML analysis profile (`quick`, `adcs-heavy`, `hygiene`, or path) |
 | `--log-file [FILE]` | Append-friendly run log (default `bloodbash.log`) |
 | `--all-findings` | End of run: print a table of **every** finding (even if empty) |
@@ -333,17 +367,21 @@ python3 BloodBash.py ./sharpout --profile adcs-heavy --path-break --busiest-path
 | `--all` | Run every analysis module |
 | `--fast` | Limit pathfinding to top DA/EA-style targets (not a full skip) |
 | `--domain X` | Filter to one AD domain or Azure `tenantId` |
+| `--list-domains` | List AD domains / Azure tenants in the collection and exit |
 | `--owned a,b` | Paths **to** owned principals (inbound) |
 | `--path-from` / `--path-to` | Arbitrary shortest paths |
 | `--inspect NODE` | Dump props + edges for a node |
 | `--indirect` | Include group-mediated paths/rights |
 | `--deep-analysis` | Slow group nesting + cycle detection |
+| `--privileged-roast` | Kerberoast/AS-REP users nested into DA/EA/other priv groups |
 | `--gpo-content-dir DIR` | Parse GPO XMLs (tasks, scripts, cPassword) |
 | `--export {md,json,html,csv,yaml}` | Write a report (high-value targets + prioritized findings) |
 | `--export-bh` | BloodHound-style graph JSON |
 | `--dot [FILE]` | Graphviz DOT export |
 | `--db FILE` | Load/save graph in SQLite |
 | `--debug` | Verbose parse/build logging |
+
+Also included under `--all` / selective flags: privilege-context tags on roast findings; unexpected DCSync split; unconstrained DC vs non-DC; LAPS readers; can-configure RBCD; stats dashboard percentages.
 
 Azure-only toggles: `--azure-privileged-roles`, `--azure-app-secrets`, `--azure-mfa-bypass`, `--azure-guest-access`, `--azure-sp-abuse`.
 
