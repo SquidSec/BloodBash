@@ -2,6 +2,6 @@
     "meta": {"version": 6, "type": "relationships"},
     "data": [
       {"start": "S-1-5-21-...-1000", "end": "CN={12345678-1234-1234-1234-123456789ABC},CN=Policies,CN=System,DC=lab,DC=local", "label": "GenericAll"},
-      {"start": "CN={12345678-1234-1234-1234-123456789ABC},CN=Policies,CN=System,DC=lab,DC=local", "end": "OU=Domain Controllers,DC=lab,DC=local", "label": "GpLink"}
+      {"start": "OU=Domain Controllers,DC=lab,DC=local", "end": "CN={12345678-1234-1234-1234-123456789ABC},CN=Policies,CN=System,DC=lab,DC=local", "label": "GPLink"}
     ]
   }

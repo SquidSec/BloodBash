@@ -2785,15 +2785,20 @@ def print_gpo_abuse(G, domain_filter=None):
         if dangerous_found:
             is_high_risk = False
             linked_ous = []
-            for _, target, edge_data in G.out_edges(n, data=True):
-                if edge_data.get('label', '').lower() in ['gplink', 'linkedto']:
-                    ou_name = G.nodes[target].get('name', '').lower()
-                    linked_ous.append(ou_name)
+            # BloodHound GPLink is container (OU/domain) → GPO (in-edges on the GPO).
+            for src, _, edge_data in incoming:
+                if (edge_data.get('label') or '').lower() in ('gplink', 'linkedto'):
+                    ou_name = (G.nodes[src].get('name') or '').lower()
+                    linked_ous.append(G.nodes[src].get('name') or str(src))
                     if any(kw in ou_name for kw in high_value_keywords):
                         is_high_risk = True
             found = True
             risk_color = "[red]" if is_high_risk else "[yellow]"
-            scope_note = f" (High-risk: Linked to {', '.join(linked_ous)})" if linked_ous else " (No links detected - low risk)"
+            if linked_ous:
+                risk_tag = "High-risk" if is_high_risk else "Linked"
+                scope_note = f" ({risk_tag}: Linked to {', '.join(linked_ous)})"
+            else:
+                scope_note = " (No links detected - low risk)"
             console.print(f"{risk_color}Weak GPO{risk_color}: [bold cyan]{name}[/bold cyan]{scope_note}")
             for u, _, edge in incoming:
                 label_lower = edge['label'].lower()

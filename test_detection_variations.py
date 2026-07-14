@@ -318,7 +318,7 @@ class TestDetectionVariations(unittest.TestCase):
         G.add_node("U", name="user@LAB.LOCAL", type="User", props={}, is_azure=False)
         G.add_node("OU", name="Domain Controllers@LAB.LOCAL", type="OU", props={}, is_azure=False)
         G.add_edge("U", "G", label="GenericWrite")
-        G.add_edge("G", "OU", label="GPLink")
+        G.add_edge("OU", "G", label="GPLink")  # container → GPO
         self._capture(bloodbash_globals["print_gpo_abuse"], G)
         self.assertTrue(self._findings("GPO Abuse"), msg=str(bloodbash_globals["global_findings"]))
 
