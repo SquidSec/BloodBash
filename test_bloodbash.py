@@ -1922,5 +1922,96 @@ class TestBloodBash(unittest.TestCase):
         details = " ".join(f[2] for f in bloodbash_globals["global_findings"] if f[1] == "AS-REP Roastable")
         self.assertIn("[AdminCount]", details)
 
+    # ────────────────────────────────────────────────
+    # Privileged Kerberoast / AS-REP (DA-path members)
+    # ────────────────────────────────────────────────
+    def _priv_roast_graph(self):
+        """User with SPN + ASREP nested into Domain Admins; normal user also roastable."""
+        G = nx.MultiDiGraph()
+        G.add_node(
+            "DA",
+            name="DOMAIN ADMINS@LAB.LOCAL",
+            type="Group",
+            props={"domain": "LAB.LOCAL", "objectid": "S-1-5-21-1-2-3-512"},
+            is_azure=False,
+        )
+        G.add_node(
+            "G1",
+            name="NestedAdmins@LAB.LOCAL",
+            type="Group",
+            props={"domain": "LAB.LOCAL"},
+            is_azure=False,
+        )
+        G.add_node(
+            "U_PRIV",
+            name="SPN_ADMIN@LAB.LOCAL",
+            type="User",
+            props={
+                "domain": "LAB.LOCAL",
+                "hasspn": True,
+                "dontreqpreauth": True,
+                "sensitive": False,
+                "enabled": True,
+                "admincount": True,
+                "lastlogontimestamp": -1,
+            },
+            is_azure=False,
+        )
+        G.add_node(
+            "U_NORM",
+            name="SPN_USER@LAB.LOCAL",
+            type="User",
+            props={
+                "domain": "LAB.LOCAL",
+                "hasspn": True,
+                "dontreqpreauth": True,
+                "sensitive": False,
+                "enabled": True,
+                "admincount": False,
+            },
+            is_azure=False,
+        )
+        # Nested membership: U_PRIV -> G1 -> DA
+        G.add_edge("U_PRIV", "G1", label="MemberOf")
+        G.add_edge("G1", "DA", label="MemberOf")
+        return G
+
+    def test_is_member_of_privileged_group_nested(self):
+        G = self._priv_roast_graph()
+        is_priv, groups = bloodbash_globals["is_member_of_privileged_group"](G, "U_PRIV")
+        self.assertTrue(is_priv)
+        self.assertTrue(any("domain admins" in g.lower() for g in groups))
+        is_priv_n, groups_n = bloodbash_globals["is_member_of_privileged_group"](G, "U_NORM")
+        self.assertFalse(is_priv_n)
+        self.assertEqual(groups_n, [])
+
+    def test_collect_privileged_roast_targets(self):
+        G = self._priv_roast_graph()
+        rows = bloodbash_globals["collect_privileged_roast_targets"](G)
+        names = {r["name"] for r in rows}
+        self.assertIn("SPN_ADMIN@LAB.LOCAL", names)
+        self.assertNotIn("SPN_USER@LAB.LOCAL", names)
+        priv = next(r for r in rows if r["name"] == "SPN_ADMIN@LAB.LOCAL")
+        self.assertTrue(priv["kerberoastable"])
+        self.assertTrue(priv["asrep"])
+        self.assertTrue(any("domain admins" in g.lower() for g in priv["groups"]))
+
+    def test_print_privileged_roast_targets(self):
+        G = self._priv_roast_graph()
+        bloodbash_globals["global_findings"] = []
+        output = self._capture_output(
+            bloodbash_globals["print_privileged_roast_targets"], G
+        )
+        clean = self._strip_ansi(output)
+        self.assertIn("Privileged", clean)
+        self.assertIn("SPN_ADMIN@LAB.LOCAL", clean)
+        self.assertNotIn("SPN_USER@LAB.LOCAL", clean)
+        self.assertIn("Kerberoast", clean)
+        self.assertIn("AS-REP", clean)
+        cats = [f[1] for f in bloodbash_globals["global_findings"]]
+        self.assertTrue(
+            any(c in ("Privileged Kerberoastable", "Privileged AS-REP Roastable", "Privileged Roast") for c in cats)
+        )
+
 if __name__ == '__main__':
     unittest.main()

@@ -47,6 +47,7 @@ SEVERITY_SCORES = {
     "Arbitrary Paths": 6, "Trust Abuse": 7, "Deep Group Nesting": 6,
     "Busiest Paths": 7, "Path Break": 8, "Password Age": 5, "Stale Accounts": 4,
     "Privilege Inventory": 6, "Owned Inventory": 7, "Compromise Dossier": 8,
+    "Privileged Kerberoastable": 9, "Privileged AS-REP Roastable": 9,
     # Azure-specific
     "Azure Privileged Roles": 10, "Azure App Secrets": 9, "Azure MFA Bypass": 8,
     "Azure Guest Access": 7, "Azure Service Principal Abuse": 8,
@@ -2343,6 +2344,162 @@ def print_as_rep_roastable(G, domain_filter=None):
     else:
         console.print("[green]None found[/green]")
 
+
+PRIVILEGED_GROUP_MATCHERS = (
+    "domain admins",
+    "enterprise admins",
+    "schema admins",
+    "administrators@",
+    "builtin\\administrators",
+    "account operators",
+    "backup operators",
+    "server operators",
+    "print operators",
+    "dnsadmins",
+    "group policy creator owners",
+    "enterprise key admins",
+    "key admins@",
+)
+
+
+def _group_name_is_privileged(name: str) -> bool:
+    if not name:
+        return False
+    nl = str(name).lower()
+    if any(m in nl for m in PRIVILEGED_GROUP_MATCHERS):
+        return True
+    # RID suffix on object id style names is rare; name match is primary
+    return nl in ("administrators", "domain admins", "enterprise admins", "schema admins")
+
+
+def is_member_of_privileged_group(G, oid: str, max_depth: int = 25) -> Tuple[bool, List[str]]:
+    """True if principal is nested MemberOf a privileged group (DA/EA/…).
+
+    Returns (is_priv, list of privileged group names on the path).
+    """
+    if oid not in G:
+        return False, []
+    priv_groups: List[str] = []
+    seen = set()
+    stack = [(oid, 0)]
+    while stack:
+        cur, depth = stack.pop()
+        if cur in seen or depth > max_depth:
+            continue
+        seen.add(cur)
+        for _, dst, ed in G.out_edges(cur, data=True):
+            label = (ed.get("label") or "").lower()
+            if label not in ("memberof", "member_of", "member"):
+                continue
+            nd = G.nodes.get(dst) or {}
+            ntype = str(nd.get("type") or "").lower()
+            name = nd.get("name") or ""
+            if ntype == "group" or "group" in ntype:
+                if _group_name_is_privileged(name):
+                    if name not in priv_groups:
+                        priv_groups.append(name)
+                if depth + 1 <= max_depth:
+                    stack.append((dst, depth + 1))
+            else:
+                if depth + 1 <= max_depth:
+                    stack.append((dst, depth + 1))
+    return bool(priv_groups), priv_groups
+
+
+def collect_privileged_roast_targets(G, domain_filter=None) -> List[dict]:
+    """Users that are Kerberoastable and/or AS-REP roastable and nested into priv groups."""
+    rows: List[dict] = []
+    for n, d in G.nodes(data=True):
+        if d.get("is_azure", False):
+            continue
+        if not _domain_matches(d, domain_filter):
+            continue
+        if str(d.get("type", "")).lower() != "user":
+            continue
+        props = d.get("props") or {}
+        name = d.get("name") or ""
+        if name.upper().startswith("KRBTGT@") or name.upper() == "KRBTGT":
+            continue
+        sensitive = get_bool_prop_ci(props, ["sensitive", "Sensitive"], default=False)
+        if _prop_raw_ci(props, ["enabled", "Enabled"]) is None:
+            enabled = True
+        else:
+            enabled = get_bool_prop_ci(props, ["enabled", "Enabled"], default=True)
+        if not enabled or sensitive:
+            continue
+        kerb = _user_has_spn(props)
+        asrep = get_bool_prop_ci(
+            props, ["dontreqpreauth", "dontReqPreauth", "dont_req_preauth"]
+        )
+        if not kerb and not asrep:
+            continue
+        is_priv, groups = is_member_of_privileged_group(G, n)
+        if not is_priv:
+            continue
+        rows.append(
+            {
+                "oid": n,
+                "name": name,
+                "kerberoastable": kerb,
+                "asrep": asrep,
+                "groups": groups,
+                "node": d,
+            }
+        )
+    rows.sort(key=lambda r: (not r["kerberoastable"] or not r["asrep"], r["name"]))
+    return rows
+
+
+def print_privileged_roast_targets(G, domain_filter=None):
+    console.rule(
+        "[bold magenta]Privileged Kerberoast / AS-REP (nested into DA/EA/…) (AD)[/bold magenta]"
+    )
+    rows = collect_privileged_roast_targets(G, domain_filter)
+    max_display = 30
+    for i, r in enumerate(rows):
+        kinds = []
+        if r["kerberoastable"]:
+            kinds.append("Kerberoast")
+        if r["asrep"]:
+            kinds.append("AS-REP")
+        kind_str = "+".join(kinds)
+        groups = ", ".join(r["groups"][:3])
+        if len(r["groups"]) > 3:
+            groups += f" (+{len(r['groups']) - 3})"
+        ctx = format_privilege_context_tags(r["node"])
+        if i < max_display:
+            console.print(
+                f"  • [red]{r['name']}[/red] [{kind_str}] via [cyan]{groups}[/cyan]{ctx}"
+            )
+        if r["kerberoastable"]:
+            add_finding(
+                "Privileged Kerberoastable",
+                f"{r['name']} is Kerberoastable and member of {groups}{ctx}",
+                score=9,
+            )
+        if r["asrep"]:
+            add_finding(
+                "Privileged AS-REP Roastable",
+                f"{r['name']} is AS-REP roastable and member of {groups}{ctx}",
+                score=9,
+            )
+    if len(rows) > max_display:
+        console.print(f"  [dim]... and {len(rows) - max_display} more[/dim]")
+    if rows:
+        console.print(
+            Panel(
+                "[bold red]Impact:[/bold red] Roasting a privileged account can yield DA/EA credentials offline.\n"
+                "[bold]Abuse:[/bold] Kerberoast SPN users / AS-REP roast DONT_REQ_PREAUTH, then crack.\n"
+                "[bold]Mitigation:[/bold] Remove SPNs and preauth-disable from privileged accounts; "
+                "use gMSAs; protect with Protected Users.",
+                title="Abuse Suggestions: Privileged Roast",
+                border_style="red",
+            )
+        )
+    else:
+        console.print("[green]No privileged Kerberoast / AS-REP targets found[/green]")
+
+
 def print_sessions_localadmin(G, domain_filter=None):
     console.rule("[bold magenta]Session / LocalAdmin / RDP / DCOM Summary (AD)[/bold magenta]")
     computers = [n for n, d in G.nodes(data=True) if d['type'].lower() == 'computer' and (not domain_filter or d.get('props', {}).get('domain') == domain_filter) and not d.get('is_azure', False)]
@@ -2801,7 +2958,8 @@ def apply_profile_to_args(args, profile: dict):
         return args
     check_flags = {
         "shortest_paths", "dangerous_permissions", "adcs", "gpo_abuse", "dcsync",
-        "rbcd", "sessions", "kerberoastable", "as_rep_roastable", "sid_history",
+        "rbcd", "sessions", "kerberoastable", "as_rep_roastable", "privileged_roast",
+        "sid_history",
         "unconstrained_delegation", "password_descriptions", "password_never_expires",
         "password_not_required", "shadow_credentials", "gpo_parsing",
         "constrained_delegation", "laps", "azure_privileged_roles", "azure_app_secrets",
@@ -4481,7 +4639,8 @@ HELP_TABLE_SECTIONS = [
         "AD credentials",
         [
             ("--kerberoastable", "Users with SPNs (Kerberoast)", ""),
-            ("--as-rep-roastable", "DONT_REQ_PREAUTH users (AS-REP roast)", ""),
+            ("--as-rep-roastable", "Users with DONT_REQ_PREAUTH (AS-REP roast)", ""),
+            ("--privileged-roast", "Kerberoast/AS-REP users nested into DA/EA/…", "high priority"),
             ("--password-descriptions", "Passwords / secrets in descriptions", ""),
             ("--password-never-expires", "PasswordNeverExpires users", ""),
             ("--password-not-required", "PasswordNotRequired users", ""),
@@ -4755,6 +4914,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--sessions", action="store_true", help="LocalAdmin / RDP / DCOM / session summary")
     parser.add_argument("--kerberoastable", action="store_true", help="Kerberoastable accounts")
     parser.add_argument("--as-rep-roastable", action="store_true", help="AS-REP roastable accounts")
+    parser.add_argument(
+        "--privileged-roast",
+        action="store_true",
+        help="Kerberoast/AS-REP users nested into Domain Admins / Enterprise Admins / other priv groups",
+    )
     parser.add_argument("--sid-history", action="store_true", help="SID history abuse candidates")
     parser.add_argument("--unconstrained-delegation", action="store_true", help="Unconstrained delegation")
     parser.add_argument("--password-descriptions", action="store_true", help="Passwords in descriptions")
@@ -4919,6 +5083,7 @@ def main():
     selected_checks = any([
         args.shortest_paths, args.dangerous_permissions, args.adcs, args.gpo_abuse,
         args.dcsync, args.rbcd, args.sessions, args.kerberoastable, args.as_rep_roastable,
+        args.privileged_roast,
         args.sid_history, args.unconstrained_delegation, args.password_descriptions,
         args.password_never_expires, args.password_not_required, args.shadow_credentials,
         args.gpo_parsing, args.constrained_delegation, args.laps,
@@ -4937,6 +5102,7 @@ def main():
         only_dossier = not any([
             args.shortest_paths, args.dangerous_permissions, args.adcs, args.gpo_abuse,
             args.dcsync, args.rbcd, args.sessions, args.kerberoastable, args.as_rep_roastable,
+            args.privileged_roast,
             args.sid_history, args.unconstrained_delegation, args.password_descriptions,
             args.password_never_expires, args.password_not_required, args.shadow_credentials,
             args.gpo_parsing, args.constrained_delegation, args.laps,
@@ -4953,6 +5119,7 @@ def main():
     if args.from_user and not args.all and not any([
         args.shortest_paths, args.dangerous_permissions, args.adcs, args.gpo_abuse,
         args.dcsync, args.rbcd, args.sessions, args.kerberoastable, args.as_rep_roastable,
+        args.privileged_roast,
         args.sid_history, args.unconstrained_delegation, args.password_descriptions,
         args.password_never_expires, args.password_not_required, args.shadow_credentials,
         args.gpo_parsing, args.constrained_delegation, args.laps,
@@ -4992,6 +5159,8 @@ def main():
         print_kerberoastable(G, args.domain)
     if args.as_rep_roastable or run_all:
         print_as_rep_roastable(G, args.domain)
+    if args.privileged_roast or run_all:
+        print_privileged_roast_targets(G, args.domain)
     if args.sid_history or run_all:
         print_sid_history_abuse(G, args.domain)
     if args.unconstrained_delegation or run_all:
