@@ -51,6 +51,8 @@ SEVERITY_SCORES = {
     "Busiest Paths": 7, "Path Break": 8, "Password Age": 5, "Stale Accounts": 4,
     "Privilege Inventory": 6, "Owned Inventory": 7, "Compromise Dossier": 8,
     "Privileged Kerberoastable": 9, "Privileged AS-REP Roastable": 9,
+    "Collection Health": 3,
+    "HasSession": 6,
     # Azure-specific
     "Azure Privileged Roles": 10, "Azure App Secrets": 9, "Azure MFA Bypass": 8,
     "Azure Guest Access": 7, "Azure Service Principal Abuse": 8,
@@ -484,6 +486,112 @@ def _safe_extract_zip(zip_path, extract_to):
             dest.parent.mkdir(parents=True, exist_ok=True)
             with zip_ref.open(info) as src, open(dest, 'wb') as out:
                 out.write(src.read())
+
+def load_json_dirs(paths, debug=False):
+    """Load and merge SharpHound/AzureHound objects from multiple dirs/zips."""
+    merged = {}
+    pending_all = []
+    for p in paths:
+        if not p:
+            continue
+        part = load_json_dir(p, debug=debug)
+        if not part:
+            continue
+        # Preserve azure pending edges attached as special key if present
+        for oid, node in part.items():
+            if oid == "__azure_pending_edges__":
+                continue
+            merged[oid] = node
+        # load_json_dir currently returns only nodes dict; pending is internal
+    return merged
+
+
+def print_collection_health(G, nodes=None) -> dict:
+    """Print collection completeness banner (reliability ceiling for this zip)."""
+    console.rule("[bold magenta]Collection health[/bold magenta]")
+    type_counts = Counter(
+        str((d or {}).get("type") or "?").lower() for _, d in G.nodes(data=True)
+    )
+    n_users = type_counts.get("user", 0)
+    n_computers = type_counts.get("computer", 0)
+    n_groups = type_counts.get("group", 0)
+    n_gpo = type_counts.get("gpo", 0)
+    n_domain = type_counts.get("domain", 0)
+    has_adcs = any(
+        t in type_counts
+        for t in (
+            "certtemplate",
+            "certificate template",
+            "enterprise ca",
+            "root ca",
+            "ntauth store",
+            "aia ca",
+        )
+    )
+    # Session / local group coverage (edges)
+    has_session = sum(1 for _, _, d in G.edges(data=True) if d.get("label") == "HasSession")
+    local_admin = sum(
+        1 for _, _, d in G.edges(data=True) if d.get("label") in ("LocalAdmin", "AdminTo")
+    )
+    can_rdp = sum(1 for _, _, d in G.edges(data=True) if d.get("label") == "CanRDP")
+    trust_edges = sum(
+        1
+        for _, _, d in G.edges(data=True)
+        if str(d.get("label") or "").lower().startswith("trusteddomain")
+    )
+    # Unresolved SID-like principal names on nodes
+    unresolved = 0
+    for _, d in G.nodes(data=True):
+        name = d.get("name") or ""
+        if _looks_like_sid(name):
+            unresolved += 1
+    ceiling = "high"
+    notes = []
+    if not has_adcs:
+        notes.append("no ADCS objects")
+        ceiling = "medium"
+    if has_session == 0:
+        notes.append("no HasSession edges")
+        ceiling = "medium" if ceiling == "high" else ceiling
+    if local_admin == 0 and can_rdp == 0:
+        notes.append("no LocalAdmin/CanRDP edges")
+        ceiling = "medium"
+    if unresolved > 20:
+        notes.append(f"{unresolved} SID-only principals")
+        ceiling = "low" if unresolved > 100 else "medium"
+    if n_computers < 5 and n_users < 20:
+        notes.append("small collection")
+    note_s = "; ".join(notes) if notes else "looks complete for AD object graph"
+    console.print(
+        f"  Objects: users={n_users} computers={n_computers} groups={n_groups} "
+        f"gpos={n_gpo} domains={n_domain}"
+    )
+    console.print(
+        f"  Edges: HasSession={has_session} LocalAdmin/AdminTo={local_admin} "
+        f"CanRDP={can_rdp} trusts={trust_edges}"
+    )
+    console.print(
+        f"  ADCS data: {'yes' if has_adcs else 'no'} · "
+        f"SID-only nodes: {unresolved} · "
+        f"[bold]Reliability ceiling: {ceiling}[/bold] ({note_s})"
+    )
+    health = {
+        "users": n_users,
+        "computers": n_computers,
+        "groups": n_groups,
+        "has_adcs": has_adcs,
+        "has_session": has_session,
+        "unresolved_sids": unresolved,
+        "ceiling": ceiling,
+    }
+    if ceiling in ("low", "medium") and notes:
+        add_finding(
+            "Collection Health",
+            f"Reliability ceiling {ceiling}: {note_s}",
+            score=3,
+        )
+    return health
+
 
 def load_json_dir(directory, debug=False):
     nodes = {}
@@ -1711,10 +1819,12 @@ def _is_default_high_priv_name(name):
 def get_high_value_targets(G, domain_filter=None):
     # Prefer full group/role phrases; avoid bare "dc" which matches CDC-FILESERVER etc.
     # Do not treat every Certificate Template as HV (was: 'ca' in typ).
+    # Include Builtin Administrators so nested ITADMIN→Administrators paths surface.
     ad_keywords = [
         'domain admins', 'enterprise admins', 'schema admins', 'administrators',
         'krbtgt', 'domain controllers', 'dnsadmins', 'enterprise key admins',
         'enterprise ca', 'root ca', 'ntauth store', 'ntauth',
+        'builtin\\administrators',
     ]
     azure_keywords = [
         'global admin', 'user admin', 'application admin', 'exchange admin', 'sharepoint admin',
@@ -3030,7 +3140,7 @@ def print_dcsync_rights(G, domain_filter=None):
             label_lower = (d.get('label') or '').lower()
             by_principal[u].add(label_lower)
         for u, labels in by_principal.items():
-            principal_name = G.nodes[u]['name']
+            principal_name = resolve_principal_display_name(G, u)
             has_gc = bool(labels & get_changes_labels)
             has_gca = bool(labels & get_changes_all_labels)
             has_filtered = bool(labels & filtered_set_labels)
@@ -3064,16 +3174,23 @@ def print_dcsync_rights(G, domain_filter=None):
                         f"{principal_name} can DCSync on {domain_name} (unexpected)",
                     )
             elif has_gca and not has_gc:
-                # Incomplete — note but do not call full DCSync
-                console.print(
-                    f"[yellow]Partial replication rights[/yellow]: [green]{principal_name}[/green] "
-                    f"has GetChangesAll without GetChanges on [cyan]{domain_name}[/cyan]"
-                )
-                add_finding(
-                    "DCSync",
-                    f"{principal_name} has GetChangesAll only on {domain_name}",
-                    score=6,
-                )
+                # Incomplete — note but do not call full DCSync.
+                # Domain Controllers / other expected holders often show this layout; demote noise.
+                if is_expected_dcsync_principal(G, u) or _is_expected_dcsync_name(principal_name):
+                    console.print(
+                        f"[dim]Partial replication (expected layout)[/dim]: [cyan]{principal_name}[/cyan] "
+                        f"has GetChangesAll without GetChanges on [cyan]{domain_name}[/cyan]"
+                    )
+                else:
+                    console.print(
+                        f"[yellow]Partial replication rights[/yellow]: [green]{principal_name}[/green] "
+                        f"has GetChangesAll without GetChanges on [cyan]{domain_name}[/cyan]"
+                    )
+                    add_finding(
+                        "DCSync",
+                        f"{principal_name} has GetChangesAll only on {domain_name}",
+                        score=4,
+                    )
                 found = True
             elif has_filtered and not (has_gc and has_gca):
                 console.print(
@@ -3176,23 +3293,65 @@ def _looks_like_sid(value: str) -> bool:
     return s.upper().startswith("S-1-") or "-S-1-" in s.upper()
 
 
+def collect_known_domain_sids(G) -> Dict[str, str]:
+    """Map domain SID (S-1-5-21-…) → domain DNS/NetBIOS name for foreign SID labels."""
+    mapping: Dict[str, str] = {}
+    for n, d in G.nodes(data=True):
+        if str(d.get("type") or "").lower() != "domain":
+            continue
+        props = d.get("props") or {}
+        dname = d.get("name") or props.get("name") or props.get("Name") or ""
+        candidates = [
+            props.get("domainsid"),
+            props.get("domainSid"),
+            props.get("objectid"),
+            props.get("ObjectIdentifier"),
+            n if _looks_like_sid(str(n)) else None,
+        ]
+        for sid in candidates:
+            if sid and _looks_like_sid(str(sid)) and dname and not _looks_like_sid(str(dname)):
+                mapping[str(sid)] = str(dname)
+    return mapping
+
+
+def format_sid_with_domain_context(sid: str, domain_sids: Dict[str, str]) -> str:
+    """Label a raw SID using known domain SID prefixes (foreign / unresolved)."""
+    s = str(sid or "")
+    if not _looks_like_sid(s):
+        return s
+    # Longest domain SID prefix match
+    best = None
+    best_len = -1
+    for dsid, dname in (domain_sids or {}).items():
+        if s == dsid or s.startswith(dsid + "-"):
+            if len(dsid) > best_len:
+                best = (dsid, dname)
+                best_len = len(dsid)
+    if best:
+        dsid, dname = best
+        if s == dsid:
+            return f"{dname} ({s})"
+        rid = s[len(dsid) + 1 :]
+        return f"FOREIGN ({dname} RID-{rid})"
+    return f"UNRESOLVED ({s})"
+
+
 def resolve_principal_display_name(G, oid) -> str:
     """Best display name for a principal node (prefer non-SID labels)."""
     if oid not in G:
-        return str(oid)
+        domain_sids = collect_known_domain_sids(G) if G is not None else {}
+        return format_sid_with_domain_context(str(oid), domain_sids)
     d = G.nodes[oid] or {}
     name = d.get("name") or str(oid)
-    if not _looks_like_sid(name) or name != str(oid):
-        # Prefer human name when present
-        if not _looks_like_sid(name):
-            return name
+    if not _looks_like_sid(name):
+        return name
     props = d.get("props") or {}
     for key in ("name", "Name", "displayname", "displayName", "samaccountname", "samAccountName"):
         cand = props.get(key)
         if cand and not _looks_like_sid(str(cand)):
             return str(cand)
-    # Last resort: keep SID but mark unresolved only if still SID-only
-    return name
+    domain_sids = collect_known_domain_sids(G)
+    return format_sid_with_domain_context(name, domain_sids)
 
 
 def _is_admin_tier_principal_name(name: str) -> bool:
@@ -3349,6 +3508,59 @@ def summarize_can_configure_rbcd(rows: List[dict]) -> List[dict]:
     return summary
 
 
+def _rbcd_configure_severity(G, summary_row: dict, rows: List[dict]) -> Tuple[int, str]:
+    """Tier can-configure-RBCD: DC target critical; bulk domain-join lower severity."""
+    count = int(summary_row.get("count") or 0)
+    principal = (summary_row.get("principal") or "").lower()
+    rights = {str(r).lower() for r in (summary_row.get("rights") or [])}
+    # Any grant on a domain controller → critical
+    hits_dc = False
+    for r in rows:
+        if r.get("principal") != summary_row.get("principal"):
+            continue
+        tid = r.get("target_oid")
+        tname = (r.get("target") or "").lower()
+        if tid and tid in G:
+            props = (G.nodes[tid].get("props") or {})
+            if get_bool_prop_ci(props, ["isdc", "IsDC"]) or "domain controllers" in (
+                (props.get("distinguishedname") or props.get("distinguishedName") or "")
+            ).lower():
+                hits_dc = True
+                break
+        if "dc." in tname or tname.startswith("dc") or ".dc." in tname:
+            # weak name heuristic only when props missing
+            if "domaincontrol" in tname or tname.startswith("dc") or "-dc." in tname:
+                hits_dc = True
+                break
+        if tid and tid in G:
+            nd = G.nodes[tid]
+            # MemberOf Domain Controllers group
+            for _, dst, ed in G.out_edges(tid, data=True):
+                if (ed.get("label") or "").lower() not in ("memberof", "member_of", "member"):
+                    continue
+                gname = ((G.nodes.get(dst) or {}).get("name") or "").lower()
+                if "domain controllers@" in gname or gname.startswith("domain controllers"):
+                    hits_dc = True
+                    break
+            if hits_dc:
+                break
+    if hits_dc:
+        return 9, "includes domain controller"
+    # Common domain-join / SCCM style bulk WAR
+    joinish = any(
+        x in principal
+        for x in ("domainjoin", "domain-join", "sccm", "mdm", "intune", "join")
+    )
+    war_only = rights and rights <= {"writeaccountrestrictions", "owns", "allextendedrights"}
+    if count >= 20 and (joinish or war_only):
+        return 7, "bulk domain-join style ACL (verify scope)"
+    if count >= 50:
+        return 7, "very broad computer control"
+    if "genericall" in rights or "genericwrite" in rights:
+        return 9, "strong write on computer object(s)"
+    return 8, "can configure RBCD"
+
+
 def print_can_configure_rbcd(G, domain_filter=None):
     console.rule(
         "[bold magenta]Can Configure RBCD (write AllowedToAct on resource) (AD)[/bold magenta]"
@@ -3365,18 +3577,19 @@ def print_can_configure_rbcd(G, domain_filter=None):
         if s["count"] > len(s["targets"]):
             samples += f", … (+{s['count'] - len(s['targets'])} more)"
         rights = ", ".join(s["rights"][:4])
+        score, tier_note = _rbcd_configure_severity(G, s, rows)
         if i < max_display:
             console.print(
                 f"  • [green]{s['principal']}[/green] "
                 f"[red]×{s['count']}[/red] computers "
-                f"[dim]({rights})[/dim] e.g. [cyan]{samples}[/cyan]"
+                f"[dim]({rights}; {tier_note})[/dim] e.g. [cyan]{samples}[/cyan]"
             )
         if i < max_findings:
             add_finding(
                 "Can Configure RBCD",
                 f"{s['principal']} can configure RBCD on {s['count']} computer(s) "
-                f"via {rights}",
-                score=9,
+                f"via {rights} [{tier_note}]",
+                score=score,
             )
     if len(summary) > max_display:
         console.print(f"  [dim]... and {len(summary) - max_display} more principals[/dim]")
@@ -3384,7 +3597,7 @@ def print_can_configure_rbcd(G, domain_filter=None):
         add_finding(
             "Can Configure RBCD",
             f"{len(summary) - max_findings} additional principals with can-configure-RBCD grants",
-            score=9,
+            score=8,
         )
     if rows:
         console.print(
@@ -3424,9 +3637,9 @@ def print_shortest_paths(G, fast=False, max_paths=10, target_filter=None, domain
     interesting_users = [u for u in users if not _is_noisy_source(u)]
     if not interesting_users:
         interesting_users = users
-    # Prioritize classic DA/EA/krbtgt-style targets; in --fast only use these few
+    # Prioritize classic DA/EA/Administrators/krbtgt-style targets; in --fast only use these few
     priority_kw = (
-        'domain admins', 'enterprise admins', 'schema admins', 'krbtgt',
+        'domain admins', 'enterprise admins', 'schema admins', 'administrators', 'krbtgt',
         'global admin', 'privileged role admin',
     )
     prioritized = [t for t in targets if any(k in t[1].lower() for k in priority_kw)]
@@ -3685,7 +3898,7 @@ def _user_has_spn(props) -> bool:
 def print_kerberoastable(G, domain_filter=None):
     console.rule("[bold magenta]Kerberoastable Accounts (AD)[/bold magenta]")
     hits = []
-    max_display = 20
+    max_display = 50
     for n, d in G.nodes(data=True):
         if d.get('is_azure', False):
             continue
@@ -3703,18 +3916,24 @@ def print_kerberoastable(G, domain_filter=None):
         if name.upper().startswith('KRBTGT@') or name.upper() == 'KRBTGT':
             continue
         if hasspn and not sensitive and enabled:
-            hits.append(d)
-    for i, d in enumerate(hits):
+            hits.append((n, d))
+    console.print(f"[dim]Found {len(hits)} kerberoastable account(s)[/dim]")
+    for i, (oid, d) in enumerate(hits):
         props = d.get('props') or {}
         uac_raw = _prop_raw_ci(props, ['useraccountcontrol', 'UserAccountControl'])
         uac_str = f" | UAC: {decode_uac(uac_raw)}" if uac_raw is not None else ""
         ctx = format_privilege_context_tags(d)
+        is_priv, _ = is_member_of_privileged_group(G, oid)
+        priv_tag = " [red][PRIV][/red]" if is_priv else ""
         if i < max_display:
-            console.print(f"  • [cyan]{d['name']}[/cyan]{uac_str}{ctx}")
+            console.print(f"  • [cyan]{d['name']}[/cyan]{uac_str}{ctx}{priv_tag}")
         # One findings-table row per account (not a single aggregated count)
         add_finding("Kerberoastable", f"{d['name']} has SPN (Kerberoastable){ctx}", score=5)
     if len(hits) > max_display:
-        console.print(f"  [dim]... and {len(hits) - max_display} more[/dim]")
+        console.print(
+            f"  [dim]... and {len(hits) - max_display} more "
+            f"(total {len(hits)}; use --export json for full list)[/dim]"
+        )
     if hits:
         print_abuse_panel("Kerberoastable")
     else:
@@ -3723,7 +3942,7 @@ def print_kerberoastable(G, domain_filter=None):
 def print_as_rep_roastable(G, domain_filter=None):
     console.rule("[bold magenta]AS-REP Roastable Accounts (DONT_REQ_PREAUTH) (AD)[/bold magenta]")
     hits = []
-    max_display = 20
+    max_display = 50
     for n, d in G.nodes(data=True):
         if d.get('is_azure', False):
             continue
@@ -3745,21 +3964,27 @@ def print_as_rep_roastable(G, domain_filter=None):
         sensitive = get_bool_prop_ci(props, ['sensitive', 'Sensitive'], default=False)
         enabled = _account_is_enabled(props, default=True)
         if dontreqpreauth and not sensitive and enabled:
-            hits.append(d)
-    for i, d in enumerate(hits):
+            hits.append((n, d))
+    console.print(f"[dim]Found {len(hits)} AS-REP roastable account(s)[/dim]")
+    for i, (oid, d) in enumerate(hits):
         props = d.get('props') or {}
         uac_raw = _prop_raw_ci(props, ['useraccountcontrol', 'UserAccountControl'])
         uac_str = f" | UAC: {decode_uac(uac_raw)}" if uac_raw is not None else ""
         ctx = format_privilege_context_tags(d)
+        is_priv, _ = is_member_of_privileged_group(G, oid)
+        priv_tag = " [red][PRIV][/red]" if is_priv else ""
         if i < max_display:
-            console.print(f"  • [cyan]{d['name']}[/cyan]{uac_str}{ctx}")
+            console.print(f"  • [cyan]{d['name']}[/cyan]{uac_str}{ctx}{priv_tag}")
         add_finding(
             "AS-REP Roastable",
             f"{d['name']} has DONT_REQ_PREAUTH (AS-REP roastable){ctx}",
             score=5,
         )
     if len(hits) > max_display:
-        console.print(f"  [dim]... and {len(hits) - max_display} more[/dim]")
+        console.print(
+            f"  [dim]... and {len(hits) - max_display} more "
+            f"(total {len(hits)}; use --export json for full list)[/dim]"
+        )
     if hits:
         print_abuse_panel("AS-REP Roastable")
     else:
@@ -3786,15 +4011,30 @@ PRIVILEGED_GROUP_MATCHERS = (
 def _group_name_is_privileged(name: str) -> bool:
     if not name:
         return False
+    if _is_builtin_administrators_name(name):
+        return True
     nl = str(name).lower()
     if any(m in nl for m in PRIVILEGED_GROUP_MATCHERS):
         return True
-    # RID suffix on object id style names is rare; name match is primary
-    return nl in ("administrators", "domain admins", "enterprise admins", "schema admins")
+    sam = _principal_sam(name)
+    return sam in (
+        "administrators",
+        "domain admins",
+        "enterprise admins",
+        "schema admins",
+        "dnsadmins",
+        "account operators",
+        "backup operators",
+        "server operators",
+        "print operators",
+        "group policy creator owners",
+        "enterprise key admins",
+        "key admins",
+    )
 
 
 def is_member_of_privileged_group(G, oid: str, max_depth: int = 25) -> Tuple[bool, List[str]]:
-    """True if principal is nested MemberOf a privileged group (DA/EA/…).
+    """True if principal is nested MemberOf a privileged group (DA/EA/Administrators/…).
 
     Returns (is_priv, list of privileged group names on the path).
     """
@@ -3808,27 +4048,27 @@ def is_member_of_privileged_group(G, oid: str, max_depth: int = 25) -> Tuple[boo
         if cur in seen or depth > max_depth:
             continue
         seen.add(cur)
+        # Outbound MemberOf (user → group)
         for _, dst, ed in G.out_edges(cur, data=True):
             label = (ed.get("label") or "").lower()
             if label not in ("memberof", "member_of", "member"):
                 continue
             nd = G.nodes.get(dst) or {}
-            ntype = str(nd.get("type") or "").lower()
             name = nd.get("name") or ""
-            if ntype == "group" or "group" in ntype:
-                if _group_name_is_privileged(name):
-                    if name not in priv_groups:
-                        priv_groups.append(name)
-                if depth + 1 <= max_depth:
-                    stack.append((dst, depth + 1))
-            else:
-                if depth + 1 <= max_depth:
-                    stack.append((dst, depth + 1))
+            if _group_name_is_privileged(name):
+                if name not in priv_groups:
+                    priv_groups.append(name)
+            if depth + 1 <= max_depth:
+                stack.append((dst, depth + 1))
     return bool(priv_groups), priv_groups
 
 
 def collect_privileged_roast_targets(G, domain_filter=None) -> List[dict]:
-    """Users that are Kerberoastable and/or AS-REP roastable and nested into priv groups."""
+    """Users that are Kerberoastable and/or AS-REP roastable and nested into priv groups.
+
+    Also treats AdminCount=1 + roastable as privileged when group walk finds nothing
+    (partial collections / missing MemberOf edges).
+    """
     rows: List[dict] = []
     for n, d in G.nodes(data=True):
         if d.get("is_azure", False):
@@ -3842,19 +4082,25 @@ def collect_privileged_roast_targets(G, domain_filter=None) -> List[dict]:
         if name.upper().startswith("KRBTGT@") or name.upper() == "KRBTGT":
             continue
         sensitive = get_bool_prop_ci(props, ["sensitive", "Sensitive"], default=False)
-        if _prop_raw_ci(props, ["enabled", "Enabled"]) is None:
-            enabled = True
-        else:
-            enabled = get_bool_prop_ci(props, ["enabled", "Enabled"], default=True)
+        enabled = _account_is_enabled(props, default=True)
         if not enabled or sensitive:
             continue
         kerb = _user_has_spn(props)
         asrep = get_bool_prop_ci(
             props, ["dontreqpreauth", "dontReqPreauth", "dont_req_preauth"]
         )
+        if not asrep:
+            uac_raw = _prop_raw_ci(props, ["useraccountcontrol", "UserAccountControl"])
+            try:
+                asrep = bool(int(uac_raw) & 0x400000)
+            except (TypeError, ValueError):
+                pass
         if not kerb and not asrep:
             continue
         is_priv, groups = is_member_of_privileged_group(G, n)
+        if not is_priv and get_bool_prop_ci(props, ["admincount", "adminCount"], default=False):
+            is_priv = True
+            groups = list(groups) + ["AdminCount=1"]
         if not is_priv:
             continue
         rows.append(
@@ -3941,10 +4187,81 @@ def print_sessions_localadmin(G, domain_filter=None):
             counts[d.get('label')][u] += 1
     for right, c in counts.items():
         for principal, count in c.most_common(5):
-            examples = [G.nodes[v]['name'] for pu, v, ed in G.edges(data=True) if pu == principal and ed.get('label') == right][:3]
-            table.add_row(G.nodes[principal]['name'], right, str(count), ", ".join(examples))
+            examples = [
+                resolve_principal_display_name(G, v)
+                for pu, v, ed in G.edges(data=True)
+                if pu == principal and ed.get('label') == right
+            ][:3]
+            table.add_row(
+                resolve_principal_display_name(G, principal),
+                right,
+                str(count),
+                ", ".join(examples),
+            )
     console.print(table)
-    console.print(f"[dim]Total computers: {len(computers)}[/dim]")
+
+    # Explicit HasSession inventory (PrivilegedSessions / RegistrySessions / Sessions ingest)
+    sess_table = Table(
+        title="HasSession (user sessions on computers)",
+        show_header=True,
+        header_style="bold yellow",
+    )
+    sess_table.add_column("Computer", style="cyan")
+    sess_table.add_column("User", style="green")
+    session_pairs = []
+    for u, v, d in G.edges(data=True):
+        if (d.get("label") or "") != "HasSession":
+            continue
+        # Prefer Computer → User direction from ingest
+        ud, vd = G.nodes.get(u) or {}, G.nodes.get(v) or {}
+        if str(ud.get("type") or "").lower() == "computer":
+            comp, user = u, v
+        elif str(vd.get("type") or "").lower() == "computer":
+            comp, user = v, u
+        else:
+            continue
+        if domain_filter and not (
+            _domain_matches(G.nodes.get(comp) or {}, domain_filter)
+            or _domain_matches(G.nodes.get(user) or {}, domain_filter)
+        ):
+            continue
+        session_pairs.append((comp, user))
+    # Dedupe
+    seen_sess = set()
+    unique_sess = []
+    for c, u in session_pairs:
+        key = (c, u)
+        if key in seen_sess:
+            continue
+        seen_sess.add(key)
+        unique_sess.append((c, u))
+    max_sess = 40
+    for i, (c, u) in enumerate(unique_sess):
+        if i < max_sess:
+            sess_table.add_row(
+                resolve_principal_display_name(G, c),
+                resolve_principal_display_name(G, u),
+            )
+    if unique_sess:
+        console.print(sess_table)
+        if len(unique_sess) > max_sess:
+            console.print(f"  [dim]... and {len(unique_sess) - max_sess} more sessions[/dim]")
+        # High-signal: session of high-priv user on non-DC
+        for c, u in unique_sess[:200]:
+            uname = resolve_principal_display_name(G, u)
+            if is_member_of_privileged_group(G, u)[0] or _is_default_high_priv_name(uname):
+                cname = resolve_principal_display_name(G, c)
+                add_finding(
+                    "HasSession",
+                    f"Privileged session: {uname} on {cname}",
+                    score=7,
+                )
+                break  # one sample finding; avoid flood
+    else:
+        console.print("[dim]No HasSession edges in graph (sessions may not have been collected)[/dim]")
+    console.print(
+        f"[dim]Total computers: {len(computers)} · HasSession pairs: {len(unique_sess)}[/dim]"
+    )
 
 def print_paths_to_owned(G, owned_str, domain_filter=None):
     if not owned_str:
@@ -4575,6 +4892,7 @@ QUICK_WINS_CHECKS = (
     "sessions",
     "shortest_paths",
     "path_break",
+    "trust",  # domain trusts / SID filtering
 )
 
 
@@ -4644,6 +4962,7 @@ def cli_has_explicit_analysis_intent(args) -> bool:
             getattr(args, "gpo_content_dir", None),
             getattr(args, "busiest_paths", None),
             getattr(args, "path_break", False),
+            getattr(args, "trust", False),
             getattr(args, "password_age", False),
             getattr(args, "stale_accounts", False),
             getattr(args, "privilege_inventory", False),
@@ -4762,7 +5081,7 @@ def apply_profile_to_args(args, profile: dict):
         "constrained_delegation", "laps", "azure_privileged_roles", "azure_app_secrets",
         "azure_mfa_bypass", "azure_guest_access", "azure_sp_abuse", "deep_analysis",
         "password_age", "stale_accounts", "privilege_inventory", "owned_inventory",
-        "inventory", "path_break", "busiest_paths",
+        "inventory", "path_break", "busiest_paths", "trust",
     }
     checks = profile.get("checks") or profile.get("flags") or []
     if isinstance(checks, list):
@@ -4881,11 +5200,24 @@ def _domain_matches(d: dict, domain_filter: Optional[str]) -> bool:
 def _priority_high_value_targets(G, domain_filter=None, limit=5):
     targets = get_high_value_targets(G, domain_filter)
     priority_kw = (
-        "domain admins", "enterprise admins", "schema admins", "krbtgt",
-        "global admin", "privileged role admin",
+        "domain admins", "enterprise admins", "schema admins", "administrators",
+        "krbtgt", "global admin", "privileged role admin",
     )
     prioritized = [t for t in targets if any(k in t[1].lower() for k in priority_kw)]
-    return (prioritized or targets)[:limit]
+    # Prefer exact Builtin Administrators / DA / EA first
+    def _rank(t):
+        name = t[1].lower()
+        if "domain admins" in name:
+            return 0
+        if "enterprise admins" in name:
+            return 1
+        if _is_builtin_administrators_name(t[1]) or name.startswith("administrators@"):
+            return 2
+        if "krbtgt" in name:
+            return 3
+        return 4
+    prioritized = sorted(prioritized or targets, key=_rank)
+    return prioritized[:limit]
 
 
 def _edge_label(G, u, v) -> str:
@@ -5024,6 +5356,32 @@ def collect_busiest_paths(
     return ranked[:top]
 
 
+# Path-break: prefer actionable abuse edges over default group membership noise.
+_PATH_BREAK_ACTIONABLE = frozenset({
+    "forcechangepassword", "genericall", "genericwrite", "writedacl", "writeowner",
+    "owns", "addkeycredentiallink", "writeaccountrestrictions", "addallowedtoact",
+    "allowedtoact", "canrdp", "hassession", "adminto", "localadmin",
+    "allextendedrights", "addmember", "addself",
+})
+
+
+def _path_break_edge_score(G, u, v, label: str, paths_broken: int) -> float:
+    """Higher is better remediation candidate."""
+    lab = (label or "").lower()
+    score = float(paths_broken)
+    if lab in _PATH_BREAK_ACTIONABLE or lab.replace("_", "") in _PATH_BREAK_ACTIONABLE:
+        score += 1000.0
+    if lab in ("memberof", "member_of", "member"):
+        # Deprioritize default high-priv membership edges (e.g. Admin → DA)
+        uname = (G.nodes.get(u) or {}).get("name") or ""
+        vname = (G.nodes.get(v) or {}).get("name") or ""
+        if _is_default_high_priv_name(uname) or _is_default_high_priv_name(vname):
+            score -= 500.0
+        else:
+            score -= 50.0  # membership still less actionable than ACL
+    return score
+
+
 def collect_path_breaks(
     G,
     domain_filter=None,
@@ -5033,6 +5391,9 @@ def collect_path_breaks(
     """
     Identify edges whose removal would break the most collected attack paths
     (PlumHound Analyze Path / path-destroyer style remediation hints).
+
+    Prefers non-default ACL / session / RDP edges over MemberOf between built-in
+    high-priv principals (e.g. do not recommend "remove Administrator from DA").
     """
     paths = collect_paths_to_high_value(
         G,
@@ -5055,22 +5416,38 @@ def collect_path_breaks(
             edge_paths[key].add(path_id)
             if key not in edge_examples:
                 edge_examples[key] = p
-    ranked = []
-    for (u, v, label), path_ids in sorted(edge_paths.items(), key=lambda kv: len(kv[1]), reverse=True):
-        example = edge_examples[(u, v, label)]
+    scored = []
+    for (u, v, label), path_ids in edge_paths.items():
         broken = len(path_ids)
+        scored.append(((u, v, label), broken, _path_break_edge_score(G, u, v, label, broken)))
+    scored.sort(key=lambda x: (-x[2], -x[1]))
+    ranked = []
+    for (u, v, label), broken, _sc in scored:
+        example = edge_examples[(u, v, label)]
+        uname = resolve_principal_display_name(G, u)
+        vname = resolve_principal_display_name(G, v)
+        lab_l = (label or "").lower()
+        non_actionable = (
+            lab_l in ("memberof", "member_of", "member")
+            and (
+                _is_default_high_priv_name(uname)
+                or _is_default_high_priv_name(vname)
+            )
+        )
+        note = " [default membership — low actionability]" if non_actionable else ""
         ranked.append({
             "from_id": u,
             "to_id": v,
-            "from": G.nodes[u]["name"],
-            "to": G.nodes[v]["name"],
+            "from": uname,
+            "to": vname,
             "relationship": label,
             "paths_broken": broken,
             "example_source": example["source"],
             "example_target": example["target"],
+            "non_actionable": non_actionable,
             "recommendation": (
-                f"Remove relationship {label} between {G.nodes[u]['name']} and "
-                f"{G.nodes[v]['name']} (breaks {broken} path(s) toward high-value)"
+                f"Remove relationship {label} between {uname} and "
+                f"{vname} (breaks {broken} path(s) toward high-value){note}"
             ),
         })
         if len(ranked) >= top:
@@ -5113,17 +5490,20 @@ def print_path_breaks(G, domain_filter=None, top=15, fast=False):
         console.print("[yellow]No path-break recommendations (no attack paths found)[/yellow]")
         return ranked
     for i, row in enumerate(ranked, 1):
+        tag = " [dim](low actionability)[/dim]" if row.get("non_actionable") else ""
         console.print(
             f"  [bold]{i}.[/bold] Removing [yellow]{row['relationship']}[/yellow] between "
             f"[cyan]{row['from']}[/cyan] and [cyan]{row['to']}[/cyan] breaks "
             f"[red]{row['paths_broken']}[/red] path(s) "
-            f"[dim](e.g. {row['example_source']} → {row['example_target']})[/dim]"
+            f"[dim](e.g. {row['example_source']} → {row['example_target']})[/dim]{tag}"
         )
+    # Prefer first actionable edge for the findings table
+    pick = next((r for r in ranked if not r.get("non_actionable")), ranked[0])
     add_finding(
         "Path Break",
-        f"{ranked[0]['relationship']} {ranked[0]['from']} → {ranked[0]['to']} "
-        f"breaks {ranked[0]['paths_broken']} path(s)",
-        score=8,
+        f"{pick['relationship']} {pick['from']} → {pick['to']} "
+        f"breaks {pick['paths_broken']} path(s)",
+        score=8 if not pick.get("non_actionable") else 5,
     )
     return ranked
 
@@ -7287,6 +7667,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=".",
         help="Path to SharpHound & AzureHound JSON files or zip archive.",
     )
+    parser.add_argument(
+        "--merge",
+        nargs="+",
+        metavar="PATH",
+        help="Additional SharpHound/AzureHound dirs or zips to merge (multi-domain/forest)",
+    )
+    parser.add_argument(
+        "--trust",
+        action="store_true",
+        help="Domain trust / SID-filtering abuse checks",
+    )
     parser.add_argument("--shortest-paths", action="store_true", help="Shortest paths to high-value targets")
     parser.add_argument("--dangerous-permissions", action="store_true", help="Dangerous ACLs on high-value objects")
     parser.add_argument("--adcs", action="store_true", help="ADCS ESC template vulnerabilities")
@@ -7512,11 +7903,20 @@ def main():
     if args.db and os.path.exists(args.db):
         G, name_to_oid = load_graph_from_db(args.db)
     else:
-        nodes = load_json_dir(args.directory, debug=DEBUG)
+        paths = [args.directory]
+        if getattr(args, "merge", None):
+            paths.extend(args.merge)
+        if len(paths) > 1:
+            console.print(f"[dim]Merging {len(paths)} collection path(s)…[/dim]")
+            nodes = load_json_dirs(paths, debug=DEBUG)
+        else:
+            nodes = load_json_dir(args.directory, debug=DEBUG)
         if not nodes:
             console.print("[red]No objects loaded. Exiting.[/red]")
             sys.exit(1)
         G, name_to_oid = build_graph(nodes, args.db if args.db else None, debug=DEBUG)
+
+    print_collection_health(G)
 
     if args.list_domains:
         print_list_domains(G)
@@ -7542,6 +7942,7 @@ def main():
         args.stale_accounts, args.privilege_inventory, args.owned_inventory,
         args.inventory, args.report_pack, args.csv_pack, args.export_zip, args.from_user,
         getattr(args, "from_user_export", None) is not None,
+        getattr(args, "trust", False),
     ])
     run_all = args.all or not selected_checks
     # Pure compromise-dossier run should not pull in default "run everything"
@@ -7708,10 +8109,11 @@ def main():
             fast=args.fast,
         )
 
-    # Trust / group nesting / stats only on --all or default full run (run_all),
-    # not when the user selected a narrow check set.
-    if run_all:
+    # Trusts: quick-wins / --trust / full run
+    if getattr(args, "trust", False) or run_all:
         print_trust_abuse(G, args.domain)
+    # Group nesting / stats only on --all or default full run (run_all)
+    if run_all:
         print_group_analysis(G, args.domain, deep_analysis=args.deep_analysis)
         print_stats_dashboard(G, args.domain)
     elif args.deep_analysis:

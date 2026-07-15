@@ -25,6 +25,7 @@ checks:
   - sessions
   - shortest-paths
   - path-break
+  - trust
 busiest_paths: short
 busiest_paths_top: 5
 path_break_top: 10
