@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Ten realistic multi-hop engagement scenarios as SharpHound CE corpora.
+"""Twenty realistic multi-hop engagement scenarios as SharpHound CE corpora.
 
 Each scenario plants a composite attack chain (foothold → pivots → DA/DCSync)
 drawn from common red-team patterns. Fictional domains only — no customer data.
+
+s01–s10: classic chains (kerberoast DCSync, helpdesk, unconstrained, ESC1, …)
+s11–s20: additional common debt (svc in DA, ESC8, LAPS readers, DNSAdmins, …)
 
 Used by tools/run_scenario_battery.py.
 """
@@ -106,6 +109,97 @@ ENGAGEMENT_SCENARIOS = [
         "foothold": "GPO editors group member",
         "summary": (
             "Editable app GPO + Kerberoastable svc + constrained/unconstrained on related host."
+        ),
+    },
+    # ---- Scenarios 11–20 (additional common misconfigs) ----
+    {
+        "id": "s11_svc_in_domain_admins",
+        "title": "Service accounts directly in Domain Admins (Kerberoast → DA)",
+        "domain": "LOGISTICS.LOCAL",
+        "foothold": "jdoe (Domain User)",
+        "summary": (
+            "svc_oracle / svc_sharepoint nested in Domain Admins with SPNs; roast → DA."
+        ),
+    },
+    {
+        "id": "s12_adcs_esc8_web_enrollment",
+        "title": "AD CS ESC8 web enrollment (relay-ready CA surface)",
+        "domain": "RELAYLAB.LOCAL",
+        "foothold": "any authenticated user (network path assumed)",
+        "summary": (
+            "Enterprise CA with HasWebEnrollment; graph-visible ESC8 signal for relay chains."
+        ),
+    },
+    {
+        "id": "s13_laps_overpermissive_readers",
+        "title": "LAPS over-permissive ReadLAPSPassword ACLs",
+        "domain": "HELPDESKLAPS.LOCAL",
+        "foothold": "helpdesk or Domain User with LAPS read",
+        "summary": (
+            "Helpdesk/Domain Users can ReadLAPSPassword on workstations → local admin pivot."
+        ),
+    },
+    {
+        "id": "s14_dnsadmins_dangerous_rights",
+        "title": "DNSAdmins with dangerous rights on DC",
+        "domain": "DNSOPS.LOCAL",
+        "foothold": "user nested into DNSAdmins",
+        "summary": (
+            "DNSAdmins member path + GenericAll/Write on DC computer object."
+        ),
+    },
+    {
+        "id": "s15_print_operators_path",
+        "title": "Print Operators / Server Operators nesting toward privilege",
+        "domain": "OPSBUILTINS.LOCAL",
+        "foothold": "helpdesk nested into Print Operators",
+        "summary": (
+            "Built-in operator groups retain members; graph shows membership + HV adjacency."
+        ),
+    },
+    {
+        "id": "s16_tiering_fail_wdigest_adjacent",
+        "title": "Tiering fail: local admin + DA session (WDigest-adjacent graph)",
+        "domain": "WDSURFACE.LOCAL",
+        "foothold": "local admin on workstation",
+        "summary": (
+            "Graph-visible half of WDigest abuse: LocalAdmin + DA HasSession (host registry not in SH)."
+        ),
+    },
+    {
+        "id": "s17_domain_nc_krbtgt_acl",
+        "title": "Overly permissive ACLs on domain NC / krbtgt",
+        "domain": "ACLDEBT.LOCAL",
+        "foothold": "IT support group member",
+        "summary": (
+            "IT_Support has WriteDacl/GenericWrite on domain object and GenericAll on krbtgt."
+        ),
+    },
+    {
+        "id": "s18_gpp_cpassword_gpo",
+        "title": "GPO Preferences-style embedded credentials (GPO content)",
+        "domain": "GPPLAB.LOCAL",
+        "foothold": "any Domain User (SYSVOL read)",
+        "summary": (
+            "GPO props plant cpassword/task markers BloodBash GPO content parser flags."
+        ),
+    },
+    {
+        "id": "s19_constrained_protocol_transition",
+        "title": "Constrained delegation with protocol transition",
+        "domain": "S4ULAB.LOCAL",
+        "foothold": "compromise of web tier computer/account",
+        "summary": (
+            "Computer/user TrustedToAuth + AllowedToDelegate toward high-value SPNs."
+        ),
+    },
+    {
+        "id": "s20_entra_connect_overpriv",
+        "title": "Entra Connect / MSOL sync account over-privileged on-prem",
+        "domain": "HYBRIDSYNC.LOCAL",
+        "foothold": "compromise of sync server or MSOL creds",
+        "summary": (
+            "MSOL_* has unexpected GetChanges+GetChangesAll (and optional EA adjacency)."
         ),
     },
 ]
@@ -1211,6 +1305,639 @@ def build_s10(seed: int) -> Tuple[dict, dict]:
     return b.files_and_gt(sc)
 
 
+# ---------------------------------------------------------------------------
+# Scenarios 11–20
+# ---------------------------------------------------------------------------
+
+
+def build_s11(seed: int) -> Tuple[dict, dict]:
+    """Service accounts nested directly into Domain Admins + SPN."""
+    sc = ENGAGEMENT_SCENARIOS[10]
+    b = EnvBuilder(sc["domain"], seed)
+    b.add_baseline_groups()
+    jdoe = b.add_user(1100, "jdoe")
+    svc_oracle = b.add_user(
+        1200,
+        "svc_oracle",
+        hasspn=True,
+        spns=[f"oracle/{sc['domain'].lower()}"],
+        description="ERP app pool — still in Domain Admins since 2019 upgrade",
+        admincount=True,
+        pwdneverexpires=True,
+    )
+    svc_sp = b.add_user(
+        1201,
+        "svc_sharepoint",
+        hasspn=True,
+        spns=[f"HTTP/sp.{sc['domain'].lower()}"],
+        admincount=True,
+    )
+    for g in b.groups:
+        if g["ObjectIdentifier"] == b.sid_da:
+            g["Members"] += [_mem(svc_oracle), _mem(svc_sp)]
+        if g["ObjectIdentifier"] == b.sid_du:
+            g["Members"] += [_mem(jdoe), _mem(svc_oracle), _mem(svc_sp)]
+    dc = b.add_computer(1001, "DC01", is_dc=True, haslaps=True)
+    for g in b.groups:
+        if g["ObjectIdentifier"] == b.sid_dcg:
+            g["Members"].append(_mem(dc, "Computer"))
+    b.add_filler(50, 55)
+    b.finalize_domain(
+        [
+            _ace(b.sid_admins, "Group", "GetChanges"),
+            _ace(b.sid_admins, "Group", "GetChangesAll"),
+            _ace(b.sid_da, "Group", "GenericAll"),
+        ]
+    )
+    b.notes = [
+        "svc_oracle and svc_sharepoint are Domain Admins with SPNs.",
+        "Any user can Kerberoast → cracked hash is direct DA.",
+    ]
+    b.checks = [
+        {
+            "id": "kerb_oracle",
+            "type": "output_contains",
+            "detector": "print_kerberoastable",
+            "must_contain": ["SVC_ORACLE"],
+        },
+        {
+            "id": "priv_kerb",
+            "type": "output_contains",
+            "detector": "print_privileged_roast_targets",
+            "must_contain": ["SVC_ORACLE", "DOMAIN ADMINS"],
+        },
+        {
+            "id": "paths_to_da",
+            "type": "output_contains",
+            "detector": "print_shortest_paths",
+            "must_contain": ["SVC_ORACLE", "DOMAIN ADMINS"],
+        },
+    ]
+    return b.files_and_gt(sc)
+
+
+def build_s12(seed: int) -> Tuple[dict, dict]:
+    """ESC8 web enrollment on enterprise CA (+ optional ESC1)."""
+    sc = ENGAGEMENT_SCENARIOS[11]
+    b = EnvBuilder(sc["domain"], seed)
+    b.add_baseline_groups()
+    user = b.add_user(1100, "employee1")
+    da = b.add_user(1101, "da_admin", highvalue=True)
+    for g in b.groups:
+        if g["ObjectIdentifier"] == b.sid_da:
+            g["Members"].append(_mem(da))
+        if g["ObjectIdentifier"] == b.sid_du:
+            g["Members"] += [_mem(user), _mem(da)]
+    dc = b.add_computer(1001, "DC01", is_dc=True, haslaps=True)
+    for g in b.groups:
+        if g["ObjectIdentifier"] == b.sid_dcg:
+            g["Members"].append(_mem(dc, "Computer"))
+    b.cas.append(
+        {
+            "ObjectIdentifier": "E6666666-6666-6666-6666-666666666666",
+            "ObjectType": "Enterprise CA",
+            "Properties": {
+                "domain": b.domain,
+                "name": b.uname("RELAYLAB-CA"),
+                "caname": "RELAYLAB-CA",
+                "dnshostname": f"CA01.{b.domain}",
+                "HasWebEnrollment": True,
+                "haswebenrollment": True,
+            },
+            "Aces": [
+                _ace(b.sid_da, "Group", "ManageCA"),
+                _ace(b.sid_du, "Group", "Enroll"),
+                _ace(b.sid_au, "Group", "Enroll"),
+            ],
+            "IsDeleted": False,
+            "IsACLProtected": False,
+        }
+    )
+    b.templates.append(
+        {
+            "ObjectIdentifier": "C7777777-7777-7777-7777-777777777777",
+            "ObjectType": "Certificate Template",
+            "Properties": {
+                "domain": b.domain,
+                "name": b.uname("User"),
+                "enrolleesuppliessubject": False,
+                "requiresmanagerapproval": True,
+                "effectiveekus": ["1.3.6.1.5.5.7.3.2"],
+            },
+            "Aces": [_ace(b.sid_du, "Group", "Enroll")],
+            "IsDeleted": False,
+            "IsACLProtected": False,
+        }
+    )
+    b.add_filler(35, 40)
+    b.finalize_domain(
+        [
+            _ace(b.sid_admins, "Group", "GetChanges"),
+            _ace(b.sid_admins, "Group", "GetChangesAll"),
+            _ace(b.sid_da, "Group", "GenericAll"),
+        ]
+    )
+    b.notes = [
+        "RELAYLAB-CA has HasWebEnrollment (ESC8 graph signal).",
+        "LLMNR/NTLM relay itself is network-layer — not in SharpHound.",
+    ]
+    b.checks = [
+        {
+            "id": "esc8",
+            "type": "output_contains",
+            "detector": "print_adcs_vulnerabilities",
+            "must_contain": ["ESC8", "RELAYLAB-CA"],
+        },
+    ]
+    return b.files_and_gt(sc)
+
+
+def build_s13(seed: int) -> Tuple[dict, dict]:
+    """LAPS ReadLAPSPassword for helpdesk / domain users."""
+    sc = ENGAGEMENT_SCENARIOS[12]
+    b = EnvBuilder(sc["domain"], seed)
+    b.add_baseline_groups()
+    hd_user = b.add_user(1100, "helpdesk_lee")
+    std = b.add_user(1101, "jdoe")
+    hd = b.add_group(2001, "Helpdesk_Tier1", [_mem(hd_user)])
+    da = b.add_user(1102, "da_admin", highvalue=True)
+    for g in b.groups:
+        if g["ObjectIdentifier"] == b.sid_da:
+            g["Members"].append(_mem(da))
+        if g["ObjectIdentifier"] == b.sid_du:
+            g["Members"] += [_mem(hd_user), _mem(std), _mem(da)]
+    dc = b.add_computer(1001, "DC01", is_dc=True, haslaps=True)
+    # workstations with LAPS + ReadLAPSPassword ACEs
+    for i, rid in enumerate([1002, 1003, 1004, 1005, 1006]):
+        aces = [
+            _ace(b.sid_da, "Group", "GenericAll"),
+            _ace(b.sid_admins, "Group", "GenericAll"),
+            _ace(hd, "Group", "ReadLAPSPassword"),
+        ]
+        if i < 2:
+            aces.append(_ace(b.sid_du, "Group", "ReadLAPSPassword"))
+        b.add_computer(rid, f"WS-LAPS{i:02d}", haslaps=True, aces=aces)
+    for g in b.groups:
+        if g["ObjectIdentifier"] == b.sid_dcg:
+            g["Members"].append(_mem(dc, "Computer"))
+    b.add_filler(40, 35)
+    b.finalize_domain(
+        [
+            _ace(b.sid_admins, "Group", "GetChanges"),
+            _ace(b.sid_admins, "Group", "GetChangesAll"),
+            _ace(b.sid_da, "Group", "GenericAll"),
+        ]
+    )
+    b.notes = [
+        "Helpdesk_Tier1 can ReadLAPSPassword on LAPS-enabled workstations.",
+        "Domain Users also has ReadLAPSPassword on some hosts (rollout debt).",
+    ]
+    b.checks = [
+        {
+            "id": "laps_readers",
+            "type": "output_contains",
+            "detector": "print_laps_readers",
+            "must_contain": ["HELPDESK", "READLAPSPASSWORD"],
+        },
+        {
+            "id": "laps_enabled_some",
+            "type": "output_contains",
+            "detector": "print_laps_status",
+            "must_contain": ["LAPS ENABLED"],
+        },
+    ]
+    return b.files_and_gt(sc)
+
+
+def build_s14(seed: int) -> Tuple[dict, dict]:
+    """DNSAdmins member + GenericAll on DC."""
+    sc = ENGAGEMENT_SCENARIOS[13]
+    b = EnvBuilder(sc["domain"], seed)
+    b.add_baseline_groups()
+    dns_user = b.add_user(1100, "dns_ops")
+    # RID 1102 historically DNSAdmins in some domains; use custom
+    dnsadmins = b.add_group(1102, "DnsAdmins", [_mem(dns_user)], highvalue=True)
+    da = b.add_user(1101, "da_admin", highvalue=True)
+    for g in b.groups:
+        if g["ObjectIdentifier"] == b.sid_da:
+            g["Members"].append(_mem(da))
+        if g["ObjectIdentifier"] == b.sid_du:
+            g["Members"] += [_mem(dns_user), _mem(da)]
+    dc = b.add_computer(
+        1001,
+        "DC01",
+        is_dc=True,
+        haslaps=True,
+        aces=[
+            _ace(b.sid_da, "Group", "GenericAll"),
+            _ace(b.sid_admins, "Group", "GenericAll"),
+            _ace(dnsadmins, "Group", "GenericAll"),
+            _ace(dnsadmins, "Group", "WriteDacl"),
+        ],
+    )
+    # Ensure DC is treated as high-value for dangerous-ACL reporting
+    for c in b.computers:
+        if c["ObjectIdentifier"] == dc:
+            c["Properties"]["highvalue"] = True
+    for g in b.groups:
+        if g["ObjectIdentifier"] == b.sid_dcg:
+            g["Members"].append(_mem(dc, "Computer"))
+    b.add_filler(40, 40)
+    b.finalize_domain(
+        [
+            _ace(b.sid_admins, "Group", "GetChanges"),
+            _ace(b.sid_admins, "Group", "GetChangesAll"),
+            _ace(b.sid_da, "Group", "GenericAll"),
+        ]
+    )
+    b.notes = [
+        "dns_ops is DnsAdmins; group has GenericAll on DC01.",
+        "Classic DNS service abuse path once on-box rights exist.",
+    ]
+    b.checks = [
+        {
+            "id": "dangerous_dc",
+            "type": "output_contains",
+            "detector": "print_dangerous_permissions",
+            "must_contain": ["DNSADMINS"],
+        },
+        {
+            "id": "dossier_dns",
+            "type": "dossier_impact",
+            "principal": b.uname("dns_ops"),
+            "min_impact": 1,
+        },
+    ]
+    return b.files_and_gt(sc)
+
+
+def build_s15(seed: int) -> Tuple[dict, dict]:
+    """Print Operators nesting from helpdesk."""
+    sc = ENGAGEMENT_SCENARIOS[14]
+    b = EnvBuilder(sc["domain"], seed)
+    b.add_baseline_groups()
+    hd = b.add_user(1100, "print_help")
+    # Builtin Print Operators often S-1-5-32-550
+    po = b.add_group(
+        0,
+        "Print Operators",
+        [_mem(hd)],
+        highvalue=True,
+        oid=b.wk("S-1-5-32-550"),
+    )
+    so = b.add_group(
+        0,
+        "Server Operators",
+        [],
+        highvalue=True,
+        oid=b.wk("S-1-5-32-549"),
+    )
+    da = b.add_user(1101, "da_admin", highvalue=True)
+    for g in b.groups:
+        if g["ObjectIdentifier"] == b.sid_da:
+            g["Members"].append(_mem(da))
+        if g["ObjectIdentifier"] == b.sid_du:
+            g["Members"] += [_mem(hd), _mem(da)]
+    dc = b.add_computer(1001, "DC01", is_dc=True, haslaps=True)
+    for g in b.groups:
+        if g["ObjectIdentifier"] == b.sid_dcg:
+            g["Members"].append(_mem(dc, "Computer"))
+    b.add_filler(35, 40)
+    b.finalize_domain(
+        [
+            _ace(b.sid_admins, "Group", "GetChanges"),
+            _ace(b.sid_admins, "Group", "GetChangesAll"),
+            _ace(b.sid_da, "Group", "GenericAll"),
+        ]
+    )
+    b.notes = [
+        "print_help is a member of Print Operators (built-in).",
+        "Server Operators group present (empty) for inventory/HV surface.",
+    ]
+    b.checks = [
+        {
+            "id": "priv_inventory",
+            "type": "output_contains",
+            "detector": "print_privilege_inventory",
+            "must_contain_any": ["PRINT OPERATORS", "SERVER OPERATORS"],
+        },
+        {
+            "id": "hv_or_paths",
+            "type": "output_contains",
+            "detector": "print_shortest_paths",
+            "must_contain_any": ["DOMAIN ADMINS", "PRINT OPERATORS", "DA_ADMIN"],
+        },
+    ]
+    return b.files_and_gt(sc)
+
+
+def build_s16(seed: int) -> Tuple[dict, dict]:
+    """WDigest-adjacent: LocalAdmin + DA session (registry not in SH)."""
+    sc = ENGAGEMENT_SCENARIOS[15]
+    b = EnvBuilder(sc["domain"], seed)
+    b.add_baseline_groups()
+    user = b.add_user(1100, "desk_user")
+    da = b.add_user(1101, "da_helpdesk_break", highvalue=True)
+    for g in b.groups:
+        if g["ObjectIdentifier"] == b.sid_da:
+            g["Members"].append(_mem(da))
+        if g["ObjectIdentifier"] == b.sid_du:
+            g["Members"] += [_mem(user), _mem(da)]
+    dc = b.add_computer(1001, "DC01", is_dc=True, haslaps=True)
+    b.add_computer(
+        1002,
+        "WS-HELP01",
+        haslaps=False,
+        sessions=[{"UserSID": da}],
+        local_groups=[
+            {
+                "ObjectIdentifier": f"{b.sid(1002)}-544",
+                "Name": "ADMINISTRATORS@WS-HELP01",
+                "Results": [{"ObjectIdentifier": user, "ObjectType": "User"}],
+            }
+        ],
+    )
+    for g in b.groups:
+        if g["ObjectIdentifier"] == b.sid_dcg:
+            g["Members"].append(_mem(dc, "Computer"))
+    b.add_filler(40, 45)
+    b.finalize_domain(
+        [
+            _ace(b.sid_admins, "Group", "GetChanges"),
+            _ace(b.sid_admins, "Group", "GetChangesAll"),
+            _ace(b.sid_da, "Group", "GenericAll"),
+        ]
+    )
+    b.notes = [
+        "Graph shows LocalAdmin + DA HasSession (tiering fail).",
+        "WDigest UseLogonCredential is host registry — not present in SharpHound JSON.",
+    ]
+    b.checks = [
+        {
+            "id": "localadmin",
+            "type": "output_contains",
+            "detector": "print_sessions_localadmin",
+            "must_contain": ["DESK_USER", "LOCALADMIN"],
+            "must_not_contain": ["GENERICALL"],
+        },
+    ]
+    return b.files_and_gt(sc)
+
+
+def build_s17(seed: int) -> Tuple[dict, dict]:
+    """WriteDacl on domain + GenericAll on krbtgt from IT group."""
+    sc = ENGAGEMENT_SCENARIOS[16]
+    b = EnvBuilder(sc["domain"], seed)
+    b.add_baseline_groups()
+    it_user = b.add_user(1100, "it_mike")
+    itg = b.add_group(2001, "IT_Support", [_mem(it_user)])
+    # krbtgt is typically RID 502
+    krbtgt = b.add_user(
+        502,
+        "krbtgt",
+        highvalue=True,
+        aces=[
+            _ace(b.sid_da, "Group", "GenericAll"),
+            _ace(b.sid_admins, "Group", "GenericAll"),
+            _ace(itg, "Group", "GenericAll"),
+            _ace(itg, "Group", "WriteDacl"),
+        ],
+    )
+    da = b.add_user(1101, "da_admin", highvalue=True)
+    for g in b.groups:
+        if g["ObjectIdentifier"] == b.sid_da:
+            g["Members"].append(_mem(da))
+        if g["ObjectIdentifier"] == b.sid_du:
+            g["Members"] += [_mem(it_user), _mem(da), _mem(krbtgt)]
+    dc = b.add_computer(1001, "DC01", is_dc=True, haslaps=True)
+    for g in b.groups:
+        if g["ObjectIdentifier"] == b.sid_dcg:
+            g["Members"].append(_mem(dc, "Computer"))
+    b.add_filler(40, 40)
+    b.finalize_domain(
+        [
+            _ace(b.sid_admins, "Group", "Owns"),
+            _ace(b.sid_admins, "Group", "GetChanges"),
+            _ace(b.sid_admins, "Group", "GetChangesAll"),
+            _ace(b.sid_da, "Group", "GenericAll"),
+            _ace(itg, "Group", "WriteDacl"),
+            _ace(itg, "Group", "GenericWrite"),
+            _ace(itg, "Group", "WriteOwner"),
+        ]
+    )
+    b.notes = [
+        "IT_Support has WriteDacl/GenericWrite on the domain NC.",
+        "IT_Support has GenericAll on krbtgt.",
+    ]
+    b.checks = [
+        {
+            "id": "dangerous_domain",
+            "type": "output_contains",
+            "detector": "print_dangerous_permissions",
+            "must_contain_any": ["IT_SUPPORT", "KRBTGT", "ACLDEBT.LOCAL"],
+        },
+        {
+            "id": "dossier_it",
+            "type": "dossier_impact",
+            "principal": b.uname("it_mike"),
+            "min_impact": 1,
+        },
+    ]
+    return b.files_and_gt(sc)
+
+
+def build_s18(seed: int) -> Tuple[dict, dict]:
+    """GPO content with cpassword / scheduled task markers in props."""
+    sc = ENGAGEMENT_SCENARIOS[17]
+    b = EnvBuilder(sc["domain"], seed)
+    b.add_baseline_groups()
+    user = b.add_user(1100, "employee")
+    da = b.add_user(1101, "da_admin", highvalue=True)
+    for g in b.groups:
+        if g["ObjectIdentifier"] == b.sid_da:
+            g["Members"].append(_mem(da))
+        if g["ObjectIdentifier"] == b.sid_du:
+            g["Members"] += [_mem(user), _mem(da)]
+    gpo_id = "D4444444-4444-4444-4444-444444444444"
+    b.gpos.append(
+        {
+            "ObjectIdentifier": gpo_id,
+            "ObjectType": "GPO",
+            "Properties": {
+                "domain": b.domain,
+                "name": b.uname("Legacy-LocalAdmin-GPP"),
+                "domainsid": b.domain_sid,
+                # Graph-visible markers for print_gpo_content_parsing
+                "TaskName": "UpdateLocalAdmin",
+                "ScriptPath": "\\\\domain\\sysvol\\scripts\\setadmin.bat",
+                "cpassword": "j1Uyj3Vx8TY9LtLZil2uAuZkFQA/4latT76ZwgdHdhw",
+                "ScheduledTask": "GPP_LocalAdmin",
+            },
+            "Aces": [
+                _ace(b.sid_da, "Group", "GenericAll"),
+                _ace(b.sid_du, "Group", "GenericWrite"),  # readable/editable sprawl
+            ],
+            "IsDeleted": False,
+            "IsACLProtected": False,
+        }
+    )
+    b.add_ou("Workstations", links=[{"GUID": gpo_id, "IsEnforced": False}])
+    dc = b.add_computer(1001, "DC01", is_dc=True, haslaps=True)
+    for g in b.groups:
+        if g["ObjectIdentifier"] == b.sid_dcg:
+            g["Members"].append(_mem(dc, "Computer"))
+    b.add_filler(35, 40)
+    b.finalize_domain(
+        [
+            _ace(b.sid_admins, "Group", "GetChanges"),
+            _ace(b.sid_admins, "Group", "GetChangesAll"),
+            _ace(b.sid_da, "Group", "GenericAll"),
+        ]
+    )
+    b.notes = [
+        "Legacy GPO plants TaskName/ScriptPath/cpassword props for GPO content parser.",
+        "Real GPP lives in SYSVOL XML; SharpHound alone may not collect XML without --gpo-content-dir.",
+    ]
+    b.checks = [
+        {
+            "id": "gpo_content",
+            "type": "output_contains",
+            "detector": "print_gpo_content_parsing",
+            "must_contain": ["LEGACY-LOCALADMIN-GPP", "EXPLOITABLE"],
+        },
+    ]
+    return b.files_and_gt(sc)
+
+
+def build_s19(seed: int) -> Tuple[dict, dict]:
+    """Constrained delegation with protocol transition (TrustedToAuth)."""
+    sc = ENGAGEMENT_SCENARIOS[18]
+    b = EnvBuilder(sc["domain"], seed)
+    b.add_baseline_groups()
+    web = b.add_user(1100, "svc_web")
+    da = b.add_user(1101, "da_admin", highvalue=True)
+    for g in b.groups:
+        if g["ObjectIdentifier"] == b.sid_da:
+            g["Members"].append(_mem(da))
+        if g["ObjectIdentifier"] == b.sid_du:
+            g["Members"] += [_mem(web), _mem(da)]
+    dc = b.add_computer(1001, "DC01", is_dc=True, haslaps=True)
+    b.add_computer(
+        1002,
+        "WEB01",
+        haslaps=True,
+        trusted_to_auth=True,
+        allowed_to_delegate=[
+            f"cifs/DC01.{sc['domain']}",
+            f"ldap/DC01.{sc['domain']}",
+            f"http/intranet.{sc['domain'].lower()}",
+        ],
+    )
+    # also mark user trustedtoauth for constrained on service account
+    for u in b.users:
+        if u["ObjectIdentifier"] == web:
+            u["Properties"]["trustedtoauth"] = True
+            u["AllowedToDelegate"] = [f"http/intranet.{sc['domain'].lower()}"]
+    for g in b.groups:
+        if g["ObjectIdentifier"] == b.sid_dcg:
+            g["Members"].append(_mem(dc, "Computer"))
+    b.add_filler(40, 40)
+    b.finalize_domain(
+        [
+            _ace(b.sid_admins, "Group", "GetChanges"),
+            _ace(b.sid_admins, "Group", "GetChangesAll"),
+            _ace(b.sid_da, "Group", "GenericAll"),
+        ]
+    )
+    b.notes = [
+        "WEB01 has TrustedToAuth + AllowedToDelegate (protocol transition).",
+        "svc_web also has constrained delegation flags.",
+    ]
+    b.checks = [
+        {
+            "id": "constrained",
+            "type": "output_contains",
+            "detector": "print_constrained_delegation",
+            "must_contain_any": ["WEB01", "SVC_WEB", "TRUSTED_TO_AUTH", "PROTOCOL"],
+        },
+    ]
+    return b.files_and_gt(sc)
+
+
+def build_s20(seed: int) -> Tuple[dict, dict]:
+    """MSOL / Entra Connect unexpected DCSync."""
+    sc = ENGAGEMENT_SCENARIOS[19]
+    b = EnvBuilder(sc["domain"], seed)
+    b.add_baseline_groups()
+    msol = b.add_user(
+        1100,
+        "MSOL_A1B2C3D4E5F6",
+        description="Microsoft Entra Connect sync account",
+        pwdneverexpires=True,
+    )
+    da = b.add_user(1101, "da_admin", highvalue=True)
+    for g in b.groups:
+        if g["ObjectIdentifier"] == b.sid_da:
+            g["Members"].append(_mem(da))
+        if g["ObjectIdentifier"] == b.sid_du:
+            g["Members"] += [_mem(msol), _mem(da)]
+    # Sync server
+    b.add_computer(
+        1002,
+        "AADCONNECT01",
+        haslaps=True,
+        sessions=[{"UserSID": msol}],
+        local_groups=[
+            {
+                "ObjectIdentifier": f"{b.sid(1002)}-544",
+                "Name": "ADMINISTRATORS@AADCONNECT01",
+                "Results": [{"ObjectIdentifier": msol, "ObjectType": "User"}],
+            }
+        ],
+    )
+    dc = b.add_computer(1001, "DC01", is_dc=True, haslaps=True)
+    for g in b.groups:
+        if g["ObjectIdentifier"] == b.sid_dcg:
+            g["Members"].append(_mem(dc, "Computer"))
+    b.add_filler(45, 50)
+    b.finalize_domain(
+        [
+            _ace(b.sid_admins, "Group", "Owns"),
+            _ace(b.sid_admins, "Group", "GetChanges"),
+            _ace(b.sid_admins, "Group", "GetChangesAll"),
+            _ace(b.sid_da, "Group", "GenericAll"),
+            _ace(b.sid_ea, "Group", "GenericAll"),
+            _ace(msol, "User", "GetChanges"),
+            _ace(msol, "User", "GetChangesAll"),
+        ]
+    )
+    b.notes = [
+        "MSOL_* has unexpected GetChanges+GetChangesAll on the domain.",
+        "AADCONNECT01 hosts the sync account (session + local admin).",
+    ]
+    b.checks = [
+        {
+            "id": "msol_unexpected",
+            "type": "output_contains",
+            "detector": "print_dcsync_rights",
+            "must_contain": ["MSOL_", "UNEXPECTED"],
+        },
+        {
+            "id": "msol_finding",
+            "type": "finding",
+            "category": "DCSync",
+            "must_contain": "MSOL_",
+        },
+        {
+            "id": "da_expected",
+            "type": "output_contains",
+            "detector": "print_dcsync_rights",
+            "must_contain": ["DOMAIN ADMINS", "EXPECTED"],
+        },
+    ]
+    return b.files_and_gt(sc)
+
+
 BUILDERS = {
     "s01_kerberoast_dcsync_svc": build_s01,
     "s02_helpdesk_genericall_backup_dcsync": build_s02,
@@ -1222,6 +1949,16 @@ BUILDERS = {
     "s08_localadmin_cached_da": build_s08,
     "s09_nested_acl_multihop": build_s09,
     "s10_gpo_svc_delegation_combo": build_s10,
+    "s11_svc_in_domain_admins": build_s11,
+    "s12_adcs_esc8_web_enrollment": build_s12,
+    "s13_laps_overpermissive_readers": build_s13,
+    "s14_dnsadmins_dangerous_rights": build_s14,
+    "s15_print_operators_path": build_s15,
+    "s16_tiering_fail_wdigest_adjacent": build_s16,
+    "s17_domain_nc_krbtgt_acl": build_s17,
+    "s18_gpp_cpassword_gpo": build_s18,
+    "s19_constrained_protocol_transition": build_s19,
+    "s20_entra_connect_overpriv": build_s20,
 }
 
 
