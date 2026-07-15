@@ -39,6 +39,7 @@ class TestRealDataReliability(unittest.TestCase):
             props={
                 "enabled": True,
                 "hasspn": True,
+                "sensitive": True,  # NOT_DELEGATED — must NOT block roast
                 "serviceprincipalnames": ["MSSQLSvc/db.lab.local"],
             },
             is_azure=False,

@@ -3908,14 +3908,14 @@ def print_kerberoastable(G, domain_filter=None):
             continue
         props = d.get('props') or {}
         hasspn = _user_has_spn(props)
-        # Case-insensitive booleans (SharpHound CE uses lowercase keys)
-        sensitive = get_bool_prop_ci(props, ['sensitive', 'Sensitive'], default=False)
+        # Note: SharpHound "sensitive" = NOT_DELEGATED (cannot be delegated), NOT
+        # "immune to Kerberoast". Still roastable offline — do not filter it out.
         enabled = _account_is_enabled(props, default=True)
         # krbtgt always has an SPN but is not a practical Kerberoast target here
         name = d.get('name') or ''
         if name.upper().startswith('KRBTGT@') or name.upper() == 'KRBTGT':
             continue
-        if hasspn and not sensitive and enabled:
+        if hasspn and enabled:
             hits.append((n, d))
     console.print(f"[dim]Found {len(hits)} kerberoastable account(s)[/dim]")
     for i, (oid, d) in enumerate(hits):
@@ -3961,9 +3961,9 @@ def print_as_rep_roastable(G, domain_filter=None):
                 dontreqpreauth = bool(int(uac_raw) & 0x400000)
             except (TypeError, ValueError):
                 pass
-        sensitive = get_bool_prop_ci(props, ['sensitive', 'Sensitive'], default=False)
+        # "sensitive" (NOT_DELEGATED) does not block AS-REP roasting
         enabled = _account_is_enabled(props, default=True)
-        if dontreqpreauth and not sensitive and enabled:
+        if dontreqpreauth and enabled:
             hits.append((n, d))
     console.print(f"[dim]Found {len(hits)} AS-REP roastable account(s)[/dim]")
     for i, (oid, d) in enumerate(hits):
@@ -4081,9 +4081,9 @@ def collect_privileged_roast_targets(G, domain_filter=None) -> List[dict]:
         name = d.get("name") or ""
         if name.upper().startswith("KRBTGT@") or name.upper() == "KRBTGT":
             continue
-        sensitive = get_bool_prop_ci(props, ["sensitive", "Sensitive"], default=False)
+        # Do not filter SharpHound "sensitive" (NOT_DELEGATED) — still roastable.
         enabled = _account_is_enabled(props, default=True)
-        if not enabled or sensitive:
+        if not enabled:
             continue
         kerb = _user_has_spn(props)
         asrep = get_bool_prop_ci(
