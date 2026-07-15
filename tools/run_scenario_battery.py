@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Generate complex multi-issue AD environments, run BloodBash, validate accuracy.
+"""Run 10 realistic multi-hop engagement scenarios through BloodBash.
 
-Simulates realistic domains (healthcare, finance, MSP, retail, hybrid, …) with
-many concurrent misconfigurations — not single-issue toy labs.
+Each scenario is a composite attack chain (foothold → pivots → DA/DCSync)
+drawn from common red-team patterns. Fictional domains only.
 
   python3 tools/run_scenario_battery.py
   python3 tools/run_scenario_battery.py --count 10 --seed 42 -v
-  python3 tools/run_scenario_battery.py --keep --work-dir /tmp/bb-envs
   python3 tools/run_scenario_battery.py --list-profiles
+  python3 tools/run_scenario_battery.py --keep --work-dir /tmp/bb-engagements
 
-Exit 0 only if every environment's ground-truth checks pass.
+CI runs this with --count 10 --seed 42; exit 0 only if all checks pass.
 """
 from __future__ import annotations
 
@@ -31,7 +31,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools"))
 
-from generate_complex_env import ENV_PROFILES, build_environment  # noqa: E402
+from generate_engagement_scenarios import (  # noqa: E402
+    BUILDERS,
+    ENGAGEMENT_SCENARIOS,
+    build_engagement_scenario,
+    list_scenarios,
+)
 
 bb: Dict[str, Any] = {}
 with open(ROOT / "BloodBash.py", encoding="utf-8") as f:
@@ -59,12 +64,22 @@ def write_files(out_dir: Path, files: dict, gt: dict) -> None:
     (out_dir / "ground_truth.json").write_text(
         json.dumps(gt, indent=2) + "\n", encoding="utf-8"
     )
+    (out_dir / "SCENARIO.md").write_text(
+        f"# {gt.get('title', gt.get('scenario_id'))}\n\n"
+        f"**Domain:** `{gt.get('domain')}`  \n"
+        f"**Foothold:** {gt.get('foothold')}  \n"
+        f"**Seed:** {gt.get('seed')}\n\n"
+        f"{gt.get('summary', '')}\n\n"
+        f"## Attack notes\n\n"
+        + "\n".join(f"- {n}" for n in (gt.get("notes") or []))
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def run_checks(G, gt: dict) -> List[Tuple[str, bool, str]]:
     results: List[Tuple[str, bool, str]] = []
     cache: Dict[str, str] = {}
-    domain = gt.get("domain") or ""
 
     def out_for(detector: str) -> str:
         if detector not in cache:
@@ -90,11 +105,7 @@ def run_checks(G, gt: dict) -> List[Tuple[str, bool, str]]:
                 any_ok = (not any_need) or any(s.upper() in text for s in any_need)
                 ok = not missing and not bad and any_ok
                 results.append(
-                    (
-                        cid,
-                        ok,
-                        f"missing={missing} forbidden={bad}" if not ok else "ok",
-                    )
+                    (cid, ok, f"missing={missing} forbidden={bad}" if not ok else "ok")
                 )
             elif ctype == "output_not_contains":
                 text = out_for(check["detector"])
@@ -107,7 +118,7 @@ def run_checks(G, gt: dict) -> List[Tuple[str, bool, str]]:
                 det = {
                     "DCSync": "print_dcsync_rights",
                     "ESC1-ESC8": "print_adcs_vulnerabilities",
-                    "LAPS": "print_laps_status",
+                    "Kerberoastable": "print_kerberoastable",
                 }.get(check["category"], "print_dcsync_rights")
                 _capture(bb[det], G)
                 cats = [
@@ -151,32 +162,6 @@ def run_checks(G, gt: dict) -> List[Tuple[str, bool, str]]:
                 n = (dossier or {}).get("counts", {}).get("impact_edges", 0)
                 ok = dossier is not None and n >= int(check["min_impact"])
                 results.append((cid, ok, f"impact_edges={n}"))
-            elif ctype == "graph_min":
-                ntype = check["node_type"].lower()
-                n = sum(
-                    1
-                    for _, d in G.nodes(data=True)
-                    if str(d.get("type") or "").lower() == ntype
-                )
-                ok = n >= int(check["min"])
-                results.append((cid, ok, f"count={n} need>={check['min']}"))
-            elif ctype == "predicate":
-                if check.get("predicate") == "system_admins_not_default_priv":
-                    # find any System Administrators group in graph
-                    ok = True
-                    found = False
-                    for _, d in G.nodes(data=True):
-                        name = d.get("name") or ""
-                        if "SYSTEM ADMINISTRATORS" in name.upper():
-                            found = True
-                            if bb["_is_default_high_priv_name"](name):
-                                ok = False
-                    if not found:
-                        # profile without trap — pass
-                        ok = True
-                    results.append((cid, ok, "ok" if ok else "false positive high-priv"))
-                else:
-                    results.append((cid, False, "unknown predicate"))
             else:
                 results.append((cid, False, f"unknown type {ctype}"))
         except Exception as e:
@@ -185,11 +170,12 @@ def run_checks(G, gt: dict) -> List[Tuple[str, bool, str]]:
 
 
 def run_one(
-    idx: int, seed: int, profile: dict, work_root: Path, verbose: bool
+    idx: int, seed: int, scenario_meta: dict, work_root: Path, verbose: bool
 ) -> Dict[str, Any]:
-    label = f"s{idx:02d}-{profile['id']}-seed{seed}"
+    sid = scenario_meta["id"]
+    label = f"s{idx:02d}-{sid}-seed{seed}"
     out_dir = work_root / label
-    files, gt = build_environment(profile, seed)
+    files, gt = build_engagement_scenario(sid, seed)
     write_files(out_dir, files, gt)
 
     t0 = time.time()
@@ -197,17 +183,17 @@ def run_one(
     G, _ = bb["build_graph"](nodes)
     checks = run_checks(G, gt)
     elapsed = time.time() - t0
-
     failed = [(c, d) for c, ok, d in checks if not ok]
-    planted = [k for k, v in (gt.get("traits") or {}).items() if v is True]
     return {
         "label": label,
-        "profile_id": profile["id"],
-        "description": profile.get("description"),
+        "scenario_id": sid,
+        "title": scenario_meta.get("title"),
         "domain": gt.get("domain"),
+        "foothold": scenario_meta.get("foothold"),
+        "summary": scenario_meta.get("summary"),
+        "notes": gt.get("notes"),
         "seed": seed,
         "path": str(out_dir),
-        "planted": planted,
         "checks_total": len(checks),
         "checks_passed": sum(1 for _, ok, _ in checks if ok),
         "checks_failed": len(failed),
@@ -222,58 +208,59 @@ def run_one(
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description="Complex multi-issue AD environment battery for BloodBash"
+        description="Multi-hop engagement scenario battery for BloodBash"
     )
-    ap.add_argument(
-        "--count",
-        type=int,
-        default=10,
-        help="Environments to run (default 10 = one of each profile)",
-    )
+    ap.add_argument("--count", type=int, default=10, help="Scenarios (default 10)")
     ap.add_argument("--seed", type=int, default=None, help="Base seed (default random)")
     ap.add_argument("--work-dir", type=Path, default=None)
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("-v", "--verbose", action="store_true")
-    ap.add_argument("--list-profiles", action="store_true")
+    ap.add_argument(
+        "--list-profiles",
+        action="store_true",
+        help="List engagement scenarios and exit",
+    )
     args = ap.parse_args()
 
+    scenarios = list_scenarios()
     if args.list_profiles:
-        for i, p in enumerate(ENV_PROFILES, 1):
-            print(f"{i:2d}. {p['id']:28s}  {p['domain']:20s}  users~{p['users']} pcs~{p['computers']}")
-            print(f"    {p['description']}")
+        for i, s in enumerate(scenarios, 1):
+            print(f"{i:2d}. {s['id']}")
+            print(f"    {s['title']}")
+            print(f"    domain={s['domain']}  foothold={s['foothold']}")
+            print(f"    {s['summary']}")
+            print()
         return 0
 
     base_seed = args.seed if args.seed is not None else random.randint(1, 1_000_000)
     work_root = args.work_dir
     cleanup = False
     if work_root is None:
-        work_root = Path(tempfile.mkdtemp(prefix="bloodbash-envs-"))
+        work_root = Path(tempfile.mkdtemp(prefix="bloodbash-engagements-"))
         cleanup = not args.keep
     else:
         work_root = work_root.resolve()
         work_root.mkdir(parents=True, exist_ok=True)
 
     print("=" * 76)
-    print("BloodBash complex environment battery")
+    print("BloodBash multi-hop engagement scenario battery")
     print(f"  count={args.count}  base_seed={base_seed}")
     print(f"  work={work_root}")
     print("=" * 76)
 
     results: List[Dict[str, Any]] = []
     for i in range(1, args.count + 1):
-        profile = ENV_PROFILES[(i - 1) % len(ENV_PROFILES)]
-        seed = base_seed + i * 17
-        print(
-            f"\n[{i}/{args.count}] {profile['id']}  domain={profile['domain']}  seed={seed}",
-            flush=True,
-        )
-        print(f"  {profile['description']}")
+        meta = scenarios[(i - 1) % len(scenarios)]
+        seed = base_seed + i * 31
+        print(f"\n[{i}/{args.count}] {meta['id']}", flush=True)
+        print(f"  {meta['title']}")
+        print(f"  domain={meta['domain']}  foothold={meta['foothold']}  seed={seed}")
         try:
-            r = run_one(i, seed, profile, work_root, args.verbose)
+            r = run_one(i, seed, meta, work_root, args.verbose)
         except Exception as e:
             r = {
-                "label": f"s{i:02d}-{profile['id']}",
-                "profile_id": profile["id"],
+                "label": f"s{i:02d}-{meta['id']}",
+                "scenario_id": meta["id"],
                 "ok": False,
                 "checks_total": 0,
                 "checks_passed": 0,
@@ -293,21 +280,22 @@ def main() -> int:
             f"computers={((r.get('stats') or {}).get('computers'))}  "
             f"{r.get('elapsed_sec', 0)}s"
         )
-        if args.verbose and r.get("planted"):
-            print(f"  planted: {', '.join(r['planted'][:20])}")
+        if args.verbose and r.get("notes"):
+            for n in r["notes"]:
+                print(f"    • {n}")
         if not r["ok"]:
             for c, d in (r.get("failed") or [])[:10]:
                 print(f"    ✗ {c}: {d}")
 
     n_pass = sum(1 for r in results if r["ok"])
     print("\n" + "=" * 76)
-    print(f"SUMMARY: {n_pass}/{len(results)} environments passed")
-    print("By profile:")
+    print(f"SUMMARY: {n_pass}/{len(results)} scenarios passed")
+    print("By scenario:")
     by: Dict[str, List[bool]] = {}
     for r in results:
-        by.setdefault(r.get("profile_id") or "?", []).append(bool(r["ok"]))
-    for pid, flags in by.items():
-        print(f"  {pid:28s}  {sum(flags)}/{len(flags)}")
+        by.setdefault(r.get("scenario_id") or "?", []).append(bool(r["ok"]))
+    for sid, flags in by.items():
+        print(f"  {sid:42s}  {sum(flags)}/{len(flags)}")
     if n_pass < len(results):
         print("Failed:")
         for r in results:
