@@ -1367,10 +1367,10 @@ def build_s11(seed: int) -> Tuple[dict, dict]:
             "must_contain": ["SVC_ORACLE", "DOMAIN ADMINS"],
         },
         {
-            "id": "paths_to_da",
+            "id": "sharepoint_kerb",
             "type": "output_contains",
-            "detector": "print_shortest_paths",
-            "must_contain": ["SVC_ORACLE", "DOMAIN ADMINS"],
+            "detector": "print_kerberoastable",
+            "must_contain": ["SVC_SHAREPOINT"],
         },
     ]
     return b.files_and_gt(sc)

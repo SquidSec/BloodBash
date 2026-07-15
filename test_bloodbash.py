@@ -1277,11 +1277,66 @@ class TestBloodBash(unittest.TestCase):
             any("KEY ADMINS" in f[2] for f in bloodbash_globals['global_findings']),
             msg=str(bloodbash_globals['global_findings']),
         )
-        # One aggregated secondary finding for lowpriv GenericAll on 2 principals
+        # One aggregated secondary finding for lowpriv GenericAll on 2 users
         shadow = [f for f in bloodbash_globals['global_findings'] if f[1] == "Shadow Credentials"]
         self.assertEqual(len(shadow), 1)
-        self.assertIn("2 principal", shadow[0][2])
+        self.assertTrue(
+            "2 user" in shadow[0][2] or "2 principal" in shadow[0][2],
+            msg=shadow[0][2],
+        )
         self.assertIn("lowpriv@LAB.LOCAL", clean)
+
+    def test_shadow_suppresses_bulk_computer_genericwrite(self):
+        """Connector-style GenericWrite on many computers is not shadow-cred noise."""
+        G = nx.MultiDiGraph()
+        G.add_node("C", name="AWS CONNECTORS@LAB.LOCAL", type="Group", props={}, is_azure=False)
+        for i in range(40):
+            G.add_node(f"H{i}", name=f"HOST{i}$.LAB.LOCAL", type="Computer", props={}, is_azure=False)
+            G.add_edge("C", f"H{i}", label="GenericWrite")
+        bloodbash_globals["global_findings"] = []
+        out = self._capture_output(bloodbash_globals["print_shadow_credentials"], G)
+        self.assertFalse(
+            any(f[1] == "Shadow Credentials" for f in bloodbash_globals["global_findings"]),
+            msg=str(bloodbash_globals["global_findings"]),
+        )
+        self.assertIn("No Shadow Credentials abuse", self._strip_ansi(out))
+
+    def test_dangerous_permissions_filters_domain_admins_holder(self):
+        """DA GenericAll on HV is expected noise; non-default still reported."""
+        G = nx.MultiDiGraph()
+        G.add_node(
+            "DA",
+            name="DOMAIN ADMINS@LAB.LOCAL",
+            type="Group",
+            props={"domain": "LAB.LOCAL", "highvalue": True},
+            is_azure=False,
+        )
+        G.add_node(
+            "T",
+            name="KRBTGT@LAB.LOCAL",
+            type="User",
+            props={"domain": "LAB.LOCAL", "highvalue": True},
+            is_azure=False,
+        )
+        G.add_node(
+            "U",
+            name="LOWPRIV@LAB.LOCAL",
+            type="User",
+            props={"domain": "LAB.LOCAL"},
+            is_azure=False,
+        )
+        G.add_edge("DA", "T", label="GenericAll")
+        G.add_edge("U", "T", label="GenericWrite")
+        bloodbash_globals["global_findings"] = []
+        out = self._capture_output(bloodbash_globals["print_dangerous_permissions"], G)
+        clean = self._strip_ansi(out)
+        self.assertIn("LOWPRIV@LAB.LOCAL", clean)
+        self.assertIn("GenericWrite", clean)
+        # Holder Domain Admins should not appear as a non-default writer line
+        self.assertNotIn("DOMAIN ADMINS@LAB.LOCAL --", clean.replace(" ", ""))
+        self.assertTrue(
+            any("Non-default" in f[2] for f in bloodbash_globals["global_findings"] if f[1] == "Dangerous Permissions")
+        )
 
     def test_no_results_shadow_credentials(self):
         G = nx.MultiDiGraph()

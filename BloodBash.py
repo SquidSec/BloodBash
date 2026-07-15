@@ -1820,15 +1820,31 @@ def print_password_never_expires(G, domain_filter=None):
             except (TypeError, ValueError):
                 pass
         if password_never_expires and _account_is_enabled(props):
+            name = d.get('name') or ''
+            # krbtgt / well-known system accounts are expected noise
+            sam = _principal_sam(name)
+            if sam in ('krbtgt',) or name.upper().startswith('KRBTGT@'):
+                continue
+            if _is_default_high_priv_name(name) and 'admin' in sam:
+                # keep DA users if flagged PNE — still report
+                pass
             found = True
             hits += 1
             uac_raw = _prop_raw_ci(props, ['useraccountcontrol', 'UserAccountControl'])
             uac_str = f" | UAC: {decode_uac(uac_raw)}" if uac_raw is not None else ""
             if hits <= max_display:
                 console.print(f"[yellow]Password Never Expires enabled[/yellow]: [green]{d['name']}[/green]{uac_str}")
-            add_finding("Password Never Expires", f"User {d['name']} has 'Password Never Expires' set")
+            # Cap individual findings; summarize large domains
+            if hits <= 100:
+                add_finding("Password Never Expires", f"User {d['name']} has 'Password Never Expires' set")
     if hits > max_display:
         console.print(f"  [dim]... and {hits - max_display} more[/dim]")
+    if hits > 100:
+        add_finding(
+            "Password Never Expires",
+            f"{hits} enabled users have Password Never Expires (list truncated in findings)",
+            score=4,
+        )
     if found:
         console.print(Panel("[bold yellow]Impact:[/bold yellow] Passwords may never expire, leading to old/weak passwords persisting indefinitely.\n[bold]Mitigation:[/bold] Review and enforce password policies; consider resetting passwords for affected accounts.\n[bold]Tools:[/bold] Use PowerShell (Get-ADUser) or AD tools to audit.", title="Abuse Suggestions: Password Never Expires", border_style="yellow"))
     else:
@@ -1888,14 +1904,15 @@ def _is_expected_key_credential_holder(name: str) -> bool:
 
 def print_shadow_credentials(G, domain_filter=None):
     console.rule("[bold magenta]Shadow Credentials Detection (AD)[/bold magenta]")
-    # Primary signal: AddKeyCredentialLink (direct msDS-KeyCredentialLink write).
-    # Secondary: GenericAll/WriteDacl/WriteOwner/GenericWrite from *non-default*
-    # principals only (Domain Admins / Key Admins create massive noise otherwise).
-    # Existing KeyCredentialLink values are informational (often Windows Hello).
+    # Primary: AddKeyCredentialLink (direct msDS-KeyCredentialLink write) — high signal.
+    # Secondary: strong ACL control (GenericAll / WriteDacl / WriteOwner) on *users*
+    # from non-default principals. GenericWrite on computers is common connector noise
+    # and is not reported as a shadow-cred path (use can-configure RBCD / other modules).
     found_abuse = False
     found_existing = False
     primary_labels = {'addkeycredentiallink'}
-    secondary_labels = {
+    # Strong secondary on users only. GenericWrite on computers is connector noise.
+    secondary_user_labels = {
         'genericall',
         'genericwrite',
         'writeowner',
@@ -1918,18 +1935,19 @@ def print_shadow_credentials(G, domain_filter=None):
     for tid in targets:
         tname = G.nodes[tid]['name']
         ttype = G.nodes[tid]['type']
+        ttype_l = str(ttype).lower()
         for u, _, edata in G.in_edges(tid, data=True):
             label = edata.get('label') or ''
             ll = label.lower()
-            if ll not in primary_labels and ll not in secondary_labels:
-                continue
             uname = G.nodes[u]['name']
-            # Skip built-in / key-admin principals for *all* shadow-cred rights
+            # Skip built-in / key-admin / broad principals
             if _is_expected_key_credential_holder(uname):
+                continue
+            if _is_broad_principal_name(uname):
                 continue
             if ll in primary_labels:
                 primary_hits.append((uname, label, tname, ttype))
-            else:
+            elif ll in secondary_user_labels and ttype_l == 'user':
                 secondary_agg[(uname, label)].append(tname)
 
     # Primary: one finding per edge (should be rare after noise filter)
@@ -1946,35 +1964,39 @@ def print_shadow_credentials(G, domain_filter=None):
             score=8,
         )
 
-    # Secondary: aggregate per principal+right to avoid 100s of near-identical rows
+    # Secondary: aggregate per principal+right; skip bulk noise
     max_secondary_detail = 30
+    max_targets_for_finding = 25  # more than this is usually over-delegation inventory noise
     secondary_items = sorted(
         secondary_agg.items(),
         key=lambda kv: len(kv[1]),
         reverse=True,
     )
     for i, ((uname, label), tnames) in enumerate(secondary_items):
-        found_abuse = True
         n_targets = len(tnames)
+        if n_targets > max_targets_for_finding:
+            continue
+        found_abuse = True
         examples = ", ".join(tnames[:3])
         extra = f" … +{n_targets - 3} more" if n_targets > 3 else ""
         if i < max_secondary_detail:
             console.print(
                 f"[yellow]Shadow Credentials ACL path[/yellow]: "
                 f"[green]{uname}[/green] --[{label}]--> "
-                f"[cyan]{n_targets}[/cyan] principal(s) "
+                f"[cyan]{n_targets}[/cyan] user principal(s) "
                 f"[dim]({examples}{extra})[/dim]"
             )
         add_finding(
             "Shadow Credentials",
-            f"{uname} has {label} on {n_targets} principal(s) "
+            f"{uname} has {label} on {n_targets} user(s) "
             f"(e.g. {examples}{extra}) — possible shadow credential path",
-            score=6,
+            score=7,
         )
-    if len(secondary_items) > max_secondary_detail:
+    skipped_bulk = sum(1 for _, tnames in secondary_items if len(tnames) > max_targets_for_finding)
+    if skipped_bulk:
         console.print(
-            f"[dim]… and {len(secondary_items) - max_secondary_detail} more "
-            f"secondary ACL principal/right pairs (see findings table)[/dim]"
+            f"[dim]… suppressed {skipped_bulk} bulk secondary ACL pair(s) "
+            f"(>{max_targets_for_finding} user targets each — connector/over-delegation noise)[/dim]"
         )
 
     # Informational: objects that already have key credentials populated
@@ -3392,6 +3414,16 @@ def print_shortest_paths(G, fast=False, max_paths=10, target_filter=None, domain
     if not users:
         console.print("[yellow]No user objects found for path calculation[/yellow]")
         return
+    # Prefer non-admin footholds as path sources (paths *from* Domain Admins group
+    # objects are noise). Nested DA *members* must still appear as sources —
+    # that is the attack path.
+    def _is_noisy_source(oid: str) -> bool:
+        name = (G.nodes[oid].get("name") or "")
+        return _is_default_high_priv_name(name)
+
+    interesting_users = [u for u in users if not _is_noisy_source(u)]
+    if not interesting_users:
+        interesting_users = users
     # Prioritize classic DA/EA/krbtgt-style targets; in --fast only use these few
     priority_kw = (
         'domain admins', 'enterprise admins', 'schema admins', 'krbtgt',
@@ -3406,7 +3438,37 @@ def print_shortest_paths(G, fast=False, max_paths=10, target_filter=None, domain
             f"({len(targets_run)} high-value targets, max {max_paths} paths each)[/yellow]"
         )
     else:
-        targets_run = targets[:5]
+        # Prefer priority HV; fill remaining slots
+        targets_run = list(prioritized)
+        seen = {t[0] for t in targets_run}
+        for t in targets:
+            if t[0] not in seen:
+                targets_run.append(t)
+                seen.add(t[0])
+            if len(targets_run) >= 8:
+                break
+    abuse_labels = {
+        'genericall', 'genericwrite', 'writedacl', 'writeowner', 'owns',
+        'forcechangepassword', 'addmember', 'allowedtoact',
+        'adminto', 'localadmin', 'addkeycredentiallink', 'getchanges',
+        'getchangesall', 'allextendedrights',
+    }
+
+    def _path_abuse_score(path) -> int:
+        """Higher = more abuse edges (prefer interesting paths over pure MemberOf chains)."""
+        score = 0
+        for i in range(len(path) - 1):
+            lab = (_edge_label(G, path[i], path[i + 1]) or "").lower()
+            if lab in abuse_labels or lab.replace(" ", "") in abuse_labels:
+                score += 3
+            elif lab in ('memberof', 'member', 'contains'):
+                score += 0
+            elif lab in ('hassession',):
+                score += 2
+            else:
+                score += 1
+        return score
+
     for tid, tname, ttype in targets_run:
         console.print(f"\n[bold]Target:[/bold] [bold cyan]{tname}[/bold cyan] ({ttype})")
         count = 0
@@ -3415,25 +3477,29 @@ def print_shortest_paths(G, fast=False, max_paths=10, target_filter=None, domain
             lengths = nx.single_source_shortest_path_length(G.reverse(copy=False), tid, cutoff=12)
         except Exception:
             lengths = {}
-        # Candidate sources: users that reach target, shortest first
+        # Candidate sources: non-admin users that reach target
         candidates = []
-        for source in users:
+        for source in interesting_users:
             if source == tid:
                 continue
             if source in lengths:
                 candidates.append((lengths[source], source))
         candidates.sort(key=lambda x: x[0])
-        for _, source in candidates:
+        scored_paths = []
+        for _, source in candidates[:200]:  # bound work
             try:
                 path = nx.shortest_path(G, source, tid)
-                path_length = len(path) - 1
-                formatted_path = format_path(G, path)
-                console.print(f"  [dim]→[/dim] (Length: {path_length}) {formatted_path}")
-                count += 1
-                if count >= max_paths:
-                    break
+                scored_paths.append((-_path_abuse_score(path), len(path), path))
             except (nx.NetworkXNoPath, nx.NodeNotFound):
                 continue
+        scored_paths.sort()
+        for _, __, path in scored_paths:
+            path_length = len(path) - 1
+            formatted_path = format_path(G, path)
+            console.print(f"  [dim]→[/dim] (Length: {path_length}) {formatted_path}")
+            count += 1
+            if count >= max_paths:
+                break
         if indirect and not fast:
             console.print(f"  [dim]Indirect paths (via groups):[/dim]")
             indirect_count = 0
@@ -3461,11 +3527,26 @@ def print_dangerous_permissions(G, domain_filter=None, indirect=False):
     if not targets:
         console.print("[yellow]No high-value targets found[/yellow]")
         return
+    console.print(
+        "[dim]Showing non-default principals only (Domain Admins / EA / Builtin Admins filtered)[/dim]"
+    )
     for tid, tname, ttype in targets:
         incoming = G.in_edges(tid, data=True)
         is_azure = G.nodes[tid].get('is_azure', False)
         rights_set = azure_dangerous if is_azure else dangerous_rights
-        dangerous_edges = [(u, d['label']) for u, v, d in incoming if 'label' in d and d['label'].lower() in rights_set and u in G.nodes]
+        dangerous_edges = []
+        for u, v, d in incoming:
+            if u not in G.nodes or 'label' not in d:
+                continue
+            if d['label'].lower() not in rights_set:
+                continue
+            uname = G.nodes[u].get('name') or str(u)
+            # Expected high-priv holders on HV objects are noise, not findings
+            if _is_default_high_priv_name(uname):
+                continue
+            if not is_azure and is_expected_admin_principal(G, u):
+                continue
+            dangerous_edges.append((u, d['label']))
         if dangerous_edges:
             found = True
             console.print(f"\n[bold cyan]{tname} ({ttype}):[/bold cyan]")
@@ -3478,14 +3559,20 @@ def print_dangerous_permissions(G, domain_filter=None, indirect=False):
                 count = len(principals)
                 extra = f" ... and {count - 5} more" if count > 5 else ""
                 console.print(f"  • [yellow]{right}[/yellow]: [green]{', '.join(principal_names)}{extra}[/green]")
-            console.print(f"    [dim](Note: Only direct rights shown; indirect via groups not included)[/dim]")
-            add_finding("Dangerous Permissions", f"Dangerous rights on {tname}")
+            console.print(f"    [dim](Note: Only direct non-default rights; indirect via groups not included)[/dim]")
+            add_finding(
+                "Dangerous Permissions",
+                f"Non-default dangerous rights on {tname}",
+                score=9,
+            )
     if indirect:
         console.print(f"\n[dim]Checking indirect dangerous permissions via groups...[/dim]")
         for tid, tname, ttype in targets:
             for u, v, d in G.edges(data=True):
                 if v == tid and 'label' in d and d['label'].lower() in (azure_dangerous if G.nodes[tid].get('is_azure', False) else dangerous_rights):
                     group_name = G.nodes[u]['name']
+                    if _is_default_high_priv_name(group_name):
+                        continue
                     if G.nodes[u]['type'].lower() in ['group', 'azure group']:
                         members = [m for m in G.predecessors(u) if any(edge_data.get('label') == 'MemberOf' for edge_data in (G.get_edge_data(m, u) or {}).values())]
                         if members:
@@ -3493,7 +3580,7 @@ def print_dangerous_permissions(G, domain_filter=None, indirect=False):
     if found:
         print_abuse_panel("Dangerous Permissions")
     else:
-        console.print("[green]No dangerous ACLs found on high-value objects[/green]")
+        console.print("[green]No non-default dangerous ACLs found on high-value objects[/green]")
 
 
 def collect_broad_principal_acls(G, domain_filter=None) -> List[dict]:
