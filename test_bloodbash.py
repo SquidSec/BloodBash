@@ -2331,7 +2331,9 @@ class TestBloodBash(unittest.TestCase):
         self.assertIn("RowCount", idx)
 
     def test_csv_pack_cli_flag_in_help(self):
-        out = self._capture_output(bloodbash_globals["print_structured_help"], "BloodBash.py")
+        out = self._capture_output(
+            bloodbash_globals["print_structured_help"], "BloodBash.py", advanced=True
+        )
         clean = self._strip_ansi(out)
         self.assertIn("--csv-pack", clean)
 
@@ -2366,10 +2368,18 @@ class TestBloodBash(unittest.TestCase):
         self.assertFalse(ns.gpo_parsing)
 
     def test_quick_wins_cli_flag_in_help(self):
-        out = self._capture_output(bloodbash_globals["print_structured_help"], "BloodBash.py")
+        out = self._capture_output(
+            bloodbash_globals["print_structured_help"], "BloodBash.py", advanced=True
+        )
         clean = self._strip_ansi(out)
         self.assertIn("--quick-wins", clean)
         self.assertIn("Quick wins", clean)
+        # Short help also surfaces quick-wins as the default path
+        short = self._strip_ansi(
+            self._capture_output(bloodbash_globals["print_structured_help"], "BloodBash.py")
+        )
+        self.assertIn("--quick-wins", short)
+        self.assertIn("Start with these 3", short)
 
     def test_quick_wins_does_not_override_explicit_false_fast(self):
         """User can still add flags; apply only turns checks on, doesn't force all."""
@@ -2929,9 +2939,30 @@ class TestBloodBash(unittest.TestCase):
         for module_name in ("networkx", "rich", "tqdm", "yaml"):
             __import__(module_name)
 
-    def test_cli_help(self):
+    def test_cli_help_short(self):
+        """Default --help is start-here + cheat sheet (not full flag dump)."""
         result = subprocess.run(
             [sys.executable, "BloodBash.py", "--help"],
+            capture_output=True,
+            text=True,
+            cwd=os.path.dirname(os.path.abspath(__file__)) or ".",
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0)
+        out = result.stdout
+        self.assertIn("Start with these 3", out)
+        self.assertIn("Cheat sheet", out)
+        self.assertIn("--quick-wins", out)
+        self.assertIn("--from-user", out)
+        self.assertIn("--help-advanced", out)
+        self.assertIn("--wizard", out)
+        # Full flag dump is deferred to --help-advanced
+        self.assertNotIn("Examples — selective AD", out)
+        self.assertNotIn("Paths & remediation", out)
+
+    def test_cli_help_advanced(self):
+        result = subprocess.run(
+            [sys.executable, "BloodBash.py", "--help-advanced"],
             capture_output=True,
             text=True,
             cwd=os.path.dirname(os.path.abspath(__file__)) or ".",
@@ -2957,6 +2988,8 @@ class TestBloodBash(unittest.TestCase):
         self.assertIn("--list-domains", out)
         self.assertIn("--privileged-roast", out)
         self.assertIn("--quick-wins", out)
+        self.assertIn("--wizard", out)
+        self.assertIn("--help-advanced", out)
         # Plenty of categorized examples
         self.assertIn("Examples — basics", out)
         self.assertIn("Examples — compromise dossier", out)
@@ -2966,8 +2999,14 @@ class TestBloodBash(unittest.TestCase):
         self.assertIn("Examples — Azure", out)
         self.assertIn("PlumHound-style multi-CSV pack", out)
 
+    def test_cli_help(self):
+        """Back-compat alias: full help still available via --help-advanced."""
+        self.test_cli_help_advanced()
+
     def test_print_structured_help_callable(self):
-        out = self._capture_output(bloodbash_globals["print_structured_help"], "BloodBash.py")
+        out = self._capture_output(
+            bloodbash_globals["print_structured_help"], "BloodBash.py", advanced=True
+        )
         clean = self._strip_ansi(out)
         self.assertIn("Usage", clean)
         self.assertIn("Inventory", clean)
@@ -2976,6 +3015,51 @@ class TestBloodBash(unittest.TestCase):
         self.assertIn("--csv-pack", clean)
         self.assertIn("--list-domains", clean)
         self.assertIn("--privileged-roast", clean)
+
+    def test_print_structured_help_short_callable(self):
+        out = self._capture_output(bloodbash_globals["print_structured_help"], "BloodBash.py")
+        clean = self._strip_ansi(out)
+        self.assertIn("Start with these 3", clean)
+        self.assertIn("Cheat sheet", clean)
+        self.assertIn("--help-advanced", clean)
+
+    def test_default_run_applies_quick_wins(self):
+        """Bare directory (no check flags) maps to quick-wins, not full --all."""
+        ns = bloodbash_globals["build_arg_parser"]().parse_args(["./data"])
+        self.assertFalse(ns.quick_wins)
+        self.assertFalse(ns.all)
+        self.assertFalse(bloodbash_globals["cli_has_explicit_analysis_intent"](ns))
+        bloodbash_globals["apply_quick_wins_to_args"](ns)
+        ns.quick_wins = True
+        self.assertTrue(ns.dcsync)
+        self.assertTrue(ns.privileged_roast)
+        self.assertTrue(ns.fast)
+        self.assertFalse(ns.all)
+
+    def test_explicit_single_check_skips_auto_quick_wins_intent(self):
+        ns = bloodbash_globals["build_arg_parser"]().parse_args(["./data", "--dcsync"])
+        self.assertTrue(bloodbash_globals["cli_has_explicit_analysis_intent"](ns))
+
+    def test_wizard_flag_present(self):
+        ns = bloodbash_globals["build_arg_parser"]().parse_args(["./data", "--wizard"])
+        self.assertTrue(ns.wizard)
+
+    def test_wizard_sets_quick_wins_on_default_choice(self):
+        ns = bloodbash_globals["build_arg_parser"]().parse_args(["./data", "--wizard"])
+        import builtins
+        answers = iter(["", "1", ""])  # keep dir, mode 1, no domain
+
+        def fake_input(_prompt=""):
+            return next(answers)
+
+        old = builtins.input
+        builtins.input = fake_input
+        try:
+            bloodbash_globals["run_setup_wizard"](ns)
+        finally:
+            builtins.input = old
+        self.assertTrue(ns.quick_wins)
+        self.assertEqual(ns.directory, "./data")
 
     def test_all_findings_table_empty(self):
         """--all-findings always prints a table, even with zero findings."""

@@ -4598,6 +4598,157 @@ def apply_quick_wins_to_args(args):
     return args
 
 
+def cli_has_explicit_analysis_intent(args) -> bool:
+    """True when the user already picked a mode/check (skip auto quick-wins)."""
+    if getattr(args, "all", False) or getattr(args, "quick_wins", False):
+        return True
+    if getattr(args, "profile", None):
+        return True
+    if getattr(args, "list_domains", False):
+        return True
+    if getattr(args, "wizard", False):
+        return True
+    return any(
+        [
+            getattr(args, "shortest_paths", False),
+            getattr(args, "dangerous_permissions", False),
+            getattr(args, "adcs", False),
+            getattr(args, "gpo_abuse", False),
+            getattr(args, "dcsync", False),
+            getattr(args, "rbcd", False),
+            getattr(args, "sessions", False),
+            getattr(args, "kerberoastable", False),
+            getattr(args, "as_rep_roastable", False),
+            getattr(args, "privileged_roast", False),
+            getattr(args, "sid_history", False),
+            getattr(args, "unconstrained_delegation", False),
+            getattr(args, "password_descriptions", False),
+            getattr(args, "password_never_expires", False),
+            getattr(args, "password_not_required", False),
+            getattr(args, "shadow_credentials", False),
+            getattr(args, "gpo_parsing", False),
+            getattr(args, "constrained_delegation", False),
+            getattr(args, "laps", False),
+            getattr(args, "azure_privileged_roles", False),
+            getattr(args, "azure_app_secrets", False),
+            getattr(args, "azure_mfa_bypass", False),
+            getattr(args, "azure_guest_access", False),
+            getattr(args, "azure_sp_abuse", False),
+            getattr(args, "owned", None),
+            getattr(args, "path_from", None),
+            getattr(args, "path_to", None),
+            getattr(args, "inspect", None),
+            getattr(args, "export_bh", False),
+            getattr(args, "dot", None),
+            getattr(args, "deep_analysis", False),
+            getattr(args, "gpo_content_dir", None),
+            getattr(args, "busiest_paths", None),
+            getattr(args, "path_break", False),
+            getattr(args, "password_age", False),
+            getattr(args, "stale_accounts", False),
+            getattr(args, "privilege_inventory", False),
+            getattr(args, "owned_inventory", False),
+            getattr(args, "inventory", False),
+            getattr(args, "report_pack", None),
+            getattr(args, "csv_pack", None),
+            getattr(args, "export_zip", None),
+            getattr(args, "from_user", None),
+            getattr(args, "from_user_export", None) is not None,
+        ]
+    )
+
+
+def run_setup_wizard(args):
+    """Interactive first-run picker; mutates args in place."""
+    console.print(
+        Panel(
+            "[bold]BloodBash setup wizard[/bold]\n"
+            "[dim]Pick a mode — same flags you would pass on the CLI.[/dim]",
+            border_style="bright_blue",
+            title="Wizard",
+        )
+    )
+    try:
+        raw_dir = input(f"Data directory or zip [{args.directory}]: ").strip()
+    except EOFError:
+        raw_dir = ""
+    if raw_dir:
+        args.directory = raw_dir
+
+    console.print(
+        "\n[bold]Mode[/bold]\n"
+        "  [cyan]1[/cyan]  Quick wins — day-0 triage (recommended)\n"
+        "  [cyan]2[/cyan]  Full analysis (--all --fast)\n"
+        "  [cyan]3[/cyan]  Compromise dossier (--from-user)\n"
+        "  [cyan]4[/cyan]  Profile: hygiene\n"
+        "  [cyan]5[/cyan]  Profile: adcs-heavy\n"
+        "  [cyan]6[/cyan]  Profile: quick-wins\n"
+    )
+    try:
+        choice = (input("Choice [1]: ").strip() or "1")
+    except EOFError:
+        choice = "1"
+
+    if choice == "2":
+        args.all = True
+        args.fast = True
+    elif choice == "3":
+        try:
+            user = input("Foothold username (sam or UPN): ").strip()
+        except EOFError:
+            user = ""
+        if not user:
+            console.print("[red]No username — falling back to quick-wins.[/red]")
+            args.quick_wins = True
+        else:
+            args.from_user = user
+            try:
+                exp = (input("Export dossier pack? [Y/n]: ").strip() or "y").lower()
+            except EOFError:
+                exp = "y"
+            if exp not in ("n", "no"):
+                args.from_user_export = ""
+    elif choice == "4":
+        args.profile = "hygiene"
+    elif choice == "5":
+        args.profile = "adcs-heavy"
+    elif choice == "6":
+        args.profile = "quick-wins"
+    else:
+        args.quick_wins = True
+
+    try:
+        domain = input("Domain / tenant filter (blank = all): ").strip()
+    except EOFError:
+        domain = ""
+    if domain:
+        args.domain = domain
+
+    console.print(
+        f"\n[green]Wizard ready:[/green] directory=[cyan]{args.directory}[/cyan] "
+        f"mode choice={choice}"
+        + (f" domain={args.domain}" if args.domain else "")
+        + "\n"
+    )
+    return args
+
+
+def print_approachability_footer(*, auto_default: bool = False) -> None:
+    """Short next-step tip after a run (new-user approachability)."""
+    if auto_default:
+        console.print(
+            "[dim]Tip: default is quick-wins triage. "
+            "Full scan: [cyan]--all[/cyan] · foothold: [cyan]--from-user USER[/cyan] · "
+            "all flags: [cyan]--help-advanced[/cyan][/dim]"
+        )
+    else:
+        console.print(
+            "[dim]Tip: foothold → [cyan]--from-user USER[/cyan] · "
+            "triage → [cyan]--quick-wins[/cyan] · "
+            "all flags → [cyan]--help-advanced[/cyan][/dim]"
+        )
+
+
 def apply_profile_to_args(args, profile: dict):
     """Merge profile keys into argparse namespace (CLI flags win when already set)."""
     if not profile:
@@ -6763,14 +6914,16 @@ HELP_TABLE_SECTIONS = [
     (
         "Run mode",
         [
-            ("--all", "Run every analysis module", "recommended for full reviews"),
-            ("--quick-wins", "High-signal day-0 triage checks only", "DCSync, ADCS, roast, RBCD, LAPS, paths…"),
+            ("--quick-wins", "High-signal day-0 triage (also the default)", "DCSync, ADCS, roast, RBCD, LAPS, paths…"),
+            ("--all", "Run every analysis module", "full reviews; pair with --fast on large envs"),
             ("--profile FILE|name", "YAML analysis profile", "quick, quick-wins, adcs-heavy, hygiene, or path"),
+            ("--wizard", "Interactive mode picker", "first-run friendly"),
             ("--fast", "Limit heavy pathfinding", "top DA/EA-style targets only"),
             ("--verbose", "Print verbose graph summary", ""),
             ("--debug", "Verbose parse/build logging", "troubleshooting"),
             ("--all-findings", "End with a full findings table (every row)", "always prints, even if empty"),
-            ("-h, --help", "Show this structured help", ""),
+            ("-h, --help", "Short help: start here + cheat sheet", ""),
+            ("--help-advanced", "Full flag tables + all examples", ""),
         ],
     ),
     (
@@ -6868,22 +7021,43 @@ HELP_TABLE_SECTIONS = [
     ),
 ]
 
-# Categorized example commands shown in --help (and mirrored in README).
+# Start-here + cheat sheet for short --help (new-user approachability).
 # Use {prog} as a placeholder for the executable name.
+HELP_START_HERE = [
+    ("1. Day-0 triage (default)", "{prog} ./sharpout"),
+    ("   same as --quick-wins", "{prog} ./sharpout --quick-wins"),
+    ("2. Just owned a user", "{prog} ./sharpout --from-user alice --from-user-export"),
+    ("3. Full analysis", "{prog} ./sharpout --all --fast"),
+]
+
+HELP_CHEAT_SHEET = [
+    ("Default / quick wins", "{prog} DIR"),
+    ("Full scan", "{prog} DIR --all --fast"),
+    ("Compromise dossier", "{prog} DIR --from-user USER --from-user-export"),
+    ("One domain", "{prog} DIR --quick-wins --domain CORP.LOCAL"),
+    ("Built-in profile", "{prog} DIR --profile hygiene"),
+    ("Interactive wizard", "{prog} DIR --wizard"),
+    ("List domains", "{prog} DIR --list-domains"),
+    ("All flags + examples", "{prog} --help-advanced"),
+]
+
+# Categorized example commands shown in --help-advanced (and mirrored in README).
 HELP_EXAMPLE_SECTIONS = [
     (
         "Examples — basics",
         [
-            ("Show this help", "{prog} --help"),
-            ("Full analysis (AD + Azure)", "{prog} ./sharpout --all"),
-            ("Full analysis, large env (faster paths)", "{prog} ./sharpout --all --fast"),
-            ("Quick wins (high-signal triage)", "{prog} ./sharpout --quick-wins"),
+            ("Show short help", "{prog} --help"),
+            ("Show full help", "{prog} --help-advanced"),
+            ("Default = quick wins", "{prog} ./sharpout"),
+            ("Quick wins (explicit)", "{prog} ./sharpout --quick-wins"),
             ("Quick wins + one domain", "{prog} ./sharpout --quick-wins --domain CORP.LOCAL"),
-            ("Default pass (no flags)", "{prog} ./sharpout"),
+            ("Interactive wizard", "{prog} ./sharpout --wizard"),
+            ("Full analysis (AD + Azure)", "{prog} ./sharpout --all"),
+            ("Full analysis, large env", "{prog} ./sharpout --all --fast"),
             ("Quiet-ish: one domain only", "{prog} ./sharpout --all --domain CORP.LOCAL"),
             ("List domains / tenants", "{prog} ./sharpout --list-domains"),
-            ("Zip input", "{prog} ./2024-collection.zip --all --fast"),
-            ("Sample AD lab data", "{prog} SampleSharphoundADData --all --fast"),
+            ("Zip input", "{prog} ./2024-collection.zip --quick-wins"),
+            ("Sample AD lab data", "{prog} SampleSharphoundADData --quick-wins"),
             ("Sample Azure data", "{prog} SampleAzurehoundData --azure-privileged-roles --azure-guest-access"),
         ],
     ),
@@ -6966,8 +7140,8 @@ HELP_EXAMPLE_SECTIONS = [
 ]
 
 
-def print_structured_help(prog: Optional[str] = None) -> None:
-    """Print categorized Rich-table help instead of default argparse layout."""
+def print_structured_help(prog: Optional[str] = None, advanced: bool = False) -> None:
+    """Print Rich help. Default is short (start-here); advanced=True for full tables."""
     prog = prog or (os.path.basename(sys.argv[0]) if sys.argv else "BloodBash.py")
     console.print(
         Panel(
@@ -6975,7 +7149,7 @@ def print_structured_help(prog: Optional[str] = None) -> None:
             f"[dim]Offline SharpHound & AzureHound analyzer — no Neo4j required[/dim]\n"
             f"[dim]{__org_url__}[/dim]\n"
             f"[dim]{__project_url__}[/dim]",
-            title="Help",
+            title="Help" if not advanced else "Help (advanced)",
             border_style="bright_blue",
         )
     )
@@ -6983,10 +7157,56 @@ def print_structured_help(prog: Optional[str] = None) -> None:
         f"[bold]Usage[/bold]:  [cyan]{prog}[/cyan] "
         f"[yellow]\\[options][/yellow] [green]\\[directory][/green]\n"
     )
+
+    if not advanced:
+        console.print(
+            "[bold green]Start with these 3[/bold green]\n"
+            "[dim]No flags needed for day-0 triage — bare directory = --quick-wins.[/dim]\n"
+        )
+        start = Table(
+            show_header=True,
+            header_style="bold green",
+            border_style="green",
+            expand=True,
+            title="Getting started",
+        )
+        start.add_column("Goal", style="green", max_width=32, overflow="fold")
+        start.add_column("Command", style="cyan", overflow="fold")
+        for goal, cmd in HELP_START_HERE:
+            start.add_row(goal, cmd.format(prog=prog))
+        console.print(start)
+        console.print()
+
+        cheat = Table(
+            show_header=True,
+            header_style="bold magenta",
+            border_style="bright_blue",
+            expand=True,
+            title="Cheat sheet",
+        )
+        cheat.add_column("Task", style="white", max_width=28, overflow="fold")
+        cheat.add_column("Command", style="cyan", overflow="fold")
+        for task, cmd in HELP_CHEAT_SHEET:
+            cheat.add_row(task, cmd.format(prog=prog))
+        console.print(cheat)
+        console.print()
+
+        console.print(
+            "[dim]Foothold? [cyan]--from-user USER[/cyan] (outbound dossier). "
+            "[cyan]--owned[/cyan] is inbound paths *to* a principal.\n"
+            f"All flags + every example: [cyan]{prog} --help-advanced[/cyan]  ·  "
+            f"Cookbook: docs/cookbook.md[/dim]"
+        )
+        console.print(
+            f"[dim]For authorized security testing / red teaming only. "
+            f"BloodBash by {__org__}.[/dim]"
+        )
+        return
+
     console.print(
-        "[dim]With no check flags, BloodBash runs a default pass "
-        "(verbose summary + common checks). Use --all for everything.\n"
-        "Engagement foothold? Use [cyan]--from-user USER[/cyan] (outbound dossier). "
+        "[dim]Bare directory (no check flags) runs [cyan]--quick-wins[/cyan] triage. "
+        "Use [cyan]--all[/cyan] for every module.\n"
+        "Engagement foothold? [cyan]--from-user USER[/cyan] (outbound dossier). "
         "[cyan]--owned[/cyan] is inbound paths *to* a principal.[/dim]\n"
     )
 
@@ -7109,8 +7329,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help=(
             "Run high-signal day-0 triage only: unexpected DCSync, ADCS, dangerous ACLs, "
             "RBCD (+ can configure), privileged roast, unconstrained (non-DC), shadow creds, "
-            "LAPS readers, sessions, short paths + path-break (implies --fast)"
+            "LAPS readers, sessions, short paths + path-break (implies --fast). "
+            "Also applied automatically when no check flags are given."
         ),
+    )
+    parser.add_argument(
+        "--wizard",
+        action="store_true",
+        help="Interactive setup: pick quick-wins / full / dossier / profile",
+    )
+    parser.add_argument(
+        "--help-advanced",
+        action="store_true",
+        help="Show full flag tables and all example commands, then exit",
     )
     parser.add_argument(
         "--all-findings",
@@ -7227,6 +7458,14 @@ def main():
     parser = build_arg_parser()
     args = parser.parse_args()
     global_findings.clear()
+    auto_default_quick_wins = False
+
+    if getattr(args, "help_advanced", False):
+        print_structured_help(prog=parser.prog, advanced=True)
+        sys.exit(0)
+
+    if getattr(args, "wizard", False):
+        run_setup_wizard(args)
 
     if args.profile:
         try:
@@ -7249,6 +7488,16 @@ def main():
                 "[green]Quick wins mode:[/green] high-signal triage checks "
                 f"({len(QUICK_WINS_CHECKS)} modules, --fast)"
             )
+    elif not args.all and not cli_has_explicit_analysis_intent(args):
+        # Bare directory (or only filters like --domain/--verbose) → day-0 triage
+        apply_quick_wins_to_args(args)
+        args.quick_wins = True
+        auto_default_quick_wins = True
+        console.print(
+            "[green]Default mode:[/green] quick-wins triage "
+            f"({len(QUICK_WINS_CHECKS)} modules, --fast). "
+            "Use [cyan]--all[/cyan] for full analysis."
+        )
 
     log_path = setup_run_logging(args.log_file)
     if log_path:
@@ -7333,7 +7582,10 @@ def main():
     elif args.all:
         mode_str = "Full analysis (AD + Azure) (--all)"
     elif getattr(args, "quick_wins", False):
-        mode_str = "Quick wins (high-signal triage) (--quick-wins)"
+        if auto_default_quick_wins:
+            mode_str = "Quick wins (default triage — use --all for full analysis)"
+        else:
+            mode_str = "Quick wins (high-signal triage) (--quick-wins)"
     elif selected_checks:
         mode_str = "Selected checks (including AD and Azure features)"
     else:
@@ -7504,6 +7756,7 @@ def main():
         f"[bold cyan]BloodBash by {__org__}[/bold cyan]  ·  [dim]{__org_url__}[/dim]",
         style="cyan",
     )
+    print_approachability_footer(auto_default=auto_default_quick_wins)
     if DEBUG:
         console.print(f"[bold blue]DEBUG: Total findings: {len(global_findings)}[/bold blue]")
 

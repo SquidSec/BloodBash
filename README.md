@@ -89,29 +89,37 @@ Dependencies: `networkx`, `rich`, `tqdm`, `pyyaml`.
 
 ## Quick start
 
-Point at a SharpHound/AzureHound output directory (or a `.zip` of those files):
+**Start with these 3** (point at a SharpHound/AzureHound directory or `.zip`):
 
 ```bash
-# Binary (from Releases)
-./bloodbash /path/to/json --all
+# 1) Day-0 triage — default when you pass only the data path
+python3 BloodBash.py /path/to/json
+# same as:
+python3 BloodBash.py /path/to/json --quick-wins
 
-# Full analysis from source
-python3 BloodBash.py /path/to/json --all
-
-# After pipx install
-bloodbash /path/to/json --all
-
-# Just landed a user — compromise dossier (outbound capabilities)
+# 2) Just owned a user — outbound compromise dossier
 python3 BloodBash.py ./sharpout --from-user alice --from-user-export
+
+# 3) Full analysis (large env: add --fast)
+python3 BloodBash.py /path/to/json --all --fast
 ```
 
-With no check flags, BloodBash runs a default pass (verbose summary + common checks).
+```bash
+# Binary / pipx
+./bloodbash /path/to/json
+bloodbash /path/to/json --from-user alice --from-user-export
+```
+
+Bare directory (no check flags) runs **quick-wins** triage. Use `--all` for every module, or `--wizard` for an interactive picker.
 
 Sample data: `SampleSharphoundADData/` and `SampleAzurehoundData/`.
 
 ```bash
-python3 BloodBash.py --help   # structured flag tables + many example commands
+python3 BloodBash.py --help            # start-here + cheat sheet
+python3 BloodBash.py --help-advanced   # full flag tables + all examples
 ```
+
+More recipes: [docs/cookbook.md](docs/cookbook.md).
 
 ## What it finds
 
@@ -144,18 +152,19 @@ Replace `./sharpout` with your SharpHound/AzureHound directory or zip. Binary us
 # Help (tables + examples)
 python3 BloodBash.py --help
 
-# Quick wins — high-signal day-0 triage (not full --all)
+# Default = quick wins (high-signal day-0 triage)
+python3 BloodBash.py ./sharpout
 python3 BloodBash.py ./sharpout --quick-wins
 python3 BloodBash.py ./sharpout --quick-wins --domain CORP.LOCAL
 python3 BloodBash.py ./2024-collection.zip --quick-wins
+
+# Interactive picker
+python3 BloodBash.py ./sharpout --wizard
 
 # Full analysis
 python3 BloodBash.py ./sharpout --all
 python3 BloodBash.py ./sharpout --all --fast
 python3 BloodBash.py ./2024-collection.zip --all --fast
-
-# Default pass (no module flags)
-python3 BloodBash.py ./sharpout
 
 # One domain / tenant only
 python3 BloodBash.py ./sharpout --all --domain CORP.LOCAL
@@ -385,7 +394,9 @@ python3 BloodBash.py ./sharpout --profile adcs-heavy --path-break --busiest-path
 | Flag | Purpose |
 |------|---------|
 | `--all` | Run every analysis module |
-| `--quick-wins` | **High-signal day-0 triage only** (DCSync, ADCS, roast, RBCD, LAPS, short paths…; implies `--fast`) |
+| `--quick-wins` | **High-signal day-0 triage** (also the **default** with no check flags; implies `--fast`) |
+| `--wizard` | Interactive mode picker (quick-wins / full / dossier / profile) |
+| `--help-advanced` | Full flag tables + all examples (short `--help` is start-here only) |
 | `--fast` | Limit pathfinding to top DA/EA-style targets (not a full skip) |
 | `--domain X` | Filter to one AD domain or Azure `tenantId` |
 | `--list-domains` | List AD domains / Azure tenants in the collection and exit |
@@ -406,7 +417,7 @@ Also included under `--all` / selective flags: privilege-context tags on roast f
 
 Azure-only toggles: `--azure-privileged-roles`, `--azure-app-secrets`, `--azure-mfa-bypass`, `--azure-guest-access`, `--azure-sp-abuse`.
 
-Run `python3 BloodBash.py --help` for structured tables and the full example set.
+Run `python3 BloodBash.py --help` for start-here + cheat sheet, or `--help-advanced` for full flag tables and examples.
 
 ## SharpHound CE notes
 
