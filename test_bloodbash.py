@@ -2358,6 +2358,7 @@ class TestBloodBash(unittest.TestCase):
         self.assertTrue(ns.sessions)
         self.assertTrue(ns.shortest_paths)
         self.assertTrue(ns.path_break)
+        self.assertTrue(ns.trust)
         self.assertEqual(ns.busiest_paths, "short")
         self.assertTrue(ns.fast)
         self.assertTrue(ns.verbose)
