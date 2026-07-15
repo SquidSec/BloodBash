@@ -476,6 +476,10 @@ python3 tools/run_scenario_battery.py --list-profiles
 python3 tools/run_scenario_battery.py --keep --work-dir /tmp/bb-envs
 ```
 
+CI (PR + main release) runs unit tests **and** `run_scenario_battery.py`.
+Make the **Run Unit Tests** / **test** job a **required status check** in GitHub
+branch protection so merges cannot land without a green battery.
+
 ### Local binary build
 
 ```bash
