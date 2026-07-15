@@ -29,8 +29,15 @@ jobs:
       run: |
         python -c "import networkx, rich, tqdm, yaml; print('All dependencies OK')"
 
-    - name: Run tests
+    - name: Run unit + integration tests
       run: |
         python -m pytest test_bloodbash.py test_members_ingest.py \
           test_detection_variations.py test_compromise_dossier.py \
           test_synthetic_corpus.py -q
+
+    - name: Complex environment battery (required gate)
+      # 10 multi-issue synthetic AD labs → BloodBash → ground-truth checks.
+      # Must pass before merge when this workflow is a required status check.
+      run: |
+        python tools/run_scenario_battery.py --count 10 --seed 42
+      timeout-minutes: 15
