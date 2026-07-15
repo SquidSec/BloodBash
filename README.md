@@ -468,6 +468,11 @@ python3 tools/generate_synthetic_sharphound.py --out testData/synthetic-corp-lab
 # Smoke BloodBash against it
 python3 BloodBash.py testData/synthetic-corp-lab --all --fast --all-findings
 python3 BloodBash.py testData/synthetic-corp-lab --from-user alice.low --fast
+
+# Generate 10 seed-varied scenarios → run BloodBash → validate each (single command)
+python3 tools/run_scenario_battery.py
+python3 tools/run_scenario_battery.py --count 10 --seed 42 --include-canonical
+python3 tools/run_scenario_battery.py --keep --work-dir /tmp/bb-scenarios -v
 ```
 
 ### Local binary build
