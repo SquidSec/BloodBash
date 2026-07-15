@@ -372,7 +372,10 @@ class TestCompromiseDossier(unittest.TestCase):
         )
 
     def test_cli_help_mentions_from_user(self):
-        import subprocess, sys
+        import re
+        import subprocess
+        import sys
+
         cwd = os.path.dirname(os.path.abspath(__file__)) or "."
         short = subprocess.run(
             [sys.executable, "BloodBash.py", "--help"],
@@ -381,6 +384,9 @@ class TestCompromiseDossier(unittest.TestCase):
         self.assertEqual(short.returncode, 0)
         self.assertIn("--from-user", short.stdout)
         self.assertIn("--from-user-export", short.stdout)
+        # Help examples use binary-style name, not BloodBash.py
+        self.assertIn("bloodbash", short.stdout)
+        self.assertNotIn("BloodBash.py", short.stdout)
         advanced = subprocess.run(
             [sys.executable, "BloodBash.py", "--help-advanced"],
             capture_output=True, text=True, cwd=cwd,
@@ -388,7 +394,11 @@ class TestCompromiseDossier(unittest.TestCase):
         self.assertEqual(advanced.returncode, 0)
         self.assertIn("Compromise dossier", advanced.stdout)
         self.assertIn("Examples — compromise dossier", advanced.stdout)
-        self.assertIn("--from-user alice", advanced.stdout)
+        # Rich tables wrap commands and inject box-drawing glyphs between tokens
+        advanced_flat = re.sub(r"[^\w@./'\-]+", " ", advanced.stdout)
+        self.assertIn("--from-user alice", advanced_flat)
+        self.assertIn("bloodbash", advanced.stdout)
+        self.assertNotIn("BloodBash.py", advanced.stdout)
 
 
 if __name__ == "__main__":
