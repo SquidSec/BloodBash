@@ -479,6 +479,18 @@ python3 tools/run_scenario_battery.py --keep --work-dir /tmp/bb-engagements
 CI (PR + main release) runs unit tests **and** `run_scenario_battery.py --count 20`
 (20 engagement chains). Branch protection requires the **test** status check.
 
+Accuracy helpers (no customer data):
+
+```bash
+# Mutate synthetic corpus (dup ACEs, orphan SIDs, null ACEs, partial drops)
+python3 tools/mutate_corpus.py --in testData/synthetic-corp-lab --out /tmp/mut --seed 1
+python3 BloodBash.py /tmp/mut --all --fast
+
+# GPP / cPassword XML fixtures
+python3 BloodBash.py testData/synthetic-corp-lab \
+  --gpo-content-dir testData/gpo-xml-fixtures --gpo-parsing
+```
+
 ### Local binary build
 
 ```bash
