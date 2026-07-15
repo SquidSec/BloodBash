@@ -91,6 +91,108 @@ class TestCompromiseDossier(unittest.TestCase):
         self.assertEqual(mem["direct_count"], 1)
         self.assertEqual(mem["direct"][0]["name"], "STAFF@LAB.LOCAL")
 
+    def test_nested_groups_via_hasmember_reverse_edge(self):
+        """Some exporters emit Group -HasMember→ User instead of User -MemberOf→ Group."""
+        G = nx.MultiDiGraph()
+        G.add_node("U", name="ALICE@LAB.LOCAL", type="User", props={}, is_azure=False)
+        G.add_node("G1", name="VPN@LAB.LOCAL", type="Group", props={}, is_azure=False)
+        G.add_node("G2", name="SSRS@LAB.LOCAL", type="Group", props={}, is_azure=False)
+        G.add_edge("G1", "U", label="HasMember")
+        G.add_edge("G1", "G2", label="MemberOf")  # wrong dir — use MemberOf G1→G2? 
+        # Correct nesting: VPN is member of SSRS → VPN -MemberOf→ SSRS
+        G.add_edge("G1", "G2", label="MemberOf")
+        mem = bloodbash_globals["collect_nested_groups"](G, "U")
+        names = {g["name"] for g in mem["effective"]}
+        self.assertIn("VPN@LAB.LOCAL", names)
+        self.assertIn("SSRS@LAB.LOCAL", names)
+
+    def test_coalesce_memberof_results_wrapper_builds_edges(self):
+        """SharpHound CE MemberOf/Members {Results:[...]} must create MemberOf edges."""
+        import tempfile, os, json
+        td = tempfile.mkdtemp()
+        users = {
+            "data": [
+                {
+                    "ObjectIdentifier": "S-1-5-21-1-2-3-1001",
+                    "PrimaryGroupSID": "S-1-5-21-1-2-3-513",
+                    "Properties": {
+                        "name": "ALICE@LAB.LOCAL",
+                        "domain": "LAB.LOCAL",
+                        "enabled": True,
+                    },
+                    "Aces": [],
+                    "MemberOf": {
+                        "Results": [
+                            {
+                                "ObjectIdentifier": "S-1-5-21-1-2-3-2001",
+                                "ObjectType": "Group",
+                            }
+                        ],
+                        "Collected": True,
+                        "FailureReason": None,
+                    },
+                }
+            ],
+            "meta": {"type": "users", "count": 1, "version": 5},
+        }
+        groups = {
+            "data": [
+                {
+                    "ObjectIdentifier": "S-1-5-21-1-2-3-2001",
+                    "Properties": {"name": "VPN@LAB.LOCAL", "domain": "LAB.LOCAL"},
+                    "Members": {
+                        "Results": [
+                            {
+                                "ObjectIdentifier": "S-1-5-21-1-2-3-1001",
+                                "ObjectType": "User",
+                            }
+                        ],
+                        "Collected": True,
+                    },
+                    "Aces": [],
+                },
+                {
+                    "ObjectIdentifier": "S-1-5-21-1-2-3-2002",
+                    "Properties": {"name": "SSRS@LAB.LOCAL", "domain": "LAB.LOCAL"},
+                    "Members": {
+                        "Results": [
+                            {
+                                "ObjectIdentifier": "S-1-5-21-1-2-3-2001",
+                                "ObjectType": "Group",
+                            }
+                        ],
+                        "Collected": True,
+                    },
+                    "Aces": [],
+                },
+                {
+                    "ObjectIdentifier": "S-1-5-21-1-2-3-513",
+                    "Properties": {
+                        "name": "DOMAIN USERS@LAB.LOCAL",
+                        "domain": "LAB.LOCAL",
+                    },
+                    "Members": {"Results": [], "Collected": True},
+                    "Aces": [],
+                },
+            ],
+            "meta": {"type": "groups", "count": 3, "version": 5},
+        }
+        with open(os.path.join(td, "users.json"), "w") as f:
+            json.dump(users, f)
+        with open(os.path.join(td, "groups.json"), "w") as f:
+            json.dump(groups, f)
+        from unittest.mock import patch
+
+        with patch.object(bloodbash_globals["console"], "print", lambda *a, **k: None):
+            nodes = bloodbash_globals["load_json_dir"](td)
+            G, _ = bloodbash_globals["build_graph"](nodes)
+        mem = bloodbash_globals["collect_nested_groups"](G, "S-1-5-21-1-2-3-1001")
+        names = {g["name"] for g in mem["effective"]}
+        self.assertIn("VPN@LAB.LOCAL", names)
+        self.assertIn("SSRS@LAB.LOCAL", names)
+        self.assertIn("DOMAIN USERS@LAB.LOCAL", names)
+        self.assertGreaterEqual(mem["direct_count"], 2)
+
     def test_compromise_right_labels_include_rbcd_configure_rights(self):
         labels = set(bloodbash_globals["COMPROMISE_RIGHT_LABELS"])
         summary = set(bloodbash_globals["COMPROMISE_SUMMARY_RIGHTS"])

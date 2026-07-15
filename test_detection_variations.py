@@ -3,7 +3,7 @@
 Unit tests for every detection *variation* under the 32 finding categories.
 
 A variation is a distinct logical check/outcome type (ESC subtype, ACL right,
-inventory bucket, password-description pattern, etc.) — 109 total, matching
+inventory bucket, password-description pattern, etc.) — 106 total, matching
 the enumeration methodology used for product coverage reporting.
 """
 from __future__ import annotations
@@ -32,10 +32,18 @@ AZURE_RIGHTS = [
     "genericall", "owns", "writedacl", "writeowner", "addsecret", "addcertificate",
     "addowner", "execute", "canread", "canwrite", "candelete",
 ]
-PASSWORD_PATTERNS = [
-    r"password\s*:", r"pwd\s*:", r"pass\s*:", r"credentials\s*:", r"login\s*:",
-    r"account\s*:", r"admin\s*:", r"secret\s*:", r"key\s*:",
-]
+# Keep in sync with BloodBash.PASSWORD_IN_DESC_PATTERNS (ticket-text FPs removed)
+PASSWORD_PATTERNS = list(bloodbash_globals.get(
+    "PASSWORD_IN_DESC_PATTERNS",
+    (
+        r"\bpassword\s*[:=]\s*\S+",
+        r"\bpwd\s*[:=]\s*\S+",
+        r"\bpass(?:word)?\s*[:=]\s*\S+",
+        r"\bcredentials?\s*[:=]\s*\S+",
+        r"\bsecret\s*[:=]\s*\S+",
+        r"\bpasswd\s*[:=]\s*\S+",
+    ),
+))
 PASSWORD_AGE_BUCKETS = [
     b[0] for b in bloodbash_globals["PASSWORD_AGE_BUCKETS"]
 ] + ["Never set / unknown", "30 days – 6 months", "Other"]
@@ -86,8 +94,8 @@ class TestDetectionVariations(unittest.TestCase):
     # ────────────────────────────────────────────────
     # Registry size
     # ────────────────────────────────────────────────
-    def test_variation_count_is_109(self):
-        """Canonical variation enumeration must stay at 109."""
+    def test_variation_count_is_106(self):
+        """Canonical variation enumeration must stay at 106."""
         n = (
             len(ESC_TYPES)  # 10
             + 2  # DCSync
@@ -103,7 +111,7 @@ class TestDetectionVariations(unittest.TestCase):
             + 1 + 1  # constrained / unconstrained
             + 1  # LAPS
             + 1  # owned paths
-            + len(PASSWORD_PATTERNS)  # 9
+            + len(PASSWORD_PATTERNS)  # 6 (tightened; no account:/admin:/login:/key: FPs)
             + 1  # arbitrary paths
             + 2  # trust
             + 2  # deep nesting
@@ -115,8 +123,8 @@ class TestDetectionVariations(unittest.TestCase):
             + len(AZURE_PRIV_ROLES)  # 9
             + 1 + 1 + 1 + 1  # azure app/mfa/guest/sp
         )
-        self.assertEqual(n, 109)
-        self.assertEqual(len(VARIATION_CASES), 109)
+        self.assertEqual(n, 106)
+        self.assertEqual(len(VARIATION_CASES), 106)
 
     # ────────────────────────────────────────────────
     # ESC1–ESC13
@@ -813,17 +821,14 @@ def _bind_azure_role(role: str):
     return _test
 
 
-# Samples that match each password_patterns regex
+# Samples that match each password_in_desc regex (must include a non-space after :=)
 _PWD_SAMPLES = {
-    r"password\s*:": "Password: Secret123",
-    r"pwd\s*:": "pwd: hunter2",
-    r"pass\s*:": "pass: letmein",
-    r"credentials\s*:": "credentials: admin/admin",
-    r"login\s*:": "login: bob/Passw0rd",
-    r"account\s*:": "account: svc / P@ss",
-    r"admin\s*:": "admin: root/toor",
-    r"secret\s*:": "secret: abc",
-    r"key\s*:": "key: 12345",
+    r"\bpassword\s*[:=]\s*\S+": "Password: Secret123",
+    r"\bpwd\s*[:=]\s*\S+": "pwd: hunter2",
+    r"\bpass(?:word)?\s*[:=]\s*\S+": "pass: letmein",
+    r"\bcredentials?\s*[:=]\s*\S+": "credentials: admin/admin",
+    r"\bsecret\s*[:=]\s*\S+": "secret: abc",
+    r"\bpasswd\s*[:=]\s*\S+": "passwd: hunter2",
 }
 
 for _r in AD_RIGHTS:
@@ -843,7 +848,7 @@ for _role in AZURE_PRIV_ROLES:
     setattr(TestDetectionVariations, f"test_azure_role_{_slug(_role)}", _bind_azure_role(_role))
 
 
-# Explicit ordered registry used by test_variation_count_is_109 and meta coverage test
+# Explicit ordered registry used by test_variation_count_is_106 and meta coverage test
 VARIATION_CASES = (
     [(f"ESC1-ESC8/{e}", e) for e in ESC_TYPES]
     + [("DCSync/full", "full"), ("DCSync/partial", "partial"), ("RBCD", "rbcd")]
@@ -898,7 +903,7 @@ VARIATION_CASES = (
 
 class TestVariationRegistryMeta(unittest.TestCase):
     def test_registry_unique_and_complete(self):
-        self.assertEqual(len(VARIATION_CASES), 109)
+        self.assertEqual(len(VARIATION_CASES), 106)
         ids = [c[0] for c in VARIATION_CASES]
         self.assertEqual(len(ids), len(set(ids)), msg="duplicate variation ids")
 
@@ -928,7 +933,7 @@ class TestVariationRegistryMeta(unittest.TestCase):
             "privilege_inventory", "owned_inventory",
             *[f"azure_role_{_slug(r)}" for r in AZURE_PRIV_ROLES],
             "azure_app_secrets", "azure_mfa_bypass", "azure_guest", "azure_sp_abuse",
-            "variation_count_is_109",
+            "variation_count_is_106",
         ]
         missing = [f for f in required_fragments if f"test_{f}" not in names]
         self.assertEqual(missing, [], msg=f"Missing tests: {missing}")

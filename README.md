@@ -25,12 +25,12 @@
 |--|--|
 | **Organization** | [SquidSec](https://squidoffense.com/) |
 | **Website** | [https://squidoffense.com/](https://squidoffense.com/) |
-| **App version** | **v1.4.0** |
+| **App version** | **v1.4.1** |
 | **Latest binary** | [![GitHub release](https://img.shields.io/github/v/release/DotNetRussell/BloodBash)](https://github.com/DotNetRussell/BloodBash/releases/latest) |
 | **License** | [MIT](LICENSE) |
 | **Runtime (source)** | Python 3.9+ |
 
-Merges to `main` automatically build **Linux** and **Windows** binaries and publish a GitHub Release (tag `v1.4.0-build.N`).
+Merges to `main` automatically build **Linux** and **Windows** binaries and publish a GitHub Release (tag `v1.4.1-build.N`).
 
 ---
 
@@ -100,8 +100,10 @@ python3 BloodBash.py /path/to/json --quick-wins
 # 2) Just owned a user — outbound compromise dossier
 python3 BloodBash.py ./sharpout --from-user alice --from-user-export
 
-# 3) Full analysis (large env: add --fast)
+# 3) Full attack analysis (large env: --fast auto on big graphs)
 python3 BloodBash.py /path/to/json --all --fast
+# inventory ladders still opt-in:
+python3 BloodBash.py /path/to/json --all --inventory
 ```
 
 ```bash
@@ -110,7 +112,7 @@ python3 BloodBash.py /path/to/json --all --fast
 bloodbash /path/to/json --from-user alice --from-user-export
 ```
 
-Bare directory (no check flags) runs **quick-wins** triage. Use `--all` for every module, or `--wizard` for an interactive picker.
+Bare directory (no check flags) runs **quick-wins** triage. Use `--all` for full attack-path analysis (not inventory), or `--wizard` for an interactive picker.
 
 Sample data: `SampleSharphoundADData/` and `SampleAzurehoundData/`.
 
@@ -136,7 +138,7 @@ More recipes: [docs/cookbook.md](docs/cookbook.md).
 | **PlumHound-style CSV pack** | `--csv-pack DIR`: multi-CSV inventory (domains, DA, roastables, LAPS, Everyone/overpriv edges, computer AdminTo computer, dual priv+local admin, bulk AdminTo hosts) + `index.csv` |
 | **Other** | LAPS coverage (`haslaps`) + **LAPS password readers** (`ReadLAPSPassword`), GPO XML (`--gpo-content-dir`), domain `Trusts[]` edges, group nesting, `--list-domains` |
 
-Findings are scored and summarized in a **Prioritized Findings** table (use `--all-findings` for every row). Abuse panels suggest tools/commands per category.
+Findings are scored and summarized in a **Prioritized Findings** table (high-volume hygiene categories collapse; use `--all-findings` for the full collapsed list). Abuse panels suggest tools/commands per category.
 
 This is an **offline heuristic analyzer** from SquidSec, not a full BloodHound CE replacement. Prefer validating against BloodHound CE on the same zip for path parity.
 
@@ -161,10 +163,11 @@ python3 BloodBash.py ./2024-collection.zip --quick-wins
 # Interactive picker
 python3 BloodBash.py ./sharpout --wizard
 
-# Full analysis
+# Full attack analysis (--all auto --fast on large graphs; inventory is separate)
 python3 BloodBash.py ./sharpout --all
 python3 BloodBash.py ./sharpout --all --fast
-python3 BloodBash.py ./2024-collection.zip --all --fast
+python3 BloodBash.py ./2024-collection.zip --all
+python3 BloodBash.py ./sharpout --all --inventory
 
 # One domain / tenant only
 python3 BloodBash.py ./sharpout --all --domain CORP.LOCAL
@@ -283,7 +286,7 @@ python3 BloodBash.py ./sharpout --gpo-abuse --gpo-content-dir ./sysvol-gpo-xml
 # List domains / tenants in a collection (then exit)
 python3 BloodBash.py ./sharpout --list-domains
 
-# Inventory modules (+ stats dashboard percentages under --all / deep paths)
+# Inventory modules (opt-in; not part of --all). Stats dashboard still prints on --all.
 python3 BloodBash.py ./sharpout --inventory
 python3 BloodBash.py ./sharpout --stale-accounts --password-age --privilege-inventory
 python3 BloodBash.py ./sharpout --owned alice --owned-inventory

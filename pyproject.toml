@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bloodbash"
-version = "1.4.0"
+version = "1.4.1"
 description = "SquidSec BloodBash — offline SharpHound & AzureHound analyzer for AD/Azure attack paths and misconfigurations"
 readme = "README.md"
 license = { text = "MIT" }

@@ -74,6 +74,38 @@ class TestRealDataReliability(unittest.TestCase):
         pri_names = [t[1].lower() for t in pri]
         self.assertTrue(any("domain admins" in n or "administrators@" in n for n in pri_names))
 
+    def test_03b_highvalue_flag_does_not_flood_workstation_admin_groups(self):
+        """SharpHound highvalue on HOST_ADMINISTRATORS-GG must not make it HV by default."""
+        G = nx.MultiDiGraph()
+        G.add_node(
+            "DA",
+            name="DOMAIN ADMINS@LAB.LOCAL",
+            type="Group",
+            props={"highvalue": True},
+            is_azure=False,
+        )
+        G.add_node(
+            "WS",
+            name="QANHOST1_ADMINISTRATORS-GG@LAB.LOCAL",
+            type="Group",
+            props={"highvalue": True},
+            is_azure=False,
+        )
+        G.add_node(
+            "U",
+            name="PRIVUSER@LAB.LOCAL",
+            type="User",
+            props={"highvalue": True, "admincount": True},
+            is_azure=False,
+        )
+        names = {t[1] for t in bb.get_high_value_targets(G)}
+        self.assertIn("DOMAIN ADMINS@LAB.LOCAL", names)
+        self.assertIn("PRIVUSER@LAB.LOCAL", names)
+        self.assertNotIn("QANHOST1_ADMINISTRATORS-GG@LAB.LOCAL", names)
+        # Opt-in still includes collector highvalue marks
+        names_all = {t[1] for t in bb.get_high_value_targets(G, include_all_highvalue=True)}
+        self.assertIn("QANHOST1_ADMINISTRATORS-GG@LAB.LOCAL", names_all)
+
     def test_04_foreign_sid_labeling(self):
         G = nx.MultiDiGraph()
         dsid = "S-1-5-21-111-222-333"
@@ -262,6 +294,180 @@ class TestRealDataReliability(unittest.TestCase):
         ns = bb.build_arg_parser().parse_args(["./data", "--trust"])
         self.assertTrue(ns.trust)
         self.assertTrue(bb.cli_has_explicit_analysis_intent(ns))
+
+    def test_15_hv_excludes_workstation_administrators_groups(self):
+        """Bare 'administrators' must not match HOST_ADMINISTRATORS-GG."""
+        G = nx.MultiDiGraph()
+        G.add_node(
+            "BA",
+            name="ADMINISTRATORS@LAB.LOCAL",
+            type="Group",
+            props={},
+            is_azure=False,
+        )
+        G.add_node(
+            "WS",
+            name="QANHOST1_ADMINISTRATORS-GG@LAB.LOCAL",
+            type="Group",
+            props={},
+            is_azure=False,
+        )
+        G.add_node(
+            "DA",
+            name="DOMAIN ADMINS@LAB.LOCAL",
+            type="Group",
+            props={},
+            is_azure=False,
+        )
+        names = [t[1] for t in bb.get_high_value_targets(G)]
+        self.assertIn("ADMINISTRATORS@LAB.LOCAL", names)
+        self.assertIn("DOMAIN ADMINS@LAB.LOCAL", names)
+        self.assertNotIn("QANHOST1_ADMINISTRATORS-GG@LAB.LOCAL", names)
+
+    def test_16_foreign_ea_rid_expected_dcsync(self):
+        """Forest Enterprise Admins (RID 519) unresolved SID is expected DCSync."""
+        G = nx.MultiDiGraph()
+        parent = "S-1-5-21-9-9-9"
+        G.add_node(
+            "DOM",
+            name="CHILD.LOCAL",
+            type="Domain",
+            props={"domainsid": "S-1-5-21-1-2-3"},
+            is_azure=False,
+        )
+        G.add_node(
+            parent,
+            name="PARENT.LOCAL",
+            type="Domain",
+            props={"name": "PARENT.LOCAL", "domainsid": parent},
+            is_azure=False,
+        )
+        ea = f"{parent}-519"
+        G.add_node(ea, name=ea, type="Unknown", props={}, is_azure=False)
+        G.add_edge(ea, "DOM", label="GenericAll")
+        self.assertTrue(bb.is_expected_dcsync_principal(G, ea))
+        bb.global_findings.clear()
+        from unittest.mock import patch
+
+        with patch.object(bb.console, "print", lambda *a, **k: None):
+            with patch.object(bb, "print_abuse_panel", lambda *a, **k: None):
+                bb.print_dcsync_rights(G)
+        unexpected = [
+            f for f in bb.global_findings
+            if f[1] == "DCSync" and "unexpected" in f[2].lower()
+        ]
+        self.assertEqual(unexpected, [])
+
+    def test_17_unconstrained_skips_disabled_users(self):
+        G = nx.MultiDiGraph()
+        G.add_node(
+            "U1",
+            name="DISABLED@LAB.LOCAL",
+            type="User",
+            props={"unconstraineddelegation": True, "enabled": False},
+            is_azure=False,
+        )
+        G.add_node(
+            "U2",
+            name="LIVE@LAB.LOCAL",
+            type="User",
+            props={"unconstraineddelegation": True, "enabled": True},
+            is_azure=False,
+        )
+        bb.global_findings.clear()
+        from unittest.mock import patch
+
+        with patch.object(bb.console, "print", lambda *a, **k: None):
+            with patch.object(bb, "print_abuse_panel", lambda *a, **k: None):
+                bb.print_unconstrained_delegation(G)
+        details = [f[2] for f in bb.global_findings if f[1] == "Unconstrained Delegation"]
+        self.assertTrue(any("LIVE@" in d for d in details))
+        self.assertFalse(any("DISABLED@" in d for d in details))
+
+    def test_18_password_in_desc_ignores_account_ticket_text(self):
+        G = nx.MultiDiGraph()
+        G.add_node(
+            "U1",
+            name="ticket@lab.local",
+            type="User",
+            props={"description": "REQTASK Extend Privileged User Access for account: 138894"},
+            is_azure=False,
+        )
+        G.add_node(
+            "U2",
+            name="secret@lab.local",
+            type="User",
+            props={"description": "Password: P@ssw0rd123"},
+            is_azure=False,
+        )
+        bb.global_findings.clear()
+        from unittest.mock import patch
+
+        with patch.object(bb.console, "print", lambda *a, **k: None):
+            with patch.object(bb, "print_abuse_panel", lambda *a, **k: None):
+                bb.print_password_in_descriptions(G)
+        details = [f[2] for f in bb.global_findings if f[1] == "Password in Description"]
+        self.assertTrue(any("secret@" in d for d in details))
+        self.assertFalse(any("ticket@" in d for d in details))
+
+    def test_19_collapse_findings_hygiene_volume(self):
+        rows = []
+        for i in range(50):
+            rows.append((8, "Password Not Required", f"User u{i}@lab"))
+        rows.append((10, "DCSync", "attacker can DCSync"))
+        collapsed = bb.collapse_findings(rows)
+        pnr = [r for r in collapsed if r[1] == "Password Not Required"]
+        # Cap + one summary row
+        self.assertLessEqual(len(pnr), bb.FINDING_COLLAPSE_CAPS["Password Not Required"] + 1)
+        self.assertTrue(any("collapsed" in r[2].lower() for r in pnr))
+        self.assertTrue(any(r[1] == "DCSync" for r in collapsed))
+
+    def test_21_parent_child_trust_inventory_not_scored(self):
+        """Normal parent/child trusts are inventory; SID filtering off is a finding."""
+        G = nx.MultiDiGraph()
+        G.add_node("C", name="CHILD.LOCAL", type="Domain", props={}, is_azure=False)
+        G.add_node("P", name="PARENT.LOCAL", type="Domain", props={}, is_azure=False)
+        G.add_edge(
+            "C", "P",
+            label="TrustedDomain:2:ParentChild",
+            sid_filtering=True,
+        )
+        G.add_edge(
+            "C", "P",
+            label="TrustedDomain:3:ParentChild",
+            sid_filtering=False,
+        )
+        bb.global_findings.clear()
+        from unittest.mock import patch
+        with patch.object(bb.console, "print", lambda *a, **k: None):
+            bb.print_trust_abuse(G)
+        abuses = [f for f in bb.global_findings if f[1] == "Trust Abuse"]
+        self.assertTrue(any("SID filtering disabled" in f[2] for f in abuses))
+        # Must not score every parent/child as abuse
+        self.assertTrue(all("SID filtering" in f[2] or "forest" in f[2].lower() or "foreign" in f[2].lower() for f in abuses) or len(abuses) == 1)
+
+    def test_20_legacy_sharphound_json_ingest(self):
+        """Pre-CE SharpHound: users/groups keys, PrincipalName ACEs, sessions.json."""
+        path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "testData",
+            "legacy-sharphound-tests",
+        )
+        if not os.path.isdir(path):
+            self.skipTest("legacy fixture missing")
+        from unittest.mock import patch
+
+        with patch.object(bb.console, "print", lambda *a, **k: None):
+            nodes = bb.load_json_dir(path)
+            G, _ = bb.build_graph(nodes)
+        self.assertGreaterEqual(
+            len([k for k in nodes if not str(k).startswith("__")]), 4
+        )
+        self.assertGreaterEqual(G.number_of_nodes(), 5)
+        labels = {d.get("label") for *_, d in G.edges(data=True)}
+        self.assertIn("HasSession", labels)
+        self.assertIn("LocalAdmin", labels)
+        self.assertTrue({"GetChanges", "GetChangesAll"} & labels)
 
 
 if __name__ == "__main__":

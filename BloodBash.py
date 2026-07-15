@@ -27,7 +27,7 @@ import hashlib
 import tempfile
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-__version__ = "1.4.0"
+__version__ = "1.4.1"
 logger = logging.getLogger("bloodbash")
 __org__ = "SquidSec"
 __org_tagline__ = "Open source security tooling by SquidSec"
@@ -58,6 +58,29 @@ SEVERITY_SCORES = {
     "Azure Guest Access": 7, "Azure Service Principal Abuse": 8,
 }
 
+# Enterprise-scale defaults (nodes/edges) for --all auto-fast and display caps
+LARGE_GRAPH_NODES = 25_000
+LARGE_GRAPH_EDGES = 500_000
+# Hygiene categories: keep at most N individual findings + one summary row
+FINDING_COLLAPSE_CAPS = {
+    "Password Not Required": 25,
+    "Password Never Expires": 25,
+    "LAPS Readers": 25,
+    "Shadow Credentials": 40,
+    "Dangerous Permissions": 40,
+    "Kerberoastable": 30,
+    "AS-REP Roastable": 30,
+}
+# Domain well-known RIDs that hold expected DCSync (incl. foreign forest root EA)
+EXPECTED_DCSYNC_RIDS = frozenset({
+    "512",  # Domain Admins
+    "516",  # Domain Controllers
+    "518",  # Schema Admins
+    "519",  # Enterprise Admins
+    "526",  # Key Admins
+    "527",  # Enterprise Key Admins
+})
+
 # Password-age and inactivity inventory ladders (days)
 PASSWORD_AGE_BUCKETS = [
     ("< 1 day", 0, 1),
@@ -87,15 +110,58 @@ def add_finding(category, details, score=None):
     if score is None:
         score = SEVERITY_SCORES.get(category, 5)
     global_findings.append((score, category, details))
+
+
+def collapse_findings(
+    findings: Optional[Sequence[Tuple[int, str, str]]] = None,
+    caps: Optional[Dict[str, int]] = None,
+) -> List[Tuple[int, str, str]]:
+    """
+    Collapse high-volume hygiene categories into scored summary rows.
+
+    Keeps up to N detail rows per capped category (highest score first), then
+    one summary finding for the remainder. Critical path categories stay intact
+    unless listed in FINDING_COLLAPSE_CAPS.
+    """
+    src = list(findings if findings is not None else global_findings)
+    cap_map = caps if caps is not None else FINDING_COLLAPSE_CAPS
+    by_cat: Dict[str, List[Tuple[int, str, str]]] = defaultdict(list)
+    other: List[Tuple[int, str, str]] = []
+    for score, cat, det in src:
+        if cat in cap_map:
+            by_cat[cat].append((score, cat, det))
+        else:
+            other.append((score, cat, det))
+    out: List[Tuple[int, str, str]] = list(other)
+    for cat, rows in by_cat.items():
+        rows_sorted = sorted(rows, key=lambda x: x[0], reverse=True)
+        limit = cap_map[cat]
+        keep = rows_sorted[:limit]
+        rest = rows_sorted[limit:]
+        out.extend(keep)
+        if rest:
+            top_score = rest[0][0]
+            out.append(
+                (
+                    top_score,
+                    cat,
+                    f"{len(rest)} additional {cat} finding(s) collapsed "
+                    f"(showing top {len(keep)}; use --export json for full list before collapse)",
+                )
+            )
+    return sorted(out, key=lambda x: x[0], reverse=True)
+
+
 def print_prioritized_findings(show_all=False):
     """
     Print findings summary table at end of run.
 
-    Default: top 20 by severity (skipped when empty).
-    show_all / --all-findings: always print a table of every finding,
+    Default: collapsed high-volume categories, top 20 by severity (skipped when empty).
+    show_all / --all-findings: collapsed list of every remaining row after collapse,
     including an empty-state row when nothing was recorded.
     """
-    sorted_findings = sorted(global_findings, key=lambda x: x[0], reverse=True)
+    raw_total = len(global_findings)
+    sorted_findings = collapse_findings(global_findings)
     if show_all:
         console.rule("[bold magenta]All Findings by Severity[/bold magenta]")
         title = f"All Findings · {__org__} ({len(sorted_findings)})"
@@ -121,13 +187,19 @@ def print_prioritized_findings(show_all=False):
         for i, (score, cat, det) in enumerate(rows, 1):
             table.add_row(str(i), str(score), cat, det)
     console.print(table)
+    if raw_total != len(sorted_findings):
+        console.print(
+            f"[dim]Collapsed high-volume categories: {raw_total} raw → "
+            f"{len(sorted_findings)} displayed findings[/dim]"
+        )
     if not show_all and len(sorted_findings) > 20:
         console.print(
             f"[dim]... and {len(sorted_findings) - 20} more "
             f"(pass --all-findings to list every finding)[/dim]"
         )
     elif show_all:
-        console.print(f"[dim]Total findings: {len(sorted_findings)}[/dim]")
+        console.print(f"[dim]Total findings (after collapse): {len(sorted_findings)} "
+                      f"(raw {raw_total})[/dim]")
 # ────────────────────────────────────────────────
 # Intro Banner
 # ────────────────────────────────────────────────
@@ -445,6 +517,18 @@ def get_object_id(item):
     oid = _get_prop_ci(item, ('ObjectIdentifier', 'objectid', 'objectId', 'ObjectId'))
     if oid:
         return oid
+    # Legacy SharpHound (pre-CE): Properties.objectsid / Guid / Name
+    props = item.get("Properties") or item.get("properties")
+    if isinstance(props, dict):
+        oid = _get_prop_ci(
+            props,
+            ("objectsid", "objectSid", "objectid", "objectId", "ObjectIdentifier"),
+        )
+        if oid:
+            return oid
+    oid = _get_prop_ci(item, ("Guid", "guid", "GUID"))
+    if oid:
+        return oid
     data = item.get('data')
     if isinstance(data, dict):
         oid = _get_prop_ci(data, ('id', 'objectid', 'objectId', 'ObjectId', 'ObjectIdentifier'))
@@ -453,6 +537,10 @@ def get_object_id(item):
     oid = _get_prop_ci(item, ('id',))
     if oid:
         return oid
+    # Legacy name-only identity (stable, human-readable)
+    name = item.get("Name") or item.get("name")
+    if name and not _looks_like_sid(str(name)):
+        return str(name)
     # Stable fallback for incomplete records (never use builtin hash() — it is
     # randomized per process via PYTHONHASHSEED and breaks SQLite identity).
     try:
@@ -640,13 +728,57 @@ def load_json_dir(directory, debug=False):
                         elif "objects" in raw:
                             data = raw.get("objects")
                         else:
-                            data = raw
+                            # Legacy SharpHound (pre-CE): {"users":[...], "meta":{"type":"users"}}
+                            legacy_keys = (
+                                "users", "groups", "computers", "domains", "ous",
+                                "gpos", "containers", "sessions", "gpomemberships",
+                            )
+                            data = None
+                            if meta_type and isinstance(raw.get(meta_type), list):
+                                data = raw.get(meta_type)
+                            else:
+                                for lk in legacy_keys:
+                                    if isinstance(raw.get(lk), list):
+                                        data = raw.get(lk)
+                                        if not meta_type:
+                                            meta_type = lk
+                                        break
+                            if data is None:
+                                data = raw
                     else:
                         data = []
                     if debug:
                         console.print(f"[blue]DEBUG: data type: {type(data)}, len if list: {len(data) if isinstance(data, list) else 'not list'}[/blue]")
                     if not isinstance(data, list):
                         data = [data] if data and isinstance(data, dict) else []
+                    # Legacy sessions.json is edge-only (UserName/ComputerName), not entities
+                    if meta_type == "sessions" or (
+                        "session" in filename.lower()
+                        and data
+                        and isinstance(data[0], dict)
+                        and ("UserName" in data[0] or "ComputerName" in data[0])
+                    ):
+                        sess_pending = nodes.setdefault(
+                            "__legacy_sessions__",
+                            {"_pending_sessions": []},
+                        )
+                        if not isinstance(sess_pending, dict):
+                            sess_pending = {"_pending_sessions": []}
+                            nodes["__legacy_sessions__"] = sess_pending
+                        pending_list = sess_pending.setdefault("_pending_sessions", [])
+                        for item in data:
+                            if not isinstance(item, dict):
+                                continue
+                            user = item.get("UserName") or item.get("userName")
+                            computer = item.get("ComputerName") or item.get("computerName")
+                            if user and computer:
+                                pending_list.append((str(computer), str(user)))
+                        if debug:
+                            console.print(
+                                f"[blue]DEBUG: {filename} → {len(pending_list)} legacy sessions[/blue]"
+                            )
+                        progress.advance(task)
+                        continue
                     added = 0
                     for item in data:
                         if not isinstance(item, dict):
@@ -814,6 +946,84 @@ def _register_name_map(name_to_oid, name, oid):
     short = name_u.split('@')[0].split('\\')[-1]
     if short and short not in name_to_oid:
         name_to_oid[short] = oid
+
+
+def _coalesce_result_list(value) -> List[Any]:
+    """
+    Normalize SharpHound relationship / membership payloads to a flat list.
+
+    Accepts:
+      - None → []
+      - list of refs → as-is
+      - CE wrapper dict: {Results: [...], Collected, FailureReason}
+      - single dict ref → [dict]
+      - scalar → [scalar]
+    """
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, dict):
+        # SharpHound CE collection wrapper
+        for key in ("Results", "results", "data", "Data", "Members", "members"):
+            if key in value and isinstance(value[key], list):
+                return value[key]
+        # Single principal ref object
+        if any(
+            k in value
+            for k in (
+                "ObjectIdentifier",
+                "objectid",
+                "ObjectId",
+                "MemberName",
+                "Name",
+                "name",
+                "id",
+            )
+        ):
+            return [value]
+        return []
+    return [value]
+
+
+def _ref_object_id(ref) -> Optional[str]:
+    """Extract principal/object id from a membership or relationship ref."""
+    if ref is None:
+        return None
+    if isinstance(ref, dict):
+        for key in (
+            "ObjectIdentifier",
+            "objectid",
+            "ObjectId",
+            "id",
+            "MemberName",
+            "memberName",
+            "Name",
+            "name",
+            "PrincipalSID",
+            "principalsid",
+        ):
+            val = ref.get(key)
+            if val:
+                return str(val)
+        return None
+    return str(ref)
+
+
+def _ref_object_type(ref, default: str = "Unknown") -> str:
+    if not isinstance(ref, dict):
+        return default
+    return (
+        _normalize_object_type(
+            ref.get("ObjectType")
+            or ref.get("objectType")
+            or ref.get("MemberType")
+            or ref.get("memberType")
+            or ref.get("Type")
+            or ref.get("type")
+        )
+        or default
+    )
 
 
 def _ensure_graph_node(G, nodes, name_to_oid, oid, name=None, typ='Unknown', props=None, is_azure=False):
@@ -986,9 +1196,14 @@ def build_graph(nodes, db_path=None, debug=False):
     if isinstance(meta_pending, dict):
         azure_pending = list(meta_pending.get("_pending_edges") or [])
 
+    legacy_sessions = []
+    meta_sess = nodes.pop("__legacy_sessions__", None)
+    if isinstance(meta_sess, dict):
+        legacy_sessions = list(meta_sess.get("_pending_sessions") or [])
+
     with tqdm(total=len(nodes), desc="Building graph", unit="node") as pbar:
         for oid, node in nodes.items():
-            if oid == "__azure_pending_edges__":
+            if oid in ("__azure_pending_edges__", "__legacy_sessions__"):
                 pbar.update(1)
                 continue
             is_azure = node.get('IsAzure', False)
@@ -1031,60 +1246,47 @@ def build_graph(nodes, db_path=None, debug=False):
                         break
                 if rels is None:
                     continue
-                if not isinstance(rels, list):
-                    rels = [rels] if rels else []
+                rels = _coalesce_result_list(rels)
                 for rel in rels:
-                    target = rel.get('ObjectIdentifier') if isinstance(rel, dict) else rel
+                    target = _ref_object_id(rel)
                     if not target:
                         continue
-                    rel_type = 'Unknown'
-                    if isinstance(rel, dict):
-                        rel_type = (
-                            _normalize_object_type(rel.get('ObjectType') or rel.get('objectType'))
-                            or 'Unknown'
-                        )
-                    _ensure_graph_node(G, nodes, name_to_oid, target, name=str(target), typ=rel_type)
+                    rel_type = _ref_object_type(rel, default='Unknown')
+                    # Resolve name→SID when legacy/display names used
+                    target_res = name_to_oid.get(str(target).upper()) or str(target)
+                    _ensure_graph_node(
+                        G, nodes, name_to_oid, target_res,
+                        name=str(target), typ=rel_type,
+                    )
                     if key.lower() == 'allowedtoact':
                         # principal (listed) → AllowedToAct → resource (this node)
-                        _add_unique_edge(G, target, oid, key)
+                        _add_unique_edge(G, target_res, oid, key)
                     else:
-                        _add_unique_edge(G, oid, target, key)
+                        _add_unique_edge(G, oid, target_res, key)
             # SharpHound CE stores group membership on groups as Members
             # (not MemberOf on users). Emit member → MemberOf → group edges.
+            # Also accept CE wrapper {Results:[...]} and legacy MemberName refs.
             members = None
             for nk in node.keys():
                 if nk.lower() == 'members':
                     members = node[nk]
                     break
             if members is not None:
-                if not isinstance(members, list):
-                    members = [members] if members else []
-                for rel in members:
-                    member_id = None
-                    member_type = 'Unknown'
-                    if isinstance(rel, dict):
-                        member_id = (
-                            rel.get('ObjectIdentifier')
-                            or rel.get('objectid')
-                            or rel.get('ObjectId')
-                            or rel.get('id')
-                        )
-                        member_type = (
-                            _normalize_object_type(rel.get('ObjectType') or rel.get('objectType'))
-                            or 'Unknown'
-                        )
-                    else:
-                        member_id = rel
+                for rel in _coalesce_result_list(members):
+                    member_id = _ref_object_id(rel)
+                    member_type = _ref_object_type(rel, default='Unknown')
                     if member_id:
+                        mid_s = str(member_id)
+                        resolved = name_to_oid.get(mid_s.upper()) or mid_s
                         _ensure_graph_node(
-                            G, nodes, name_to_oid, member_id,
-                            name=str(member_id), typ=member_type,
+                            G, nodes, name_to_oid, resolved,
+                            name=mid_s, typ=member_type,
                         )
-                        _add_unique_edge(G, member_id, oid, 'MemberOf')
+                        _add_unique_edge(G, resolved, oid, 'MemberOf')
             # PrimaryGroupSID is often not listed in group Members; still a MemberOf edge
             primary_group = None
             for nk in node.keys():
-                if nk.lower() == 'primarygroupsid':
+                if nk.lower() in ('primarygroupsid', 'primarygroup'):
                     primary_group = node[nk]
                     break
             if not primary_group and isinstance(props, dict):
@@ -1094,11 +1296,13 @@ def build_graph(nodes, db_path=None, debug=False):
                     or props.get('primaryGroupSID')
                 )
             if primary_group:
+                pg_s = str(primary_group)
+                pg_id = name_to_oid.get(pg_s.upper()) or pg_s
                 _ensure_graph_node(
-                    G, nodes, name_to_oid, primary_group,
-                    name=str(primary_group), typ='Group',
+                    G, nodes, name_to_oid, pg_id,
+                    name=pg_s, typ='Group',
                 )
-                _add_unique_edge(G, oid, primary_group, 'MemberOf')
+                _add_unique_edge(G, oid, pg_id, 'MemberOf')
             # SharpHound CE nested session collections:
             # {Results: [{UserSID, ComputerSID}], Collected, FailureReason}
             # BloodHound edge: Computer -HasSession-> User (dedupe across collections)
@@ -1167,21 +1371,68 @@ def build_graph(nodes, db_path=None, debug=False):
                                 or member.get('objectid')
                                 or member.get('ObjectId')
                                 or member.get('id')
+                                or member.get('Name')
+                                or member.get('name')
                             )
                             mid_type = (
                                 _normalize_object_type(
-                                    member.get('ObjectType') or member.get('objectType')
+                                    member.get('ObjectType')
+                                    or member.get('objectType')
+                                    or member.get('Type')
                                 )
                                 or 'Unknown'
                             )
                         else:
                             mid = member
                         if mid:
+                            mid_s = str(mid)
+                            mid_res = name_to_oid.get(mid_s.upper()) or mid_s
                             _ensure_graph_node(
-                                G, nodes, name_to_oid, mid,
-                                name=str(mid), typ=mid_type,
+                                G, nodes, name_to_oid, mid_res,
+                                name=mid_s, typ=mid_type,
                             )
-                            _add_unique_edge(G, mid, oid, label)
+                            _add_unique_edge(G, mid_res, oid, label)
+            # Legacy SharpHound: LocalAdmins / RemoteDesktopUsers / DcomUsers as name lists
+            for leg_key, leg_label in (
+                ('LocalAdmins', 'LocalAdmin'),
+                ('RemoteDesktopUsers', 'CanRDP'),
+                ('DcomUsers', 'ExecuteDCOM'),
+            ):
+                leg = None
+                for nk in node.keys():
+                    if nk.lower() == leg_key.lower():
+                        leg = node[nk]
+                        break
+                if not isinstance(leg, list):
+                    continue
+                for member in leg:
+                    mid = None
+                    mid_type = 'Unknown'
+                    if isinstance(member, dict):
+                        mid = (
+                            member.get('ObjectIdentifier')
+                            or member.get('Name')
+                            or member.get('name')
+                        )
+                        mid_type = (
+                            _normalize_object_type(
+                                member.get('ObjectType')
+                                or member.get('Type')
+                                or member.get('type')
+                            )
+                            or 'Unknown'
+                        )
+                    else:
+                        mid = member
+                    if not mid:
+                        continue
+                    mid_s = str(mid)
+                    mid_res = name_to_oid.get(mid_s.upper()) or mid_s
+                    _ensure_graph_node(
+                        G, nodes, name_to_oid, mid_res,
+                        name=mid_s, typ=mid_type,
+                    )
+                    _add_unique_edge(G, mid_res, oid, leg_label)
             # ACLs (case-insensitive key; tolerate null / non-dict entries)
             aces = None
             for nk in node.keys():
@@ -1200,7 +1451,28 @@ def build_graph(nodes, db_path=None, debug=False):
                     or ace.get('PrincipalObjectIdentifier')
                     or ace.get('principalsid')
                 )
+                principal_name = (
+                    ace.get('PrincipalName')
+                    or ace.get('principalName')
+                    or ace.get('Principal')
+                )
                 right = ace.get('RightName') or ace.get('rightName') or ace.get('Right')
+                # Legacy SharpHound: RightName=ExtendedRight + AceType=GetChanges/GetChangesAll
+                ace_type = (
+                    ace.get('AceType')
+                    or ace.get('aceType')
+                    or ace.get('RightGuid')
+                    or ""
+                )
+                if right and str(right).lower() in (
+                    'extendedright', 'extendedrights', 'allextendedrights'
+                ) and ace_type:
+                    at = str(ace_type).strip()
+                    if at and at.lower() not in ('all', ''):
+                        right = at  # GetChanges / GetChangesAll / etc.
+                if not principal and principal_name:
+                    pn = str(principal_name)
+                    principal = name_to_oid.get(pn.upper()) or pn
                 if principal and right:
                     ptype = (
                         _normalize_object_type(
@@ -1208,9 +1480,15 @@ def build_graph(nodes, db_path=None, debug=False):
                         )
                         or 'Unknown'
                     )
+                    pname = str(principal_name or principal)
+                    # Prefer already-registered SID for this display name
+                    if principal_name:
+                        mapped = name_to_oid.get(str(principal_name).upper())
+                        if mapped:
+                            principal = mapped
                     _ensure_graph_node(
                         G, nodes, name_to_oid, principal,
-                        name=str(principal), typ=ptype,
+                        name=pname, typ=ptype,
                     )
                     _add_unique_edge(G, principal, oid, right)
             # GPO Links on domains/OUs: container -GPLink→ GPO (BloodHound direction)
@@ -1321,7 +1599,13 @@ def build_graph(nodes, db_path=None, debug=False):
                         if not isinstance(t, dict):
                             continue
                         t_sid = t.get('TargetDomainSid') or t.get('targetDomainSid')
-                        t_name = t.get('TargetDomainName') or t.get('targetDomainName') or t_sid
+                        t_name = (
+                            t.get('TargetDomainName')
+                            or t.get('targetDomainName')
+                            or t.get('TargetName')  # legacy SharpHound
+                            or t.get('targetName')
+                            or t_sid
+                        )
                         direction = t.get('TrustDirection') or t.get('trustDirection') or 'Unknown'
                         ttype = t.get('TrustType') or t.get('trustType') or ''
                         sid_filtering = t.get('SidFilteringEnabled')
@@ -1394,6 +1678,21 @@ def build_graph(nodes, db_path=None, debug=False):
             azure_edges_added += 1
     if azure_edges_added:
         console.print(f"[green]Added {azure_edges_added} AzureHound relationship edges[/green]")
+    # Legacy sessions.json: Computer -HasSession→ User (by display name)
+    sess_added = 0
+    for computer_name, user_name in legacy_sessions:
+        c_oid = name_to_oid.get(str(computer_name).upper()) or str(computer_name)
+        u_oid = name_to_oid.get(str(user_name).upper()) or str(user_name)
+        _ensure_graph_node(
+            G, nodes, name_to_oid, c_oid, name=str(computer_name), typ="Computer"
+        )
+        _ensure_graph_node(
+            G, nodes, name_to_oid, u_oid, name=str(user_name), typ="User"
+        )
+        if _add_unique_edge(G, c_oid, u_oid, "HasSession"):
+            sess_added += 1
+    if sess_added:
+        console.print(f"[green]Added {sess_added} legacy session edges[/green]")
     console.print("[cyan]Processing standalone relationships...[/cyan]")
     added = 0
     placeholders_added = 0
@@ -1816,12 +2115,52 @@ def _is_default_high_priv_name(name):
         return True
     return False
 
-def get_high_value_targets(G, domain_filter=None):
+def _is_classic_high_value_name(name: str) -> bool:
+    """True for DA/EA/Admins/krbtgt/DC-style names — not every *ADMIN* group."""
+    if not name:
+        return False
+    if _is_builtin_administrators_name(name):
+        return True
+    nl = str(name).lower()
+    needles = (
+        "domain admins",
+        "enterprise admins",
+        "schema admins",
+        "enterprise domain controllers",
+        "domain controllers",
+        "enterprise key admins",
+        "key admins@",
+        "dnsadmins",
+        "account operators",
+        "backup operators",
+        "server operators",
+        "print operators",
+        "group policy creator owners",
+        "krbtgt",
+        "global admin",
+        "privileged role admin",
+        "enterprise ca",
+        "root ca",
+        "ntauth",
+    )
+    return any(n in nl for n in needles)
+
+
+def get_high_value_targets(G, domain_filter=None, include_all_highvalue=False):
+    """
+    Collect high-value attack targets.
+
+    Default: classic names (DA/EA/Admins/krbtgt/DCs/CA) + Azure privileged roles.
+    SharpHound ``highvalue`` alone is **not** enough for arbitrary groups (enterprise
+    floods of workstation *_ADMINISTRATORS-GG). Use include_all_highvalue=True or
+    CLI ``--all-highvalue`` to honor every collector highvalue flag.
+    """
     # Prefer full group/role phrases; avoid bare "dc" which matches CDC-FILESERVER etc.
     # Do not treat every Certificate Template as HV (was: 'ca' in typ).
-    # Include Builtin Administrators so nested ITADMIN→Administrators paths surface.
+    # Builtin Administrators only via _is_builtin_administrators_name — bare
+    # "administrators" matches workstation *_ADMINISTRATORS-GG groups (enterprise flood).
     ad_keywords = [
-        'domain admins', 'enterprise admins', 'schema admins', 'administrators',
+        'domain admins', 'enterprise admins', 'schema admins',
         'krbtgt', 'domain controllers', 'dnsadmins', 'enterprise key admins',
         'enterprise ca', 'root ca', 'ntauth store', 'ntauth',
         'builtin\\administrators',
@@ -1837,12 +2176,29 @@ def get_high_value_targets(G, domain_filter=None):
     for n, d in G.nodes(data=True):
         if not _domain_matches(d, domain_filter):
             continue
-        name = d['name'].lower()
-        typ = d['type'].lower()
+        disp = d.get('name') or ''
+        name = disp.lower()
+        typ = str(d.get('type') or '').lower()
         is_azure = d.get('is_azure', False)
         props = d.get('props') or {}
-        # Explicit SharpHound highvalue flag
-        if get_bool_prop_ci(props, ['highvalue', 'HighValue']):
+        marked_hv = get_bool_prop_ci(props, ['highvalue', 'HighValue'])
+        # Explicit SharpHound highvalue: only classic names / domains / adminCount users
+        # unless include_all_highvalue (enterprise: highvalue floods workstation admin groups)
+        if marked_hv:
+            if include_all_highvalue:
+                targets.append((n, d['name'], d['type']))
+                continue
+            if typ == 'domain' or (is_azure and 'tenant' in typ):
+                targets.append((n, d['name'], d['type']))
+                continue
+            if _is_classic_high_value_name(disp):
+                targets.append((n, d['name'], d['type']))
+                continue
+            if typ == 'user' and get_bool_prop_ci(props, ['admincount', 'adminCount']):
+                targets.append((n, d['name'], d['type']))
+                continue
+            # else: ignore non-classic highvalue marks (e.g. HOST_ADMINISTRATORS-GG)
+        if not is_azure and _is_builtin_administrators_name(disp):
             targets.append((n, d['name'], d['type']))
             continue
         keywords = azure_keywords if is_azure else ad_keywords
@@ -1881,25 +2237,41 @@ def get_indirect_paths(G, source, target, max_depth=5):
 # ────────────────────────────────────────────────
 # All analysis functions (unchanged except where noted)
 # ────────────────────────────────────────────────
+# Patterns that look like secrets in AD description (avoid ticket text FPs like "account: 138894")
+PASSWORD_IN_DESC_PATTERNS = (
+    r"\bpassword\s*[:=]\s*\S+",
+    r"\bpwd\s*[:=]\s*\S+",
+    r"\bpass(?:word)?\s*[:=]\s*\S+",
+    r"\bcredentials?\s*[:=]\s*\S+",
+    r"\bsecret\s*[:=]\s*\S+",
+    r"\bpasswd\s*[:=]\s*\S+",
+)
+
+
 def print_password_in_descriptions(G, domain_filter=None):
     console.rule("[bold magenta]Passwords in User Descriptions (AD)[/bold magenta]")
     found = False
-    password_patterns = [r'password\s*:', r'pwd\s*:', r'pass\s*:', r'credentials\s*:', r'login\s*:', r'account\s*:', r'admin\s*:', r'secret\s*:', r'key\s*:']
-    import re
     for n, d in G.nodes(data=True):
         if d.get('is_azure', False):  # Skip Azure for AD-specific checks
             continue
         if not _domain_matches(d, domain_filter):
             continue
-        if d['type'].lower() == 'user':
+        if str(d.get('type', '')).lower() == 'user':
             props = d.get('props') or {}
-            description = (props.get('description') or '').lower()
+            description = props.get('description') or ''
             if description:
-                for pattern in password_patterns:
+                for pattern in PASSWORD_IN_DESC_PATTERNS:
                     if re.search(pattern, description, re.IGNORECASE):
                         found = True
-                        console.print(f"[yellow]Potential password in description[/yellow]: [green]{d['name']}[/green] - '{props.get('description')}'")
-                        add_finding("Password in Description", f"User {d['name']} has potential password in description", score=6)
+                        console.print(
+                            f"[yellow]Potential password in description[/yellow]: "
+                            f"[green]{d['name']}[/green] - '{props.get('description')}'"
+                        )
+                        add_finding(
+                            "Password in Description",
+                            f"User {d['name']} has potential password in description",
+                            score=6,
+                        )
                         break
     if found:
         print_abuse_panel("Password in Description")
@@ -1945,11 +2317,11 @@ def print_password_never_expires(G, domain_filter=None):
             if hits <= max_display:
                 console.print(f"[yellow]Password Never Expires enabled[/yellow]: [green]{d['name']}[/green]{uac_str}")
             # Cap individual findings; summarize large domains
-            if hits <= 100:
+            if hits <= 15:
                 add_finding("Password Never Expires", f"User {d['name']} has 'Password Never Expires' set")
     if hits > max_display:
         console.print(f"  [dim]... and {hits - max_display} more[/dim]")
-    if hits > 100:
+    if hits > 15:
         add_finding(
             "Password Never Expires",
             f"{hits} enabled users have Password Never Expires (list truncated in findings)",
@@ -1963,6 +2335,11 @@ def print_password_never_expires(G, domain_filter=None):
 def print_password_not_required(G, domain_filter=None):
     console.rule("[bold magenta]Users with 'Password Not Required' Set (AD)[/bold magenta]")
     found = False
+    hits = 0
+    max_display = 50
+    # Hygiene: few detail findings + one summary (collapse_findings also caps)
+    max_detail_findings = 15
+    samples = []
     for n, d in G.nodes(data=True):
         if d.get('is_azure', False):
             continue
@@ -1983,10 +2360,31 @@ def print_password_not_required(G, domain_filter=None):
                 pass
         if password_not_required and _account_is_enabled(props):
             found = True
+            hits += 1
             uac_raw = _prop_raw_ci(props, ['useraccountcontrol', 'UserAccountControl'])
             uac_str = f" | UAC: {decode_uac(uac_raw)}" if uac_raw is not None else ""
-            console.print(f"[red]Password Not Required enabled[/red]: [green]{d['name']}[/green]{uac_str}")
-            add_finding("Password Not Required", f"User {d['name']} has 'Password Not Required' set")
+            if hits <= max_display:
+                console.print(
+                    f"[red]Password Not Required enabled[/red]: "
+                    f"[green]{d['name']}[/green]{uac_str}"
+                )
+            if hits <= max_detail_findings:
+                samples.append(d['name'])
+                add_finding(
+                    "Password Not Required",
+                    f"User {d['name']} has 'Password Not Required' set",
+                )
+    if hits > max_display:
+        console.print(f"  [dim]... and {hits - max_display} more[/dim]")
+    if hits > max_detail_findings:
+        add_finding(
+            "Password Not Required",
+            f"{hits} enabled users have Password Not Required "
+            f"(showing {max_detail_findings} samples; use --export json for more)",
+            score=8,
+        )
+    elif hits:
+        console.print(f"[dim]Found {hits} enabled user(s) with Password Not Required[/dim]")
     if found:
         console.print(Panel("[bold red]Impact:[/bold red] No password required for login, enabling easy account takeover or unauthorized access.\n[bold]Abuse:[/bold] Log in without a password; escalate privileges if account has rights.\n[bold]Mitigation:[/bold] Enforce passwords; disable or monitor such accounts.\n[bold]Tools:[/bold] ADUC, PowerShell, or BloodHound for auditing.", title="Abuse Suggestions: Password Not Required", border_style="red"))
     else:
@@ -2060,17 +2458,51 @@ def print_shadow_credentials(G, domain_filter=None):
             elif ll in secondary_user_labels and ttype_l == 'user':
                 secondary_agg[(uname, label)].append(tname)
 
-    # Primary: one finding per edge (should be rare after noise filter)
+    # Primary: aggregate by principal+right (enterprise: one SID may hit thousands)
+    primary_agg: Dict[Tuple[str, str], List[str]] = defaultdict(list)
     for uname, label, tname, ttype in primary_hits:
+        primary_agg[(uname, label)].append(tname)
+    max_primary_detail = 40
+    max_primary_findings = 50
+    primary_items = sorted(primary_agg.items(), key=lambda kv: len(kv[1]), reverse=True)
+    for i, ((uname, label), tnames) in enumerate(primary_items):
         found_abuse = True
-        console.print(
-            f"[red]Shadow Credentials abuse right[/red]: "
-            f"[green]{uname}[/green] --[{label}]--> "
-            f"[cyan]{tname}[/cyan] ({ttype})"
-        )
+        n_targets = len(tnames)
+        examples = ", ".join(tnames[:3])
+        extra = f" … +{n_targets - 3} more" if n_targets > 3 else ""
+        if i < max_primary_detail:
+            if n_targets == 1:
+                console.print(
+                    f"[red]Shadow Credentials abuse right[/red]: "
+                    f"[green]{uname}[/green] --[{label}]--> "
+                    f"[cyan]{tnames[0]}[/cyan]"
+                )
+            else:
+                console.print(
+                    f"[red]Shadow Credentials abuse right[/red]: "
+                    f"[green]{uname}[/green] --[{label}]--> "
+                    f"[cyan]{n_targets}[/cyan] principal(s) "
+                    f"[dim]({examples}{extra})[/dim]"
+                )
+        if i < max_primary_findings:
+            if n_targets == 1:
+                add_finding(
+                    "Shadow Credentials",
+                    f"{uname} has {label} on {tnames[0]} (shadow credential path)",
+                    score=8,
+                )
+            else:
+                add_finding(
+                    "Shadow Credentials",
+                    f"{uname} has {label} on {n_targets} principal(s) "
+                    f"(e.g. {examples}{extra}) — shadow credential path",
+                    score=8,
+                )
+    if len(primary_items) > max_primary_findings:
         add_finding(
             "Shadow Credentials",
-            f"{uname} has {label} on {tname} (shadow credential path)",
+            f"{len(primary_items) - max_primary_findings} additional principals with "
+            f"AddKeyCredentialLink-style rights (truncated)",
             score=8,
         )
 
@@ -2411,20 +2843,45 @@ def collect_laps_readers(G, domain_filter=None, exclude_default_priv: bool = Tru
 def print_laps_readers(G, domain_filter=None):
     console.rule("[bold magenta]LAPS Password Readers (ReadLAPSPassword) (AD)[/bold magenta]")
     rows = collect_laps_readers(G, domain_filter)
+    # Aggregate by reader — per-computer rows explode on enterprise graphs
+    by_reader: Dict[str, List[str]] = defaultdict(list)
+    labels_by_reader: Dict[str, set] = defaultdict(set)
+    for r in rows:
+        by_reader[r["reader"]].append(r["computer"])
+        labels_by_reader[r["reader"]].add(r.get("label") or "ReadLAPSPassword")
+    summary = sorted(by_reader.items(), key=lambda kv: len(kv[1]), reverse=True)
     max_display = 40
-    for i, r in enumerate(rows):
+    max_findings = 50
+    for i, (reader, computers) in enumerate(summary):
+        n = len(computers)
+        samples = ", ".join(computers[:3])
+        extra = f" … +{n - 3} more" if n > 3 else ""
+        rights = ", ".join(sorted(labels_by_reader[reader]))
         if i < max_display:
             console.print(
-                f"  • [green]{r['reader']}[/green] --[{r['label']}]--> [cyan]{r['computer']}[/cyan]"
+                f"  • [green]{reader}[/green] can read LAPS on "
+                f"[red]{n}[/red] computer(s) [dim]({rights})[/dim] "
+                f"e.g. [cyan]{samples}{extra}[/cyan]"
             )
+        if i < max_findings:
+            add_finding(
+                "LAPS Readers",
+                f"{reader} can ReadLAPSPassword on {n} computer(s) "
+                f"(e.g. {samples}{extra})",
+                score=8,
+            )
+    if len(summary) > max_display:
+        console.print(f"  [dim]... and {len(summary) - max_display} more readers[/dim]")
+    if len(summary) > max_findings:
         add_finding(
             "LAPS Readers",
-            f"{r['reader']} can ReadLAPSPassword on {r['computer']}",
+            f"{len(summary) - max_findings} additional LAPS password readers (truncated)",
             score=8,
         )
-    if len(rows) > max_display:
-        console.print(f"  [dim]... and {len(rows) - max_display} more[/dim]")
     if rows:
+        console.print(
+            f"[dim]{len(rows)} computer grant(s) across {len(summary)} reader principal(s)[/dim]"
+        )
         console.print(
             Panel(
                 "[bold red]Impact:[/bold red] Read LAPS password → local admin on target host → lateral movement.\n"
@@ -2497,6 +2954,9 @@ def print_unconstrained_delegation(G, domain_filter=None):
             except (TypeError, ValueError):
                 pass
         if not trusted_for_delegation:
+            continue
+        # Disabled users/computers are not live abuse candidates
+        if not _account_is_enabled(props, default=True):
             continue
         os_name = _prop_raw_ci(props, ['operatingsystem', 'OperatingSystem']) or ""
         entry = {"oid": n, "name": d.get("name") or "", "os": os_name, "type": d.get("type")}
@@ -2980,9 +3440,10 @@ def print_gpo_abuse(G, domain_filter=None):
     console.rule("[bold magenta]GPO Abuse Risks (AD)[/bold magenta]")
     found = False
     high_value_keywords = [
-        'domain controllers', 'domain admins', 'enterprise admins', 'administrators',
+        'domain controllers', 'domain admins', 'enterprise admins',
     ]
     dangerous = {'genericall', 'writedacl', 'writeowner', 'genericwrite'}
+    hits: List[dict] = []
     for n, d in G.nodes(data=True):
         if d.get('is_azure', False):
             continue
@@ -2998,8 +3459,10 @@ def print_gpo_abuse(G, domain_filter=None):
             label_lower = (edge.get('label') or '').lower()
             if label_lower not in dangerous:
                 continue
-            principal_name = G.nodes[u].get('name') or str(u)
+            principal_name = resolve_principal_display_name(G, u)
             if _is_default_high_priv_name(principal_name):
+                continue
+            if is_expected_admin_principal(G, u):
                 continue
             writers.append((principal_name, edge.get('label') or label_lower, u))
         if not writers:
@@ -3013,22 +3476,55 @@ def print_gpo_abuse(G, domain_filter=None):
                 linked_ous.append(G.nodes[src].get('name') or str(src))
                 if any(kw in ou_name for kw in high_value_keywords):
                     is_high_risk = True
+                if _is_builtin_administrators_name(G.nodes[src].get('name') or ''):
+                    is_high_risk = True
         if any(_is_broad_principal_name(p) for p, _, _ in writers):
             is_high_risk = True
-        found = True
-        risk_color = "[red]" if is_high_risk else "[yellow]"
         if linked_ous:
             risk_tag = "High-risk" if is_high_risk else "Linked"
-            scope_note = f" ({risk_tag}: Linked to {', '.join(linked_ous)})"
+            scope_note = f" ({risk_tag}: Linked to {', '.join(linked_ous[:3])})"
         else:
             scope_note = " (No links detected - low risk)"
-        # Broad principals first in output
         writers.sort(key=lambda w: (0 if _is_broad_principal_name(w[0]) else 1, w[0]))
-        console.print(f"{risk_color}Weak GPO{risk_color}: [bold cyan]{name}[/bold cyan]{scope_note}")
-        for principal_name, label, _ in writers:
-            style = "red" if _is_broad_principal_name(principal_name) else "green"
-            console.print(f"  → [{style}]{principal_name}[/{style}] --[{label}]-->")
-        add_finding("GPO Abuse", f"Weak GPO: {name}{scope_note}", score=9 if is_high_risk else 7)
+        hits.append({
+            "name": name,
+            "scope_note": scope_note,
+            "high_risk": is_high_risk,
+            "writers": writers,
+        })
+    # High-risk first; cap console + findings on enterprise collections
+    hits.sort(key=lambda h: (0 if h["high_risk"] else 1, h["name"]))
+    max_display = 40
+    max_findings = 50
+    for i, h in enumerate(hits):
+        found = True
+        risk_color = "[red]" if h["high_risk"] else "[yellow]"
+        if i < max_display:
+            console.print(
+                f"{risk_color}Weak GPO{risk_color}: "
+                f"[bold cyan]{h['name']}[/bold cyan]{h['scope_note']}"
+            )
+            for principal_name, label, _ in h["writers"][:8]:
+                style = "red" if _is_broad_principal_name(principal_name) else "green"
+                console.print(f"  → [{style}]{principal_name}[/{style}] --[{label}]-->")
+            if len(h["writers"]) > 8:
+                console.print(f"  [dim]… +{len(h['writers']) - 8} more writers[/dim]")
+        if i < max_findings:
+            add_finding(
+                "GPO Abuse",
+                f"Weak GPO: {h['name']}{h['scope_note']}",
+                score=9 if h["high_risk"] else 7,
+            )
+    if len(hits) > max_display:
+        console.print(f"  [dim]... and {len(hits) - max_display} more weak GPOs[/dim]")
+    if len(hits) > max_findings:
+        add_finding(
+            "GPO Abuse",
+            f"{len(hits) - max_findings} additional weak GPOs (truncated in findings)",
+            score=7,
+        )
+    if hits:
+        console.print(f"[dim]Found {len(hits)} GPO(s) with non-default write rights[/dim]")
     if found:
         print_abuse_panel("GPO Abuse")
     else:
@@ -3071,14 +3567,53 @@ def _is_expected_dcsync_name(name: str) -> bool:
     return False
 
 
+def _sid_trailing_rid(value: str) -> Optional[str]:
+    """Extract trailing RID from a SID or FOREIGN (… RID-N) display label."""
+    s = str(value or "").strip()
+    if not s:
+        return None
+    m = re.search(r"RID-(\d+)\s*\)?\s*$", s, re.IGNORECASE)
+    if m:
+        return m.group(1)
+    # Plain SID or DOMAIN-S-1-5-21-…-RID (legacy PrincipalSID style)
+    sid = s
+    idx = s.upper().find("-S-1-")
+    if idx > 0:
+        sid = s[idx + 1 :]  # drop domain prefix before S-1-…
+    if sid.upper().startswith("S-1-") or s.upper().startswith("S-1-"):
+        parts = (sid if sid.upper().startswith("S-1-") else s).split("-")
+        for part in reversed(parts):
+            if part.isdigit():
+                return part
+    return None
+
+
+def _is_expected_dcsync_sid(oid: str, name: str = "") -> bool:
+    """Well-known domain/builtin RIDs that hold expected DCSync (incl. foreign EA)."""
+    for val in (oid, name):
+        s = str(val or "")
+        su = s.upper()
+        if "S-1-5-32-544" in su or su.endswith("S-1-5-32-544"):
+            return True
+        rid = _sid_trailing_rid(s)
+        if rid in EXPECTED_DCSYNC_RIDS:
+            return True
+    return False
+
+
 def is_expected_dcsync_principal(G, oid: str, max_depth: int = 25) -> bool:
     """True if principal is a built-in DCSync holder or nested into one."""
+    name = ""
+    if oid in G:
+        nd = G.nodes[oid]
+        name = nd.get("name") or ""
+        if _is_expected_dcsync_name(name):
+            return True
+    # Unresolved / foreign forest well-known RIDs (EA 519, DA 512, …)
+    if _is_expected_dcsync_sid(str(oid), name):
+        return True
     if oid not in G:
         return False
-    nd = G.nodes[oid]
-    name = nd.get("name") or ""
-    if _is_expected_dcsync_name(name):
-        return True
     # Nested MemberOf into an expected group
     seen = set()
     stack = [(oid, 0)]
@@ -3093,7 +3628,7 @@ def is_expected_dcsync_principal(G, oid: str, max_depth: int = 25) -> bool:
                 continue
             dnd = G.nodes.get(dst) or {}
             dname = dnd.get("name") or ""
-            if _is_expected_dcsync_name(dname):
+            if _is_expected_dcsync_name(dname) or _is_expected_dcsync_sid(str(dst), dname):
                 return True
             if depth + 1 <= max_depth:
                 stack.append((dst, depth + 1))
@@ -3294,7 +3829,16 @@ def _looks_like_sid(value: str) -> bool:
 
 
 def collect_known_domain_sids(G) -> Dict[str, str]:
-    """Map domain SID (S-1-5-21-…) → domain DNS/NetBIOS name for foreign SID labels."""
+    """Map domain SID (S-1-5-21-…) → domain DNS/NetBIOS name for foreign SID labels.
+
+    Cached on G.graph to avoid O(nodes) rescans from resolve_principal_display_name
+    during multi-million-edge ACL walks (can-configure RBCD, etc.).
+    """
+    if G is None:
+        return {}
+    cached = G.graph.get("_bb_domain_sids")
+    if isinstance(cached, dict):
+        return cached
     mapping: Dict[str, str] = {}
     for n, d in G.nodes(data=True):
         if str(d.get("type") or "").lower() != "domain":
@@ -3311,6 +3855,7 @@ def collect_known_domain_sids(G) -> Dict[str, str]:
         for sid in candidates:
             if sid and _looks_like_sid(str(sid)) and dname and not _looks_like_sid(str(dname)):
                 mapping[str(sid)] = str(dname)
+    G.graph["_bb_domain_sids"] = mapping
     return mapping
 
 
@@ -3386,17 +3931,44 @@ def _is_admin_tier_principal_name(name: str) -> bool:
     return False
 
 
+# Admin-tier domain RIDs (excludes Domain Controllers 516 for computer ACL noise filters)
+EXPECTED_ADMIN_RIDS = frozenset({
+    "512",  # Domain Admins
+    "518",  # Schema Admins
+    "519",  # Enterprise Admins
+    "526",  # Key Admins
+    "527",  # Enterprise Key Admins
+})
+
+
+def _is_expected_admin_sid(oid: str, name: str = "") -> bool:
+    """Builtin Administrators + domain admin-tier RIDs (incl. foreign forest EA)."""
+    for val in (oid, name):
+        s = str(val or "")
+        su = s.upper()
+        if "S-1-5-32-544" in su or su.endswith("S-1-5-32-544"):
+            return True
+        rid = _sid_trailing_rid(s)
+        if rid in EXPECTED_ADMIN_RIDS:
+            return True
+    return False
+
+
 def is_expected_admin_principal(G, oid: str, max_depth: int = 25) -> bool:
     """True if principal is a built-in admin (or nested into one) for ACL noise filters.
 
     Unlike is_expected_dcsync_principal, this does **not** treat Domain Controllers /
     RODC / Account Operators as expected computer-ACL holders — only admin tier groups.
     """
+    name = ""
+    if oid in G:
+        name = (G.nodes[oid].get("name") or "")
+        if _is_admin_tier_principal_name(name):
+            return True
+    if _is_expected_admin_sid(str(oid), name):
+        return True
     if oid not in G:
         return False
-    name = (G.nodes[oid].get("name") or "")
-    if _is_admin_tier_principal_name(name):
-        return True
     seen = set()
     stack = [(oid, 0)]
     while stack:
@@ -3409,7 +3981,7 @@ def is_expected_admin_principal(G, oid: str, max_depth: int = 25) -> bool:
             if label not in ("memberof", "member_of", "member"):
                 continue
             dname = (G.nodes.get(dst) or {}).get("name") or ""
-            if _is_admin_tier_principal_name(dname):
+            if _is_admin_tier_principal_name(dname) or _is_expected_admin_sid(str(dst), dname):
                 return True
             if depth + 1 <= max_depth:
                 stack.append((dst, depth + 1))
@@ -3731,7 +4303,7 @@ def print_shortest_paths(G, fast=False, max_paths=10, target_filter=None, domain
         else:
             add_finding("Shortest Paths", f"{count} path(s) to {tname}", score=6)
 
-def print_dangerous_permissions(G, domain_filter=None, indirect=False):
+def print_dangerous_permissions(G, domain_filter=None, indirect=False, fast=False):
     console.rule("[bold magenta]Dangerous Permissions on High-Value Objects[/bold magenta]")
     dangerous_rights = {'genericall', 'owns', 'writedacl', 'writeowner', 'allextendedrights', 'genericwrite', 'addmember', 'resetpassword', 'forcechangepassword', 'manageca', 'managecertificates', 'enroll', 'certificateenroll', 'writeproperty'}
     azure_dangerous = {'genericall', 'owns', 'writedacl', 'writeowner', 'addsecret', 'addcertificate', 'addowner', 'execute', 'canread', 'canwrite', 'candelete'}
@@ -3740,9 +4312,25 @@ def print_dangerous_permissions(G, domain_filter=None, indirect=False):
     if not targets:
         console.print("[yellow]No high-value targets found[/yellow]")
         return
+    # Enterprise: prefer classic DA/EA/Administrators/krbtgt when HV set is huge
+    max_targets = 40 if fast else 80
+    if len(targets) > max_targets:
+        priority = _priority_high_value_targets(G, domain_filter, limit=max_targets)
+        if priority:
+            console.print(
+                f"[yellow]Limiting dangerous-ACL scan to {len(priority)} priority high-value "
+                f"targets (of {len(targets)} total; use without --fast for more)[/yellow]"
+            )
+            targets = priority
+        else:
+            targets = targets[:max_targets]
     console.print(
         "[dim]Showing non-default principals only (Domain Admins / EA / Builtin Admins filtered)[/dim]"
     )
+    max_display = 40
+    max_findings = 50
+    shown = 0
+    findings_n = 0
     for tid, tname, ttype in targets:
         incoming = G.in_edges(tid, data=True)
         is_azure = G.nodes[tid].get('is_azure', False)
@@ -3762,34 +4350,74 @@ def print_dangerous_permissions(G, domain_filter=None, indirect=False):
             dangerous_edges.append((u, d['label']))
         if dangerous_edges:
             found = True
-            console.print(f"\n[bold cyan]{tname} ({ttype}):[/bold cyan]")
-            from collections import defaultdict
-            rights_by_type = defaultdict(list)
-            for principal_oid, right in dangerous_edges:
-                rights_by_type[right].append(principal_oid)
-            for right, principals in rights_by_type.items():
-                principal_names = [G.nodes[p]['name'] for p in principals[:5]]
-                count = len(principals)
-                extra = f" ... and {count - 5} more" if count > 5 else ""
-                console.print(f"  • [yellow]{right}[/yellow]: [green]{', '.join(principal_names)}{extra}[/green]")
-            console.print(f"    [dim](Note: Only direct non-default rights; indirect via groups not included)[/dim]")
-            add_finding(
-                "Dangerous Permissions",
-                f"Non-default dangerous rights on {tname}",
-                score=9,
-            )
+            if shown < max_display:
+                console.print(f"\n[bold cyan]{tname} ({ttype}):[/bold cyan]")
+                rights_by_type = defaultdict(list)
+                for principal_oid, right in dangerous_edges:
+                    rights_by_type[right].append(principal_oid)
+                for right, principals in rights_by_type.items():
+                    principal_names = [
+                        resolve_principal_display_name(G, p) for p in principals[:5]
+                    ]
+                    count = len(principals)
+                    extra = f" ... and {count - 5} more" if count > 5 else ""
+                    console.print(
+                        f"  • [yellow]{right}[/yellow]: "
+                        f"[green]{', '.join(principal_names)}{extra}[/green]"
+                    )
+                console.print(
+                    "    [dim](Note: Only direct non-default rights; "
+                    "indirect via groups not included)[/dim]"
+                )
+                shown += 1
+            if findings_n < max_findings:
+                add_finding(
+                    "Dangerous Permissions",
+                    f"Non-default dangerous rights on {tname}",
+                    score=9,
+                )
+                findings_n += 1
+    if found and shown < findings_n:
+        console.print(
+            f"[dim]... displayed {shown} of {findings_n} dangerous-ACL targets[/dim]"
+        )
+    if findings_n >= max_findings:
+        add_finding(
+            "Dangerous Permissions",
+            f"Additional high-value objects with non-default dangerous ACLs "
+            f"(capped at {max_findings} findings)",
+            score=9,
+        )
     if indirect:
         console.print(f"\n[dim]Checking indirect dangerous permissions via groups...[/dim]")
-        for tid, tname, ttype in targets:
-            for u, v, d in G.edges(data=True):
-                if v == tid and 'label' in d and d['label'].lower() in (azure_dangerous if G.nodes[tid].get('is_azure', False) else dangerous_rights):
-                    group_name = G.nodes[u]['name']
-                    if _is_default_high_priv_name(group_name):
-                        continue
-                    if G.nodes[u]['type'].lower() in ['group', 'azure group']:
-                        members = [m for m in G.predecessors(u) if any(edge_data.get('label') == 'MemberOf' for edge_data in (G.get_edge_data(m, u) or {}).values())]
-                        if members:
-                            console.print(f"  [yellow]Indirect via group {group_name}[/yellow]: {', '.join([G.nodes[m]['name'] for m in members[:3]])}")
+        # Only walk edges into scanned targets (not full graph edge set)
+        for tid, tname, ttype in targets[:max_targets]:
+            for u, _, d in G.in_edges(tid, data=True):
+                if 'label' not in d:
+                    continue
+                rights_set = (
+                    azure_dangerous
+                    if G.nodes[tid].get('is_azure', False)
+                    else dangerous_rights
+                )
+                if d['label'].lower() not in rights_set:
+                    continue
+                group_name = G.nodes[u]['name']
+                if _is_default_high_priv_name(group_name):
+                    continue
+                if G.nodes[u]['type'].lower() in ['group', 'azure group']:
+                    members = [
+                        m for m in G.predecessors(u)
+                        if any(
+                            edge_data.get('label') == 'MemberOf'
+                            for edge_data in (G.get_edge_data(m, u) or {}).values()
+                        )
+                    ]
+                    if members:
+                        console.print(
+                            f"  [yellow]Indirect via group {group_name}[/yellow]: "
+                            f"{', '.join([G.nodes[m]['name'] for m in members[:3]])}"
+                        )
     if found:
         print_abuse_panel("Dangerous Permissions")
     else:
@@ -4331,9 +4959,40 @@ def print_arbitrary_paths(G, path_from=None, path_to=None, domain_filter=None, m
             except nx.NetworkXNoPath:
                 console.print(f"[dim]No path from {sname} to {tname}[/dim]")
 
+def _trust_edge_abuse_score(label: str, sid_filtering) -> tuple:
+    """
+    Score trust edges for abuse findings.
+
+    Parent/child with SID filtering on (or unknown) is inventory only (score 0).
+    Notable: SID filtering disabled, forest/external, foreign admin/group edges.
+    Returns (score, reason) with score 0 = print only, no finding.
+    """
+    ll = (label or "").lower()
+    if sid_filtering is False:
+        return 8, "SID filtering disabled"
+    if "foreignadmin" in ll or "foreigngroup" in ll:
+        return 8, "foreign privileged principal"
+    if "tenantmember" in ll or "cross-tenant" in ll:
+        return 7, "cross-tenant relationship"
+    # TrustedDomain:direction:TrustType
+    parts = [p for p in (label or "").split(":") if p]
+    ttype = parts[-1].lower() if len(parts) >= 3 else ""
+    if ttype in ("forest", "external", "treeroot", "crosslink"):
+        return 7, f"trust type {ttype}"
+    if ttype in ("parentchild", "parent", "child", "tree"):
+        return 0, ""  # expected hierarchy inventory
+    if ll.startswith("trusteddomain") or "trusteddomain" in ll:
+        # Unknown type — inventory only unless SID filtering off (handled above)
+        return 0, ""
+    if "foreign" in ll:
+        return 6, "foreign relationship"
+    return 0, ""
+
+
 def print_trust_abuse(G, domain_filter=None):
     console.rule("[bold magenta]Domain Trust / Cross-Domain Abuse (AD) or Tenant Abuse (Azure)[/bold magenta]")
     found = False
+    abuse_n = 0
     trust_labels = {
         'trustedby', 'trusts', 'trusteddomain', 'foreignadmin', 'foreigngroup',
         'memberof (cross-domain)',
@@ -4357,22 +5016,34 @@ def print_trust_abuse(G, domain_filter=None):
         seen.add(key)
         found = True
         sid_filt = d.get('sid_filtering')
+        score, reason = _trust_edge_abuse_score(label, sid_filt)
         extra = ""
         if sid_filt is False:
             extra = " [yellow](SID filtering disabled)[/yellow]"
-            add_finding(
-                "Trust Abuse",
-                f"{u_name} {label} {v_name} (SID filtering disabled)",
-                score=8,
+        elif reason:
+            extra = f" [yellow]({reason})[/yellow]"
+        if score > 0:
+            abuse_n += 1
+            detail = f"{u_name} {label} {v_name}"
+            if reason:
+                detail = f"{detail} ({reason})"
+            add_finding("Trust Abuse", detail, score=score)
+            console.print(
+                f"[red]Trust abuse[/red]: [green]{u_name}[/green] --[{label}]--> "
+                f"[cyan]{v_name}[/cyan]{extra}"
             )
         else:
-            add_finding("Trust Abuse", f"{u_name} {label} {v_name}", score=6)
-        console.print(
-            f"[yellow]Domain trust[/yellow]: [green]{u_name}[/green] --[{label}]--> "
-            f"[cyan]{v_name}[/cyan]{extra}"
-        )
+            console.print(
+                f"[dim]Trust (inventory)[/dim]: [green]{u_name}[/green] --[{label}]--> "
+                f"[cyan]{v_name}[/cyan]{extra}"
+            )
     if not found:
         console.print("[green]No obvious cross-domain or cross-tenant abuse detected[/green]")
+    elif abuse_n == 0:
+        console.print(
+            f"[dim]{len(seen)} trust edge(s) inventory only "
+            f"(parent/child with SID filtering on are not scored)[/dim]"
+        )
 
 def inspect_node(G, identifier, domain_filter=None):
     console.rule(f"[bold magenta]Detailed Inspection: {identifier}[/bold magenta]")
@@ -5372,13 +6043,15 @@ def _path_break_edge_score(G, u, v, label: str, paths_broken: int) -> float:
     if lab in _PATH_BREAK_ACTIONABLE or lab.replace("_", "") in _PATH_BREAK_ACTIONABLE:
         score += 1000.0
     if lab in ("memberof", "member_of", "member"):
-        # Deprioritize default high-priv membership edges (e.g. Admin → DA)
+        # Membership edges are rarely the best remediation vs ACL/session rights
         uname = (G.nodes.get(u) or {}).get("name") or ""
         vname = (G.nodes.get(v) or {}).get("name") or ""
+        score -= 200.0
         if _is_default_high_priv_name(uname) or _is_default_high_priv_name(vname):
-            score -= 500.0
-        else:
-            score -= 50.0  # membership still less actionable than ACL
+            # e.g. Administrator → Domain Admins — almost never the right "break"
+            score -= 800.0
+        if _is_classic_high_value_name(vname):
+            score -= 100.0
     return score
 
 
@@ -5844,38 +6517,92 @@ def resolve_principal_oid(G, identifier: str, domain_filter=None) -> Optional[st
     return candidates[0]
 
 
+_MEMBERSHIP_EDGE_LABELS = frozenset({
+    "memberof",
+    "member_of",
+    "member",
+    "ismemberof",
+    "hasmember",
+})
+
+
+def _is_groupish_type(gtype: str) -> bool:
+    """Whether to continue MemberOf nesting through this node type."""
+    t = (gtype or "").lower().strip()
+    if not t or t in ("unknown", "base", "?"):
+        return True
+    if "group" in t:  # Group, Azure Group, Local Group, …
+        return True
+    # Foreign security principals often nest into domain groups
+    if "foreign" in t or t in ("fsp", "foreignsecurityprincipal"):
+        return True
+    return False
+
+
 def collect_nested_groups(G, start_oid: str, max_depth: int = 25) -> Dict[str, Any]:
     """
-    Walk outbound MemberOf edges from start_oid to collect effective group membership.
-    Returns direct groups, effective groups (incl. nested), and depth map.
+    Walk MemberOf (and alias) edges from start_oid to collect effective group membership.
+
+    Sources:
+      - Outbound MemberOf / Member edges (BloodHound direction: principal → group)
+      - Inbound HasMember / Member edges (some exporters reverse the relationship)
+
+    Continues nesting through group-like types (incl. Unknown placeholders used for
+    well-known SIDs). Returns direct groups, effective groups (incl. nested), depth map.
     """
-    direct = []
-    effective = []
+    if start_oid not in G:
+        return {
+            "direct": [],
+            "effective": [],
+            "direct_count": 0,
+            "effective_count": 0,
+            "depth_map": {},
+        }
+    direct: List[dict] = []
+    effective: List[dict] = []
     depth_map = {start_oid: 0}
     seen = {start_oid}
     queue = [(start_oid, 0)]
+
+    def _visit_group(v, depth: int) -> None:
+        if v in seen or v not in G:
+            return
+        seen.add(v)
+        depth_map[v] = depth
+        nd = G.nodes[v] or {}
+        gname = nd.get("name", v)
+        gtype = nd.get("type", "?")
+        entry = {"id": v, "name": gname, "type": gtype, "depth": depth}
+        if depth == 1:
+            direct.append(entry)
+        effective.append(entry)
+        if depth < max_depth and _is_groupish_type(str(gtype)):
+            queue.append((v, depth))
+
     while queue:
         cur, depth = queue.pop(0)
         if depth >= max_depth:
             continue
+        # Outbound: principal/group → MemberOf → parent group
         for _, v, ed in G.out_edges(cur, data=True):
-            if ((ed or {}).get("label") or "").lower() != "memberof":
-                continue
-            if v in seen:
-                continue
-            seen.add(v)
-            depth_map[v] = depth + 1
-            gname = G.nodes[v].get("name", v)
-            gtype = G.nodes[v].get("type", "?")
-            entry = {"id": v, "name": gname, "type": gtype, "depth": depth + 1}
-            if depth == 0:
-                direct.append(entry)
-            effective.append(entry)
-            # Continue nesting through groups (Unknown: well-known SID placeholders)
-            if (gtype or "").lower() in ("group", "azure group", "unknown", ""):
-                queue.append((v, depth + 1))
-    direct.sort(key=lambda x: x["name"].lower())
-    effective.sort(key=lambda x: (x["depth"], x["name"].lower()))
+            lab = ((ed or {}).get("label") or "").lower().replace(" ", "")
+            # MemberOf / IsMemberOf = upward to parent group
+            # Skip outbound HasMember (that is group → child member)
+            if lab in ("memberof", "member_of", "ismemberof"):
+                _visit_group(v, depth + 1)
+            elif lab == "member" and _is_groupish_type(
+                str((G.nodes.get(v) or {}).get("type") or "")
+            ):
+                # Ambiguous "Member" edge: treat as MemberOf when target is group-like
+                _visit_group(v, depth + 1)
+        # Inbound reverse edges: group -HasMember→ principal
+        for u, _, ed in G.in_edges(cur, data=True):
+            lab = ((ed or {}).get("label") or "").lower().replace(" ", "")
+            if lab == "hasmember":
+                _visit_group(u, depth + 1)
+
+    direct.sort(key=lambda x: (x.get("name") or "").lower())
+    effective.sort(key=lambda x: (x.get("depth", 0), (x.get("name") or "").lower()))
     return {
         "direct": direct,
         "effective": effective,
@@ -7164,9 +7891,10 @@ def build_export_report(G, domain_filter=None):
         {"name": name, "type": typ}
         for _, name, typ in get_high_value_targets(G, domain_filter)
     ]
+    collapsed = collapse_findings(global_findings)
     findings = [
         {"score": score, "category": cat, "details": det}
-        for score, cat, det in sorted(global_findings, key=lambda x: x[0], reverse=True)
+        for score, cat, det in collapsed
     ]
     return {
         "tool": "BloodBash",
@@ -7178,6 +7906,8 @@ def build_export_report(G, domain_filter=None):
         "edges": G.number_of_edges(),
         "high_value": high_value,
         "findings": findings,
+        "findings_raw_count": len(global_findings),
+        "findings_collapsed_count": len(collapsed),
     }
 
 def export_results(G, output_prefix="bloodbash", format_type="md", domain_filter=None):
@@ -7295,7 +8025,7 @@ HELP_TABLE_SECTIONS = [
         "Run mode",
         [
             ("--quick-wins", "High-signal day-0 triage (also the default)", "DCSync, ADCS, roast, RBCD, LAPS, paths…"),
-            ("--all", "Run every analysis module", "full reviews; pair with --fast on large envs"),
+            ("--all", "Full attack analysis (AD+Azure)", "auto --fast on large graphs; inventory via --inventory"),
             ("--profile FILE|name", "YAML analysis profile", "quick, quick-wins, adcs-heavy, hygiene, or path"),
             ("--wizard", "Interactive mode picker", "first-run friendly"),
             ("--fast", "Limit heavy pathfinding", "top DA/EA-style targets only"),
@@ -7713,7 +8443,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--azure-guest-access", action="store_true", help="Azure guest access")
     parser.add_argument("--azure-sp-abuse", action="store_true", help="Azure service principal abuse")
     parser.add_argument("--verbose", action="store_true", help="Verbose graph summary")
-    parser.add_argument("--all", action="store_true", help="Run every analysis module")
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help=(
+            "Full attack-path analysis (AD+Azure). Auto --fast on large graphs; "
+            "inventory modules require --inventory (not included)"
+        ),
+    )
     parser.add_argument(
         "--quick-wins",
         action="store_true",
@@ -7928,6 +8665,17 @@ def main():
         args.stale_accounts = True
         args.privilege_inventory = True
 
+    # Large-graph enterprise defaults: --all auto-enables --fast (pathfinding caps)
+    n_nodes = G.number_of_nodes()
+    n_edges = G.number_of_edges()
+    large_graph = n_nodes >= LARGE_GRAPH_NODES or n_edges >= LARGE_GRAPH_EDGES
+    if args.all and large_graph and not args.fast:
+        args.fast = True
+        console.print(
+            f"[yellow]Large graph ({n_nodes} nodes / {n_edges} edges): "
+            f"auto-enabled --fast for --all (pathfinding + ACL display caps)[/yellow]"
+        )
+
     selected_checks = any([
         args.shortest_paths, args.dangerous_permissions, args.adcs, args.gpo_abuse,
         args.dcsync, args.rbcd, args.sessions, args.kerberoastable, args.as_rep_roastable,
@@ -7981,7 +8729,10 @@ def main():
     ]):
         mode_str = f"Compromise dossier (--from-user {args.from_user})"
     elif args.all:
-        mode_str = "Full analysis (AD + Azure) (--all)"
+        mode_str = "Full attack analysis (AD + Azure) (--all"
+        if args.fast:
+            mode_str += ", --fast"
+        mode_str += "; inventory via --inventory)"
     elif getattr(args, "quick_wins", False):
         if auto_default_quick_wins:
             mode_str = "Quick wins (default triage — use --all for full analysis)"
@@ -7999,7 +8750,9 @@ def main():
     if args.shortest_paths or run_all:
         print_shortest_paths(G, fast=args.fast, domain_filter=args.domain, indirect=args.indirect)
     if args.dangerous_permissions or run_all:
-        print_dangerous_permissions(G, args.domain, args.indirect)
+        print_dangerous_permissions(
+            G, args.domain, args.indirect, fast=bool(args.fast or large_graph)
+        )
         print_broad_principal_acls(G, args.domain)
     if args.adcs or run_all:
         print_adcs_vulnerabilities(G, args.domain)
@@ -8009,7 +8762,21 @@ def main():
         print_dcsync_rights(G, args.domain)
     if args.rbcd or run_all:
         print_rbcd(G, args.domain)
-        print_can_configure_rbcd(G, args.domain)
+        # Can-configure RBCD walks every computer ACL — expensive on enterprise graphs.
+        # Skip under large/fast --all unless --deep-analysis or explicit --rbcd without --all.
+        skip_cfg_rbcd = (
+            bool(run_all)
+            and (bool(args.fast) or large_graph)
+            and not bool(getattr(args, "deep_analysis", False))
+            and not (bool(args.rbcd) and not bool(args.all))
+        )
+        if skip_cfg_rbcd:
+            console.print(
+                "[dim]Skipping can-configure RBCD on large/fast --all "
+                "(pass --rbcd without --all, or --deep-analysis, to run)[/dim]"
+            )
+        else:
+            print_can_configure_rbcd(G, args.domain)
     if args.sessions or run_all:
         print_sessions_localadmin(G, args.domain)
     if args.kerberoastable or run_all:
@@ -8076,14 +8843,14 @@ def main():
     if args.gpo_content_dir:
         print_gpo_content_analysis(G, args.gpo_content_dir, args.domain)
 
-    # Inventory + path remediation (also included on --all / default full runs)
-    if args.password_age or run_all or run_inventory:
+    # Inventory is opt-in via --inventory / explicit flags (not auto on --all)
+    if args.password_age or run_inventory:
         print_password_age_inventory(G, args.domain)
-    if args.stale_accounts or run_all or run_inventory:
+    if args.stale_accounts or run_inventory:
         print_stale_account_inventory(G, args.domain)
-    if args.privilege_inventory or run_all or run_inventory:
+    if args.privilege_inventory or run_inventory:
         print_privilege_inventory(G, args.domain)
-    if run_inventory or run_all:
+    if run_inventory:
         print_structural_inventory(G, args.domain)
     if args.owned_inventory and args.owned:
         print_owned_inventory(G, args.owned, args.domain)
@@ -8112,10 +8879,11 @@ def main():
     # Trusts: quick-wins / --trust / full run
     if getattr(args, "trust", False) or run_all:
         print_trust_abuse(G, args.domain)
-    # Group nesting / stats only on --all or default full run (run_all)
+    # Stats always useful on --all; deep group nesting only with --deep-analysis
     if run_all:
-        print_group_analysis(G, args.domain, deep_analysis=args.deep_analysis)
         print_stats_dashboard(G, args.domain)
+        if args.deep_analysis:
+            print_group_analysis(G, args.domain, deep_analysis=True)
     elif args.deep_analysis:
         print_group_analysis(G, args.domain, deep_analysis=True)
     if args.export:

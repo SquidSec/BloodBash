@@ -167,6 +167,7 @@ bloodbash.csv
 bloodbash.db
 bloodbash.dot
 bloodbash_bh.json
+analysis/
 
 # Spyder project settings
 .spyderproject
