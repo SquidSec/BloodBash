@@ -210,7 +210,12 @@ def main() -> int:
     ap = argparse.ArgumentParser(
         description="Multi-hop engagement scenario battery for BloodBash"
     )
-    ap.add_argument("--count", type=int, default=10, help="Scenarios (default 10)")
+    ap.add_argument(
+        "--count",
+        type=int,
+        default=20,
+        help="Scenarios to run (default 20 = full engagement catalog)",
+    )
     ap.add_argument("--seed", type=int, default=None, help="Base seed (default random)")
     ap.add_argument("--work-dir", type=Path, default=None)
     ap.add_argument("--keep", action="store_true")

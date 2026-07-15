@@ -39,5 +39,5 @@ jobs:
       # 10 multi-issue synthetic AD labs → BloodBash → ground-truth checks.
       # Must pass before merge when this workflow is a required status check.
       run: |
-        python tools/run_scenario_battery.py --count 10 --seed 42
+        python tools/run_scenario_battery.py --count 20 --seed 42
       timeout-minutes: 15

@@ -40,7 +40,7 @@ jobs:
             test_synthetic_corpus.py -q
 
       - name: Complex environment battery (required gate)
-        run: python tools/run_scenario_battery.py --count 10 --seed 42
+        run: python tools/run_scenario_battery.py --count 20 --seed 42
         timeout-minutes: 15
 
   build:

@@ -469,17 +469,15 @@ python3 tools/generate_synthetic_sharphound.py --out testData/synthetic-corp-lab
 python3 BloodBash.py testData/synthetic-corp-lab --all --fast --all-findings
 python3 BloodBash.py testData/synthetic-corp-lab --from-user alice.low --fast
 
-# 10 multi-hop engagement scenarios (kerberoast→DCSync, helpdesk→backup,
-# unconstrained jump, ESC1, GPO, AS-REP chain, RBCD, tiering fail, nested ACL, combo)
+# 20 multi-hop engagement scenarios (classic + common debt paths)
 python3 tools/run_scenario_battery.py
-python3 tools/run_scenario_battery.py --count 10 --seed 42 -v
+python3 tools/run_scenario_battery.py --count 20 --seed 42 -v
 python3 tools/run_scenario_battery.py --list-profiles
 python3 tools/run_scenario_battery.py --keep --work-dir /tmp/bb-engagements
 ```
 
-CI (PR + main release) runs unit tests **and** `run_scenario_battery.py`
-(these 10 engagement chains). Branch protection requires the **test** status
-check so merges cannot land without a green battery.
+CI (PR + main release) runs unit tests **and** `run_scenario_battery.py --count 20`
+(20 engagement chains). Branch protection requires the **test** status check.
 
 ### Local binary build
 
