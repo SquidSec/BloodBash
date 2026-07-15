@@ -2182,6 +2182,18 @@ def get_high_value_targets(G, domain_filter=None, include_all_highvalue=False):
         is_azure = d.get('is_azure', False)
         props = d.get('props') or {}
         marked_hv = get_bool_prop_ci(props, ['highvalue', 'HighValue'])
+        # Domain Controllers are always HV (dangerous ACL / RBCD targets). Name is
+        # often DC01.domain — not "domain controllers" — and highvalue-flood filter
+        # must not drop them when collector marks highvalue.
+        if (
+            not is_azure
+            and typ == 'computer'
+            and get_bool_prop_ci(
+                props, ['isdc', 'IsDC', 'IsDomainController', 'isDomainController']
+            )
+        ):
+            targets.append((n, d['name'], d['type']))
+            continue
         # Explicit SharpHound highvalue: only classic names / domains / adminCount users
         # unless include_all_highvalue (enterprise: highvalue floods workstation admin groups)
         if marked_hv:

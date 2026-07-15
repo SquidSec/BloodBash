@@ -106,6 +106,27 @@ class TestRealDataReliability(unittest.TestCase):
         names_all = {t[1] for t in bb.get_high_value_targets(G, include_all_highvalue=True)}
         self.assertIn("QANHOST1_ADMINISTRATORS-GG@LAB.LOCAL", names_all)
 
+    def test_03c_domain_controller_computers_are_high_value(self):
+        """isdc computers stay HV even when named DC01 (not 'domain controllers')."""
+        G = nx.MultiDiGraph()
+        G.add_node(
+            "DC",
+            name="DC01.LAB.LOCAL",
+            type="Computer",
+            props={"isdc": True, "highvalue": True},
+            is_azure=False,
+        )
+        G.add_node(
+            "WS",
+            name="WS01.LAB.LOCAL",
+            type="Computer",
+            props={"highvalue": True},
+            is_azure=False,
+        )
+        names = {t[1] for t in bb.get_high_value_targets(G)}
+        self.assertIn("DC01.LAB.LOCAL", names)
+        self.assertNotIn("WS01.LAB.LOCAL", names)
+
     def test_04_foreign_sid_labeling(self):
         G = nx.MultiDiGraph()
         dsid = "S-1-5-21-111-222-333"
