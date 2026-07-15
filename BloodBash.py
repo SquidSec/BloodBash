@@ -8274,9 +8274,27 @@ HELP_EXAMPLE_SECTIONS = [
 ]
 
 
+def _display_prog_name(prog: Optional[str] = None) -> str:
+    """CLI name for help examples — prefer binary-style ``bloodbash``, not ``BloodBash.py``."""
+    raw = prog if prog else (os.path.basename(sys.argv[0]) if sys.argv else "bloodbash")
+    name = os.path.basename(str(raw)).strip() or "bloodbash"
+    lower = name.lower()
+    for suf in (".py", ".exe"):
+        if lower.endswith(suf):
+            name = name[: -len(suf)]
+            lower = name.lower()
+            break
+    if lower in ("bloodbash",) or name == "BloodBash":
+        return "bloodbash"
+    # Release assets: bloodbash-linux-x64 / bloodbash-windows-x64 → bloodbash
+    if lower.startswith("bloodbash"):
+        return "bloodbash"
+    return name or "bloodbash"
+
+
 def print_structured_help(prog: Optional[str] = None, advanced: bool = False) -> None:
     """Print Rich help. Default is short (start-here); advanced=True for full tables."""
-    prog = prog or (os.path.basename(sys.argv[0]) if sys.argv else "BloodBash.py")
+    prog = _display_prog_name(prog)
     console.print(
         Panel(
             f"[bold cyan]BloodBash v{__version__}[/bold cyan]  ·  [bold]{__org__}[/bold]\n"
@@ -8407,7 +8425,7 @@ class StructuredHelpArgumentParser(argparse.ArgumentParser):
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = StructuredHelpArgumentParser(
-        prog="BloodBash.py",
+        prog=_display_prog_name(),
         description=(
             f"BloodBash v{__version__} by {__org__} — offline SharpHound & AzureHound analyzer "
             f"({__org_url__})"
