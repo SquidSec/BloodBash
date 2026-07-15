@@ -1,0 +1,4884 @@
+{
+  "meta": {
+    "methods": 0,
+    "type": "computers",
+    "count": 45,
+    "version": 6
+  },
+  "data": [
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-1001",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "DC01.CORPLAB.LOCAL",
+        "distinguishedname": "CN=DC01,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "DC01$",
+        "enabled": true,
+        "haslaps": true,
+        "unconstraineddelegation": true,
+        "trustedtoauth": false,
+        "isdc": true,
+        "operatingsystem": "Windows Server 2019",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/DC01.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-516",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [
+          {
+            "UserSID": "S-1-5-21-1111111111-2222222222-3333333333-1105"
+          }
+        ],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [
+        {
+          "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-1001-544",
+          "Name": "ADMINISTRATORS@DC01",
+          "Results": [
+            {
+              "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-512",
+              "ObjectType": "Group"
+            }
+          ]
+        }
+      ],
+      "IsDC": true,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-1002",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "WS01.CORPLAB.LOCAL",
+        "distinguishedname": "CN=WS01,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "WS01$",
+        "enabled": true,
+        "haslaps": true,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/WS01.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [
+          {
+            "UserSID": "S-1-5-21-1111111111-2222222222-3333333333-1100"
+          }
+        ],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [
+        {
+          "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-1002-544",
+          "Name": "ADMINISTRATORS@WS01",
+          "Results": [
+            {
+              "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-1106",
+              "ObjectType": "User"
+            }
+          ]
+        },
+        {
+          "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-1002-555",
+          "Name": "REMOTE DESKTOP USERS@WS01",
+          "Results": [
+            {
+              "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-1100",
+              "ObjectType": "User"
+            }
+          ]
+        }
+      ],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-1003",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "WS02.CORPLAB.LOCAL",
+        "distinguishedname": "CN=WS02,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "WS02$",
+        "enabled": true,
+        "haslaps": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/WS02.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-1004",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "PENTESTPC.CORPLAB.LOCAL",
+        "distinguishedname": "CN=PENTESTPC,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "PENTESTPC$",
+        "enabled": true,
+        "haslaps": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/PENTESTPC.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [
+        {
+          "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-1002",
+          "ObjectType": "Computer"
+        }
+      ],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-1100",
+          "PrincipalType": "User",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-1100",
+          "PrincipalType": "User",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-1005",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "SRVAPP.CORPLAB.LOCAL",
+        "distinguishedname": "CN=SRVAPP,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "SRVAPP$",
+        "enabled": true,
+        "haslaps": true,
+        "unconstraineddelegation": false,
+        "trustedtoauth": true,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/SRVAPP.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [
+        "cifs/DC01.CORPLAB.LOCAL"
+      ],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3000",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST00.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST00,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST00$",
+        "enabled": true,
+        "haslaps": true,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST00.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3001",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST01.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST01,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST01$",
+        "enabled": true,
+        "haslaps": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST01.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3002",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST02.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST02,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST02$",
+        "enabled": true,
+        "haslaps": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST02.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3003",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST03.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST03,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST03$",
+        "enabled": true,
+        "haslaps": true,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST03.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3004",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST04.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST04,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST04$",
+        "enabled": true,
+        "haslaps": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST04.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3005",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST05.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST05,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST05$",
+        "enabled": true,
+        "haslaps": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST05.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3006",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST06.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST06,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST06$",
+        "enabled": true,
+        "haslaps": true,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST06.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3007",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST07.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST07,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST07$",
+        "enabled": true,
+        "haslaps": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST07.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3008",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST08.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST08,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST08$",
+        "enabled": true,
+        "haslaps": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST08.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3009",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST09.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST09,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST09$",
+        "enabled": true,
+        "haslaps": true,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST09.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3010",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST10.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST10,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST10$",
+        "enabled": true,
+        "haslaps": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST10.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3011",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST11.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST11,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST11$",
+        "enabled": true,
+        "haslaps": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST11.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3012",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST12.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST12,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST12$",
+        "enabled": true,
+        "haslaps": true,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST12.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3013",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST13.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST13,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST13$",
+        "enabled": true,
+        "haslaps": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST13.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3014",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST14.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST14,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST14$",
+        "enabled": true,
+        "haslaps": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST14.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3015",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST15.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST15,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST15$",
+        "enabled": true,
+        "haslaps": true,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST15.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3016",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST16.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST16,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST16$",
+        "enabled": true,
+        "haslaps": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST16.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3017",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST17.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST17,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST17$",
+        "enabled": true,
+        "haslaps": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST17.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3018",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST18.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST18,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST18$",
+        "enabled": true,
+        "haslaps": true,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST18.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3019",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST19.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST19,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST19$",
+        "enabled": true,
+        "haslaps": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST19.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3020",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST20.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST20,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST20$",
+        "enabled": true,
+        "haslaps": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST20.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3021",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST21.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST21,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST21$",
+        "enabled": true,
+        "haslaps": true,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST21.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3022",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST22.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST22,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST22$",
+        "enabled": true,
+        "haslaps": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST22.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3023",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST23.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST23,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST23$",
+        "enabled": true,
+        "haslaps": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST23.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3024",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST24.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST24,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST24$",
+        "enabled": true,
+        "haslaps": true,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST24.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3025",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST25.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST25,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST25$",
+        "enabled": true,
+        "haslaps": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST25.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3026",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST26.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST26,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST26$",
+        "enabled": true,
+        "haslaps": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST26.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3027",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST27.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST27,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST27$",
+        "enabled": true,
+        "haslaps": true,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST27.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3028",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST28.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST28,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST28$",
+        "enabled": true,
+        "haslaps": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST28.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3029",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST29.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST29,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST29$",
+        "enabled": true,
+        "haslaps": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST29.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3030",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST30.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST30,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST30$",
+        "enabled": true,
+        "haslaps": true,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST30.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3031",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST31.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST31,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST31$",
+        "enabled": true,
+        "haslaps": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST31.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3032",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST32.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST32,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST32$",
+        "enabled": true,
+        "haslaps": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST32.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3033",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST33.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST33,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST33$",
+        "enabled": true,
+        "haslaps": true,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST33.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3034",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST34.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST34,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST34$",
+        "enabled": true,
+        "haslaps": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST34.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3035",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST35.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST35,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST35$",
+        "enabled": true,
+        "haslaps": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST35.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3036",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST36.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST36,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST36$",
+        "enabled": true,
+        "haslaps": true,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST36.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3037",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST37.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST37,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST37$",
+        "enabled": true,
+        "haslaps": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST37.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3038",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST38.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST38,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST38$",
+        "enabled": true,
+        "haslaps": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST38.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-3039",
+      "ObjectType": "Computer",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "HOST39.CORPLAB.LOCAL",
+        "distinguishedname": "CN=HOST39,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "HOST39$",
+        "enabled": true,
+        "haslaps": true,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "isdc": false,
+        "operatingsystem": "Windows 10",
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1700000000,
+        "whencreated": 1682720000,
+        "serviceprincipalnames": [
+          "HOST/HOST39.CORPLAB.LOCAL"
+        ],
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "AllowedToAct": [],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "Sessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "PrivilegedSessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "RegistrySessions": {
+        "Results": [],
+        "Collected": true,
+        "FailureReason": null
+      },
+      "LocalGroups": [],
+      "IsDC": false,
+      "DomainSID": "S-1-5-21-1111111111-2222222222-3333333333",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "AddAllowedToAct",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "WriteAccountRestrictions",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "AllExtendedRights",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    }
+  ]
+}

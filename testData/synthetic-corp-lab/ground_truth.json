@@ -1,0 +1,89 @@
+{
+  "domain": "CORPLAB.LOCAL",
+  "domain_sid": "S-1-5-21-1111111111-2222222222-3333333333",
+  "description": "Synthetic SharpHound CE corpus for BloodBash regression. Not real engagement data.",
+  "generated_by": "tools/generate_synthetic_sharphound.py",
+  "scenarios": {
+    "unexpected_dcsync": {
+      "principal": "MSOL_SYNC@CORPLAB.LOCAL",
+      "expect_finding_category": "DCSync",
+      "expect_substring": "MSOL_SYNC",
+      "expect_unexpected": true
+    },
+    "expected_dcsync_nested_da": {
+      "principal": "CAROL.ADMIN@CORPLAB.LOCAL",
+      "expect_finding_category": "DCSync",
+      "must_not_be_critical_only": true
+    },
+    "system_administrators_not_default_priv": {
+      "principal": "SYSTEM ADMINISTRATORS@CORPLAB.LOCAL",
+      "must_not_match_default_high_priv": true
+    },
+    "helpdesk_can_configure_rbcd_bulk": {
+      "principal": "CORP HELPDESK@CORPLAB.LOCAL",
+      "min_computers": 40
+    },
+    "aws_connector_can_configure_rbcd_bulk": {
+      "principal": "AWS AD CONNECTORS@CORPLAB.LOCAL",
+      "min_computers": 40
+    },
+    "lowpriv_pentestpc_rbcd_configure": {
+      "principal": "ALICE.LOW@CORPLAB.LOCAL",
+      "target_contains": "PENTESTPC"
+    },
+    "rbcd_configured_on_pentestpc": {
+      "resource_contains": "PENTESTPC"
+    },
+    "auth_users_gpo_write": {
+      "principal_contains": "AUTHENTICATED USERS",
+      "target_contains": "PAMAGENTINSTALL"
+    },
+    "everyone_user_genericwrite": {
+      "principal_contains": "EVERYONE",
+      "target_contains": "MRIOS"
+    },
+    "gpo_linked_not_no_links": {
+      "gpo_contains": "PAMAGENTINSTALL",
+      "must_not_contain": "No links detected"
+    },
+    "privileged_kerberoast": {
+      "principal_contains": "SVC_SQL"
+    },
+    "asrep": {
+      "principal_contains": "BOB.ASREP"
+    },
+    "laps_mixed": {
+      "expect_enabled_gt": 0,
+      "expect_disabled_gt": 0
+    },
+    "localadmin_not_genericall": {
+      "must_list_principal_contains": "DAVE.HELP",
+      "must_not_treat_da_genericall_as_localadmin": true
+    },
+    "esc1": {
+      "template_contains": "ESC1-UserAuth"
+    },
+    "password_never_expires": {
+      "principal_contains": "EVE.PNE"
+    },
+    "password_not_required": {
+      "principal_contains": "FRANK.PNR"
+    },
+    "shadow_creds": {
+      "principal_contains": "DAVE.HELP",
+      "or_target_contains": "GRACE.SHADOW"
+    },
+    "dossier_alice_impact": {
+      "principal": "ALICE.LOW@CORPLAB.LOCAL",
+      "min_impact_edges": 1
+    }
+  },
+  "stats": {
+    "users": 10,
+    "computers": 45,
+    "groups": 14,
+    "gpos": 2,
+    "ous": 3,
+    "bulk_hosts": 40
+  }
+}

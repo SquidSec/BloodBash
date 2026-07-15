@@ -1,0 +1,97 @@
+{
+  "meta": {
+    "methods": 0,
+    "type": "ous",
+    "count": 3,
+    "version": 6
+  },
+  "data": [
+    {
+      "ObjectIdentifier": "OU=PAM,DC=corplab,DC=local",
+      "ObjectType": "OU",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "PAM@CORPLAB.LOCAL",
+        "distinguishedname": "OU=PAM,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "highvalue": false,
+        "whencreated": 1700000000,
+        "isaclprotected": false
+      },
+      "Links": [
+        {
+          "GUID": "A1111111-1111-1111-1111-111111111111",
+          "IsEnforced": true
+        }
+      ],
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "OU=Workstations,DC=corplab,DC=local",
+      "ObjectType": "OU",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "Workstations@CORPLAB.LOCAL",
+        "distinguishedname": "OU=Workstations,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "highvalue": false,
+        "whencreated": 1700000000,
+        "isaclprotected": false
+      },
+      "Links": [
+        {
+          "GUID": "B2222222-2222-2222-2222-222222222222",
+          "IsEnforced": false
+        }
+      ],
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "OU=Domain Controllers,DC=corplab,DC=local",
+      "ObjectType": "OU",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "Domain Controllers@CORPLAB.LOCAL",
+        "distinguishedname": "OU=Domain Controllers,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "highvalue": true,
+        "whencreated": 1700000000,
+        "isaclprotected": false
+      },
+      "Links": [
+        {
+          "GUID": "B2222222-2222-2222-2222-222222222222",
+          "IsEnforced": true
+        }
+      ],
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    }
+  ]
+}

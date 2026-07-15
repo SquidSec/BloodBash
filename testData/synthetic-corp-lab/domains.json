@@ -1,0 +1,96 @@
+{
+  "meta": {
+    "methods": 0,
+    "type": "domains",
+    "count": 1,
+    "version": 6
+  },
+  "data": [
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333",
+      "ObjectType": "Domain",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "CORPLAB.LOCAL",
+        "distinguishedname": "DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "highvalue": true,
+        "functionallevel": "2016",
+        "whencreated": 1700000000,
+        "isaclprotected": false
+      },
+      "Links": [
+        {
+          "GUID": "B2222222-2222-2222-2222-222222222222",
+          "IsEnforced": false
+        }
+      ],
+      "Trusts": [],
+      "ChildObjects": [],
+      "Aces": [
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GetChanges",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GetChangesAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-516",
+          "PrincipalType": "Group",
+          "RightName": "GetChangesAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-1101",
+          "PrincipalType": "User",
+          "RightName": "GetChanges",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-1101",
+          "PrincipalType": "User",
+          "RightName": "GetChangesAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-1105",
+          "PrincipalType": "User",
+          "RightName": "GetChanges",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-1105",
+          "PrincipalType": "User",
+          "RightName": "GetChangesAll",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    }
+  ]
+}
