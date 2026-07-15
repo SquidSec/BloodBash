@@ -67,6 +67,28 @@ class TestBloodBash(unittest.TestCase):
         self.assertIn("No ADCS objects in this collection", clean)
         self.assertNotIn("No obvious ESC1", clean)
 
+    def test_load_empty_data_array_creates_no_nodes(self):
+        """Empty SharpHound data:[] must not invent synthetic CA/template nodes."""
+        import json
+        import tempfile
+        from pathlib import Path
+
+        d = Path(tempfile.mkdtemp())
+        (d / "certtemplates.json").write_text(
+            json.dumps(
+                {"meta": {"type": "certtemplates", "count": 0, "version": 6}, "data": []}
+            ),
+            encoding="utf-8",
+        )
+        (d / "enterprisecas.json").write_text(
+            json.dumps(
+                {"meta": {"type": "enterprisecas", "count": 0, "version": 6}, "data": []}
+            ),
+            encoding="utf-8",
+        )
+        nodes = bloodbash_globals["load_json_dir"](str(d))
+        self.assertEqual(len(nodes), 0, msg=f"unexpected nodes: {list(nodes)[:5]}")
+
     def test_broad_principal_acls_detects_everyone_genericwrite(self):
         G = nx.MultiDiGraph()
         G.add_node("EV", name="EVERYONE@LAB.LOCAL", type="Group", props={}, is_azure=False)

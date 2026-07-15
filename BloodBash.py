@@ -519,10 +519,20 @@ def load_json_dir(directory, debug=False):
                     meta_type = (meta or {}).get("type", "") if isinstance(meta, dict) else ""
                     meta_type = str(meta_type or "").lower()
                     # AzureHound bulk export: top-level list or {"data":[...]} of {kind,data}
+                    # Important: empty list [] is valid SharpHound data — do not use
+                    # `raw.get('data') or ...` (falsy empty list would fall through to raw dict
+                    # and invent a synthetic node per empty certtemplates/enterprisecas file).
                     if isinstance(raw, list):
                         data = raw
                     elif isinstance(raw, dict):
-                        data = raw.get('data') or raw.get('Results') or raw.get('objects') or raw
+                        if "data" in raw:
+                            data = raw.get("data")
+                        elif "Results" in raw:
+                            data = raw.get("Results")
+                        elif "objects" in raw:
+                            data = raw.get("objects")
+                        else:
+                            data = raw
                     else:
                         data = []
                     if debug:

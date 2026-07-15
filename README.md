@@ -469,10 +469,11 @@ python3 tools/generate_synthetic_sharphound.py --out testData/synthetic-corp-lab
 python3 BloodBash.py testData/synthetic-corp-lab --all --fast --all-findings
 python3 BloodBash.py testData/synthetic-corp-lab --from-user alice.low --fast
 
-# Generate 10 seed-varied scenarios → run BloodBash → validate each (single command)
+# Complex multi-issue environments (healthcare/finance/MSP/retail/…) → BloodBash → validate
 python3 tools/run_scenario_battery.py
-python3 tools/run_scenario_battery.py --count 10 --seed 42 --include-canonical
-python3 tools/run_scenario_battery.py --keep --work-dir /tmp/bb-scenarios -v
+python3 tools/run_scenario_battery.py --count 10 --seed 42 -v
+python3 tools/run_scenario_battery.py --list-profiles
+python3 tools/run_scenario_battery.py --keep --work-dir /tmp/bb-envs
 ```
 
 ### Local binary build
