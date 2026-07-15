@@ -31,4 +31,6 @@ jobs:
 
     - name: Run tests
       run: |
-        python -m pytest test_bloodbash.py test_members_ingest.py -q
+        python -m pytest test_bloodbash.py test_members_ingest.py \
+          test_detection_variations.py test_compromise_dossier.py \
+          test_synthetic_corpus.py -q

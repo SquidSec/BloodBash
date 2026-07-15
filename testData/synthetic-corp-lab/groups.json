@@ -1,0 +1,455 @@
+{
+  "meta": {
+    "methods": 0,
+    "type": "groups",
+    "count": 14,
+    "version": 6
+  },
+  "data": [
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-512",
+      "ObjectType": "Group",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "DOMAIN ADMINS@CORPLAB.LOCAL",
+        "distinguishedname": "CN=Domain Admins,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "Domain Admins",
+        "highvalue": true,
+        "admincount": true,
+        "description": "",
+        "whencreated": 1700000000,
+        "isaclprotected": false
+      },
+      "Members": [
+        {
+          "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-1105",
+          "ObjectType": "User"
+        },
+        {
+          "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-1102",
+          "ObjectType": "User"
+        }
+      ],
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-519",
+      "ObjectType": "Group",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "ENTERPRISE ADMINS@CORPLAB.LOCAL",
+        "distinguishedname": "CN=Enterprise Admins,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "Enterprise Admins",
+        "highvalue": true,
+        "admincount": true,
+        "description": "",
+        "whencreated": 1700000000,
+        "isaclprotected": false
+      },
+      "Members": [],
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-513",
+      "ObjectType": "Group",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "DOMAIN USERS@CORPLAB.LOCAL",
+        "distinguishedname": "CN=Domain Users,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "Domain Users",
+        "highvalue": false,
+        "admincount": false,
+        "description": "",
+        "whencreated": 1700000000,
+        "isaclprotected": false
+      },
+      "Members": [
+        {
+          "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-1100",
+          "ObjectType": "User"
+        },
+        {
+          "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-1106",
+          "ObjectType": "User"
+        }
+      ],
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-516",
+      "ObjectType": "Group",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "DOMAIN CONTROLLERS@CORPLAB.LOCAL",
+        "distinguishedname": "CN=Domain Controllers,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "Domain Controllers",
+        "highvalue": true,
+        "admincount": true,
+        "description": "",
+        "whencreated": 1700000000,
+        "isaclprotected": false
+      },
+      "Members": [
+        {
+          "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-1001",
+          "ObjectType": "Computer"
+        }
+      ],
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+      "ObjectType": "Group",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "CORP HELPDESK@CORPLAB.LOCAL",
+        "distinguishedname": "CN=CORP Helpdesk,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "CORP Helpdesk",
+        "highvalue": false,
+        "admincount": false,
+        "description": "",
+        "whencreated": 1700000000,
+        "isaclprotected": false
+      },
+      "Members": [
+        {
+          "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-1106",
+          "ObjectType": "User"
+        }
+      ],
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-2002",
+      "ObjectType": "Group",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "SYSTEM ADMINISTRATORS@CORPLAB.LOCAL",
+        "distinguishedname": "CN=System Administrators,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "System Administrators",
+        "highvalue": false,
+        "admincount": false,
+        "description": "",
+        "whencreated": 1700000000,
+        "isaclprotected": false
+      },
+      "Members": [
+        {
+          "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-2001",
+          "ObjectType": "Group"
+        }
+      ],
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-2003",
+      "ObjectType": "Group",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "CORP VPN@CORPLAB.LOCAL",
+        "distinguishedname": "CN=Corp VPN,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "Corp VPN",
+        "highvalue": false,
+        "admincount": false,
+        "description": "",
+        "whencreated": 1700000000,
+        "isaclprotected": false
+      },
+      "Members": [
+        {
+          "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-1100",
+          "ObjectType": "User"
+        }
+      ],
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-2004",
+      "ObjectType": "Group",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "SSRS-USERS@CORPLAB.LOCAL",
+        "distinguishedname": "CN=SSRS-Users,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "SSRS-Users",
+        "highvalue": false,
+        "admincount": false,
+        "description": "",
+        "whencreated": 1700000000,
+        "isaclprotected": false
+      },
+      "Members": [
+        {
+          "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-2003",
+          "ObjectType": "Group"
+        }
+      ],
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-2100",
+      "ObjectType": "Group",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "AWS AD CONNECTORS@CORPLAB.LOCAL",
+        "distinguishedname": "CN=AWS AD Connectors,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "AWS AD Connectors",
+        "highvalue": false,
+        "admincount": false,
+        "description": "",
+        "whencreated": 1700000000,
+        "isaclprotected": false
+      },
+      "Members": [],
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "CORPLAB.LOCAL-S-1-5-32-544",
+      "ObjectType": "Group",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "Administrators@CORPLAB.LOCAL",
+        "distinguishedname": "CN=Administrators,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "Administrators",
+        "highvalue": false,
+        "whencreated": 1700000000,
+        "isaclprotected": false
+      },
+      "Members": [],
+      "Aces": [],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "CORPLAB.LOCAL-S-1-5-11",
+      "ObjectType": "Group",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "Authenticated Users@CORPLAB.LOCAL",
+        "distinguishedname": "CN=Authenticated Users,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "Authenticated Users",
+        "highvalue": false,
+        "whencreated": 1700000000,
+        "isaclprotected": false
+      },
+      "Members": [],
+      "Aces": [],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "CORPLAB.LOCAL-S-1-1-0",
+      "ObjectType": "Group",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "Everyone@CORPLAB.LOCAL",
+        "distinguishedname": "CN=Everyone,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "Everyone",
+        "highvalue": false,
+        "whencreated": 1700000000,
+        "isaclprotected": false
+      },
+      "Members": [],
+      "Aces": [],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "CORPLAB.LOCAL-S-1-5-32-545",
+      "ObjectType": "Group",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "Users@CORPLAB.LOCAL",
+        "distinguishedname": "CN=Users,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "Users",
+        "highvalue": false,
+        "whencreated": 1700000000,
+        "isaclprotected": false
+      },
+      "Members": [],
+      "Aces": [],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-515",
+      "ObjectType": "Group",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "DOMAIN COMPUTERS@CORPLAB.LOCAL",
+        "distinguishedname": "CN=Domain Computers,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "Domain Computers",
+        "highvalue": false,
+        "admincount": false,
+        "description": "",
+        "whencreated": 1700000000,
+        "isaclprotected": false
+      },
+      "Members": [],
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "Owns",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    }
+  ]
+}

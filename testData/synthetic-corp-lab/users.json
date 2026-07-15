@@ -1,0 +1,594 @@
+{
+  "meta": {
+    "methods": 0,
+    "type": "users",
+    "count": 10,
+    "version": 6
+  },
+  "data": [
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-1100",
+      "ObjectType": "User",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "ALICE.LOW@CORPLAB.LOCAL",
+        "distinguishedname": "CN=alice.low,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "alice.low",
+        "displayname": "alice.low",
+        "description": "standard user",
+        "enabled": true,
+        "highvalue": false,
+        "hasspn": false,
+        "serviceprincipalnames": [],
+        "dontreqpreauth": false,
+        "pwdneverexpires": false,
+        "passwordnotreqd": false,
+        "sensitive": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "admincount": false,
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1691360000,
+        "whencreated": 1665440000,
+        "sidhistory": [],
+        "email": "alice.low@corplab.local",
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-513",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        }
+      ],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "SPNTargets": [],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-1101",
+      "ObjectType": "User",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "MSOL_SYNC@CORPLAB.LOCAL",
+        "distinguishedname": "CN=MSOL_SYNC,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "MSOL_SYNC",
+        "displayname": "MSOL_SYNC",
+        "description": "Azure AD Connect",
+        "enabled": true,
+        "highvalue": false,
+        "hasspn": false,
+        "serviceprincipalnames": [],
+        "dontreqpreauth": false,
+        "pwdneverexpires": false,
+        "passwordnotreqd": false,
+        "sensitive": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "admincount": false,
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1691360000,
+        "whencreated": 1665440000,
+        "sidhistory": [],
+        "email": "msol_sync@corplab.local",
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-513",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        }
+      ],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "SPNTargets": [],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-1102",
+      "ObjectType": "User",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "SVC_SQL@CORPLAB.LOCAL",
+        "distinguishedname": "CN=svc_sql,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "svc_sql",
+        "displayname": "svc_sql",
+        "description": "SQL service",
+        "enabled": true,
+        "highvalue": false,
+        "hasspn": true,
+        "serviceprincipalnames": [
+          "MSSQLSvc/sql.corplab.local:1433"
+        ],
+        "dontreqpreauth": false,
+        "pwdneverexpires": false,
+        "passwordnotreqd": false,
+        "sensitive": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "admincount": false,
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1691360000,
+        "whencreated": 1665440000,
+        "sidhistory": [],
+        "email": "svc_sql@corplab.local",
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-513",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        }
+      ],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "SPNTargets": [],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-1103",
+      "ObjectType": "User",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "BOB.ASREP@CORPLAB.LOCAL",
+        "distinguishedname": "CN=bob.asrep,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "bob.asrep",
+        "displayname": "bob.asrep",
+        "description": "",
+        "enabled": true,
+        "highvalue": false,
+        "hasspn": false,
+        "serviceprincipalnames": [],
+        "dontreqpreauth": true,
+        "pwdneverexpires": false,
+        "passwordnotreqd": false,
+        "sensitive": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "admincount": false,
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1691360000,
+        "whencreated": 1665440000,
+        "sidhistory": [],
+        "email": "bob.asrep@corplab.local",
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-513",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        }
+      ],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "SPNTargets": [],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-1104",
+      "ObjectType": "User",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "MRIOS@CORPLAB.LOCAL",
+        "distinguishedname": "CN=mrios,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "mrios",
+        "displayname": "mrios",
+        "description": "",
+        "enabled": true,
+        "highvalue": false,
+        "hasspn": false,
+        "serviceprincipalnames": [],
+        "dontreqpreauth": false,
+        "pwdneverexpires": false,
+        "passwordnotreqd": false,
+        "sensitive": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "admincount": false,
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1691360000,
+        "whencreated": 1665440000,
+        "sidhistory": [],
+        "email": "mrios@corplab.local",
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-513",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-1-0",
+          "PrincipalType": "Group",
+          "RightName": "GenericWrite",
+          "IsInherited": false
+        }
+      ],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "SPNTargets": [],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-1105",
+      "ObjectType": "User",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "CAROL.ADMIN@CORPLAB.LOCAL",
+        "distinguishedname": "CN=carol.admin,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "carol.admin",
+        "displayname": "carol.admin",
+        "description": "",
+        "enabled": true,
+        "highvalue": true,
+        "hasspn": false,
+        "serviceprincipalnames": [],
+        "dontreqpreauth": false,
+        "pwdneverexpires": false,
+        "passwordnotreqd": false,
+        "sensitive": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "admincount": true,
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1691360000,
+        "whencreated": 1665440000,
+        "sidhistory": [],
+        "email": "carol.admin@corplab.local",
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-513",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        }
+      ],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "SPNTargets": [],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-1106",
+      "ObjectType": "User",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "DAVE.HELP@CORPLAB.LOCAL",
+        "distinguishedname": "CN=dave.help,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "dave.help",
+        "displayname": "dave.help",
+        "description": "",
+        "enabled": true,
+        "highvalue": false,
+        "hasspn": false,
+        "serviceprincipalnames": [],
+        "dontreqpreauth": false,
+        "pwdneverexpires": false,
+        "passwordnotreqd": false,
+        "sensitive": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "admincount": false,
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1691360000,
+        "whencreated": 1665440000,
+        "sidhistory": [],
+        "email": "dave.help@corplab.local",
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-513",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        }
+      ],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "SPNTargets": [],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-1107",
+      "ObjectType": "User",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "EVE.PNE@CORPLAB.LOCAL",
+        "distinguishedname": "CN=eve.pne,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "eve.pne",
+        "displayname": "eve.pne",
+        "description": "",
+        "enabled": true,
+        "highvalue": false,
+        "hasspn": false,
+        "serviceprincipalnames": [],
+        "dontreqpreauth": false,
+        "pwdneverexpires": true,
+        "passwordnotreqd": false,
+        "sensitive": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "admincount": false,
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1691360000,
+        "whencreated": 1665440000,
+        "sidhistory": [],
+        "email": "eve.pne@corplab.local",
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-513",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        }
+      ],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "SPNTargets": [],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-1108",
+      "ObjectType": "User",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "FRANK.PNR@CORPLAB.LOCAL",
+        "distinguishedname": "CN=frank.pnr,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "frank.pnr",
+        "displayname": "frank.pnr",
+        "description": "",
+        "enabled": true,
+        "highvalue": false,
+        "hasspn": false,
+        "serviceprincipalnames": [],
+        "dontreqpreauth": false,
+        "pwdneverexpires": false,
+        "passwordnotreqd": true,
+        "sensitive": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "admincount": false,
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1691360000,
+        "whencreated": 1665440000,
+        "sidhistory": [],
+        "email": "frank.pnr@corplab.local",
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-513",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        }
+      ],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "SPNTargets": [],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-1111111111-2222222222-3333333333-1109",
+      "ObjectType": "User",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "GRACE.SHADOW@CORPLAB.LOCAL",
+        "distinguishedname": "CN=grace.shadow,DC=corplab,DC=local",
+        "domainsid": "S-1-5-21-1111111111-2222222222-3333333333",
+        "samaccountname": "grace.shadow",
+        "displayname": "grace.shadow",
+        "description": "",
+        "enabled": true,
+        "highvalue": false,
+        "hasspn": false,
+        "serviceprincipalnames": [],
+        "dontreqpreauth": false,
+        "pwdneverexpires": false,
+        "passwordnotreqd": false,
+        "sensitive": false,
+        "unconstraineddelegation": false,
+        "trustedtoauth": false,
+        "admincount": false,
+        "lastlogon": 1700000000,
+        "lastlogontimestamp": 1700000000,
+        "pwdlastset": 1691360000,
+        "whencreated": 1665440000,
+        "sidhistory": [],
+        "email": "grace.shadow@corplab.local",
+        "isaclprotected": false
+      },
+      "PrimaryGroupSID": "S-1-5-21-1111111111-2222222222-3333333333-513",
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-519",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "CORPLAB.LOCAL-S-1-5-32-544",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-1106",
+          "PrincipalType": "User",
+          "RightName": "AddKeyCredentialLink",
+          "IsInherited": false
+        }
+      ],
+      "AllowedToDelegate": [],
+      "HasSIDHistory": [],
+      "SPNTargets": [],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    }
+  ]
+}

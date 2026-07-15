@@ -1,0 +1,88 @@
+{
+  "meta": {
+    "methods": 0,
+    "type": "certtemplates",
+    "count": 2,
+    "version": 6
+  },
+  "data": [
+    {
+      "ObjectIdentifier": "C3333333-3333-3333-3333-333333333333",
+      "ObjectType": "Certificate Template",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "ESC1-UserAuth@CORPLAB.LOCAL",
+        "distinguishedname": "CN=ESC1-UserAuth,CN=Certificate Templates,CN=Public Key Services,CN=Services,CN=Configuration,DC=corplab,DC=local",
+        "enrolleesuppliessubject": true,
+        "requiresmanagerapproval": false,
+        "authenticationenabled": true,
+        "schannelauthenticationenabled": true,
+        "enrollee_supplies_subject": true,
+        "pkienrollmentflag": 0,
+        "nopkienrollmentflag": false,
+        "effectiveekus": [
+          "1.3.6.1.5.5.7.3.2"
+        ],
+        "whencreated": 1700000000
+      },
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-1100",
+          "PrincipalType": "User",
+          "RightName": "Enroll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-513",
+          "PrincipalType": "Group",
+          "RightName": "Enroll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    },
+    {
+      "ObjectIdentifier": "D4444444-4444-4444-4444-444444444444",
+      "ObjectType": "Certificate Template",
+      "Properties": {
+        "domain": "CORPLAB.LOCAL",
+        "name": "User@CORPLAB.LOCAL",
+        "distinguishedname": "CN=User,CN=Certificate Templates,CN=Public Key Services,CN=Services,CN=Configuration,DC=corplab,DC=local",
+        "enrolleesuppliessubject": false,
+        "requiresmanagerapproval": true,
+        "authenticationenabled": true,
+        "schannelauthenticationenabled": true,
+        "enrollee_supplies_subject": false,
+        "pkienrollmentflag": 0,
+        "nopkienrollmentflag": false,
+        "effectiveekus": [
+          "1.3.6.1.5.5.7.3.2"
+        ],
+        "whencreated": 1700000000
+      },
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-513",
+          "PrincipalType": "Group",
+          "RightName": "Enroll",
+          "IsInherited": false
+        },
+        {
+          "PrincipalSID": "S-1-5-21-1111111111-2222222222-3333333333-512",
+          "PrincipalType": "Group",
+          "RightName": "GenericAll",
+          "IsInherited": false
+        }
+      ],
+      "IsDeleted": false,
+      "IsACLProtected": false
+    }
+  ]
+}

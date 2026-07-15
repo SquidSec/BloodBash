@@ -450,7 +450,24 @@ binary (non-`.py`) to skip the Python interpreter. Domain filtering is case-inse
 ```bash
 pip install -r requirements-dev.txt
 python3 -m pytest test_bloodbash.py test_members_ingest.py \
-  test_detection_variations.py test_compromise_dossier.py -q
+  test_detection_variations.py test_compromise_dossier.py \
+  test_synthetic_corpus.py -q
+```
+
+### Synthetic SharpHound corpus (high-entropy regression)
+
+Public sample dumps are small and low-entropy. For detector regression we ship a
+**synthetic SharpHound CE lab** (`testData/synthetic-corp-lab/`) with known
+ground truth (unexpected DCSync, Auth Users GPO write, bulk can-configure RBCD,
+ESC1, roast, LAPS mix, etc.). No real engagement data.
+
+```bash
+# Regenerate corpus + ground_truth.json
+python3 tools/generate_synthetic_sharphound.py --out testData/synthetic-corp-lab
+
+# Smoke BloodBash against it
+python3 BloodBash.py testData/synthetic-corp-lab --all --fast --all-findings
+python3 BloodBash.py testData/synthetic-corp-lab --from-user alice.low --fast
 ```
 
 ### Local binary build
