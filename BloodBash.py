@@ -4807,9 +4807,21 @@ def print_privileged_roast_targets(G, domain_filter=None):
         console.print("[green]No privileged Kerberoast / AS-REP targets found[/green]")
 
 
-def print_sessions_localadmin(G, domain_filter=None):
+def print_sessions_localadmin(G, domain_filter=None, fast=False):
+    """Summarize LocalAdmin/RDP/DCOM breadth and HasSession inventory.
+
+    Single O(E) edge pass — enterprise graphs have millions of edges; never
+    re-scan the full edge set per principal (was quadratic and hung on large
+    collections even under --fast / --quick-wins).
+    """
     console.rule("[bold magenta]Session / LocalAdmin / RDP / DCOM Summary (AD)[/bold magenta]")
-    computers = [n for n, d in G.nodes(data=True) if d['type'].lower() == 'computer' and _domain_matches(d, domain_filter) and not d.get('is_azure', False)]
+    computers = {
+        n
+        for n, d in G.nodes(data=True)
+        if str(d.get("type") or "").lower() == "computer"
+        and _domain_matches(d, domain_filter)
+        and not d.get("is_azure", False)
+    }
     if not computers:
         console.print("[yellow]No computers found[/yellow]")
         return
@@ -4819,40 +4831,27 @@ def print_sessions_localadmin(G, domain_filter=None):
     table.add_column("Count", justify="right")
     table.add_column("Examples", style="green")
     from collections import defaultdict, Counter
-    # Local group / session edges only — GenericAll is an AD object ACL, not local admin.
-    rights = ['LocalAdmin', 'AdminTo', 'CanRDP', 'ExecuteDCOM']
+    # Local group edges only — GenericAll is an AD object ACL, not local admin.
+    rights = frozenset({"LocalAdmin", "AdminTo", "CanRDP", "ExecuteDCOM"})
     counts = defaultdict(Counter)
-    for u, v, d in G.edges(data=True):
-        if v in computers and d.get('label') in rights:
-            counts[d.get('label')][u] += 1
-    for right, c in counts.items():
-        for principal, count in c.most_common(5):
-            examples = [
-                resolve_principal_display_name(G, v)
-                for pu, v, ed in G.edges(data=True)
-                if pu == principal and ed.get('label') == right
-            ][:3]
-            table.add_row(
-                resolve_principal_display_name(G, principal),
-                right,
-                str(count),
-                ", ".join(examples),
-            )
-    console.print(table)
+    # right -> principal -> up to 3 example computer display names
+    examples_map = defaultdict(lambda: defaultdict(list))
+    max_examples = 3
+    max_sess = 20 if fast else 40
+    max_priv_check = 50 if fast else 200
+    unique_sess = []
+    seen_sess = set()
 
-    # Explicit HasSession inventory (PrivilegedSessions / RegistrySessions / Sessions ingest)
-    sess_table = Table(
-        title="HasSession (user sessions on computers)",
-        show_header=True,
-        header_style="bold yellow",
-    )
-    sess_table.add_column("Computer", style="cyan")
-    sess_table.add_column("User", style="green")
-    session_pairs = []
     for u, v, d in G.edges(data=True):
-        if (d.get("label") or "") != "HasSession":
+        label = d.get("label") or ""
+        if label in rights and v in computers:
+            counts[label][u] += 1
+            ex = examples_map[label][u]
+            if len(ex) < max_examples:
+                ex.append(resolve_principal_display_name(G, v))
             continue
-        # Prefer Computer → User direction from ingest
+        if label != "HasSession":
+            continue
         ud, vd = G.nodes.get(u) or {}, G.nodes.get(v) or {}
         if str(ud.get("type") or "").lower() == "computer":
             comp, user = u, v
@@ -4865,29 +4864,42 @@ def print_sessions_localadmin(G, domain_filter=None):
             or _domain_matches(G.nodes.get(user) or {}, domain_filter)
         ):
             continue
-        session_pairs.append((comp, user))
-    # Dedupe
-    seen_sess = set()
-    unique_sess = []
-    for c, u in session_pairs:
-        key = (c, u)
+        key = (comp, user)
         if key in seen_sess:
             continue
         seen_sess.add(key)
-        unique_sess.append((c, u))
-    max_sess = 40
-    for i, (c, u) in enumerate(unique_sess):
-        if i < max_sess:
-            sess_table.add_row(
-                resolve_principal_display_name(G, c),
-                resolve_principal_display_name(G, u),
+        unique_sess.append((comp, user))
+
+    for right, c in counts.items():
+        for principal, count in c.most_common(5):
+            table.add_row(
+                resolve_principal_display_name(G, principal),
+                right,
+                str(count),
+                ", ".join(examples_map[right][principal][:max_examples]),
             )
+    console.print(table)
+
+    sess_table = Table(
+        title="HasSession (user sessions on computers)",
+        show_header=True,
+        header_style="bold yellow",
+    )
+    sess_table.add_column("Computer", style="cyan")
+    sess_table.add_column("User", style="green")
+    for i, (c, u) in enumerate(unique_sess):
+        if i >= max_sess:
+            break
+        sess_table.add_row(
+            resolve_principal_display_name(G, c),
+            resolve_principal_display_name(G, u),
+        )
     if unique_sess:
         console.print(sess_table)
         if len(unique_sess) > max_sess:
             console.print(f"  [dim]... and {len(unique_sess) - max_sess} more sessions[/dim]")
-        # High-signal: session of high-priv user on non-DC
-        for c, u in unique_sess[:200]:
+        # High-signal: one privileged session sample (cap BFS checks on large graphs)
+        for c, u in unique_sess[:max_priv_check]:
             uname = resolve_principal_display_name(G, u)
             if is_member_of_privileged_group(G, u)[0] or _is_default_high_priv_name(uname):
                 cname = resolve_principal_display_name(G, c)
@@ -4896,7 +4908,7 @@ def print_sessions_localadmin(G, domain_filter=None):
                     f"Privileged session: {uname} on {cname}",
                     score=7,
                 )
-                break  # one sample finding; avoid flood
+                break
     else:
         console.print("[dim]No HasSession edges in graph (sessions may not have been collected)[/dim]")
     console.print(
@@ -8790,7 +8802,7 @@ def main():
         else:
             print_can_configure_rbcd(G, args.domain)
     if args.sessions or run_all:
-        print_sessions_localadmin(G, args.domain)
+        print_sessions_localadmin(G, args.domain, fast=bool(getattr(args, "fast", False)))
     if args.kerberoastable or run_all:
         print_kerberoastable(G, args.domain)
     if args.as_rep_roastable or run_all:
