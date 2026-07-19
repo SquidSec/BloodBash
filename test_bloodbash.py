@@ -1494,6 +1494,43 @@ class TestBloodBash(unittest.TestCase):
         G.add_node("AZ", name="tenant", type="Azure Tenant", props={}, is_azure=True)
         self.assertTrue(bloodbash_globals["graph_has_azure"](G))
 
+    def test_quiet_empty_suppresses_empty_ad_sections(self):
+        """Under quiet mode, empty detectors emit no header and no 'No X found'."""
+        G = nx.MultiDiGraph()
+        G.add_node("U", name="alice@LAB.LOCAL", type="User", props={}, is_azure=False)
+        bloodbash_globals["set_quiet_empty_sections"](True)
+        try:
+            out = self._capture_output(bloodbash_globals["print_password_in_descriptions"], G)
+            clean = self._strip_ansi(out)
+            self.assertNotIn("Passwords in User Descriptions", clean)
+            self.assertNotIn("No passwords detected", clean)
+
+            out2 = self._capture_output(bloodbash_globals["print_password_not_required"], G)
+            clean2 = self._strip_ansi(out2)
+            self.assertNotIn("Password Not Required", clean2)
+            self.assertNotIn("No users with", clean2)
+
+            out3 = self._capture_output(bloodbash_globals["print_shadow_credentials"], G)
+            clean3 = self._strip_ansi(out3)
+            self.assertNotIn("Shadow Credentials Detection", clean3)
+            self.assertNotIn("No Shadow Credentials", clean3)
+
+            out4 = self._capture_output(bloodbash_globals["print_constrained_delegation"], G)
+            clean4 = self._strip_ansi(out4)
+            self.assertNotIn("Constrained Delegation Detection", clean4)
+            self.assertNotIn("No Constrained Delegation", clean4)
+        finally:
+            bloodbash_globals["set_quiet_empty_sections"](False)
+
+    def test_empty_sections_still_show_when_not_quiet(self):
+        G = nx.MultiDiGraph()
+        G.add_node("U", name="alice@LAB.LOCAL", type="User", props={}, is_azure=False)
+        bloodbash_globals["set_quiet_empty_sections"](False)
+        out = self._capture_output(bloodbash_globals["print_password_in_descriptions"], G)
+        clean = self._strip_ansi(out)
+        self.assertIn("Passwords in User Descriptions", clean)
+        self.assertIn("No passwords detected", clean)
+
     def test_busiest_paths_no_spurious_dangerous_permissions_panel(self):
         G = nx.MultiDiGraph()
         G.add_node(
