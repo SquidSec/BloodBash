@@ -1,0 +1,22 @@
+---
+- hosts: dc
+  gather_facts: false
+  tasks:
+  - ansible.windows.win_shell: |
+      Import-Module ActiveDirectory
+      $dn = 'CN=Users,DC=lab,DC=local'
+      $p = ConvertTo-SecureString 'GenAll!Pass1' -AsPlainText -Force
+      $exists = $false
+      try { Get-ADUser -Identity hopadmin | Out-Null; $exists = $true } catch { $exists = $false }
+      if (-not $exists) {
+        New-ADUser -Name hopadmin -SamAccountName hopadmin -AccountPassword $p -Enabled $true -PasswordNeverExpires $true -Path $dn
+      }
+      $user = Get-ADUser -Identity hopadmin
+      $src = Get-ADUser -Identity domainuser
+      $acl = Get-Acl -Path ("AD:" + $user.DistinguishedName)
+      $id = New-Object System.Security.Principal.SecurityIdentifier($src.SID)
+      $rule = New-Object System.DirectoryServices.ActiveDirectoryAccessRule($id,[System.DirectoryServices.ActiveDirectoryRights]::GenericAll,[System.Security.AccessControl.AccessControlType]::Allow)
+      $acl.AddAccessRule($rule)
+      Set-Acl -Path ("AD:" + $user.DistinguishedName) -AclObject $acl
+      (Get-ADUser -Filter *).SamAccountName -join ','
+    args: {executable: powershell}

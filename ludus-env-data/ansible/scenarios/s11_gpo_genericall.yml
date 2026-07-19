@@ -1,0 +1,17 @@
+---
+- hosts: dc
+  gather_facts: false
+  tasks:
+  - ansible.windows.win_shell: |
+      Import-Module ActiveDirectory
+      Import-Module GroupPolicy
+      $gpo = Get-GPO -Name 'Default Domain Policy'
+      $src = Get-ADUser domainuser
+      # ACL on GPO object
+      $gpoDN = (Get-ADObject -LDAPFilter "(displayName=Default Domain Policy)" -SearchBase "CN=Policies,CN=System,DC=lab,DC=local").DistinguishedName
+      $acl = Get-Acl ("AD:"+$gpoDN)
+      $id = New-Object System.Security.Principal.SecurityIdentifier($src.SID)
+      $rule = New-Object System.DirectoryServices.ActiveDirectoryAccessRule($id,[System.DirectoryServices.ActiveDirectoryRights]::GenericAll,[System.Security.AccessControl.AccessControlType]::Allow)
+      $acl.AddAccessRule($rule); Set-Acl ("AD:"+$gpoDN) $acl
+      'S11_OK ' + $gpoDN
+    args: {executable: powershell}

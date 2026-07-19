@@ -1,0 +1,13 @@
+---
+- hosts: dc
+  gather_facts: false
+  tasks:
+  - ansible.windows.win_shell: |
+      Import-Module ActiveDirectory
+      $hop=Get-ADComputer 'SS-HOP01'
+      $fh=Get-ADComputer 'SS-FOOTHOLD'
+      # FOOTHOLD$ allowed to act on HOP (RBCD)
+      Set-ADComputer $hop -PrincipalsAllowedToDelegateToAccount $fh
+      Get-ADComputer SS-HOP01 -Properties PrincipalsAllowedToDelegateToAccount | Format-List Name,PrincipalsAllowedToDelegateToAccount
+      'S08_OK'
+    args: {executable: powershell}

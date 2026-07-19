@@ -1,0 +1,17 @@
+---
+- hosts: dc
+  gather_facts: false
+  tasks:
+  - ansible.windows.win_shell: |
+      Import-Module ActiveDirectory
+      $dn = 'CN=Users,DC=lab,DC=local'
+      $p = ConvertTo-SecureString 'SqlSvc!Pass1' -AsPlainText -Force
+      $exists = $false
+      try { Get-ADUser -Identity svc_sql | Out-Null; $exists = $true } catch { $exists = $false }
+      if (-not $exists) {
+        New-ADUser -Name svc_sql -SamAccountName svc_sql -AccountPassword $p -Enabled $true -PasswordNeverExpires $true -Path $dn
+      }
+      Set-ADUser -Identity svc_sql -ServicePrincipalNames @{Add='MSSQLSvc/sql.lab.local:1433'}
+      Get-ADUser -Identity svc_sql -Properties ServicePrincipalName | Format-List SamAccountName,ServicePrincipalName
+      (Get-ADUser -Filter *).SamAccountName -join ','
+    args: {executable: powershell}

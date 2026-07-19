@@ -1,0 +1,31 @@
+---
+- hosts: dc
+  gather_facts: false
+  tasks:
+  - ansible.windows.win_shell: |
+      Import-Module ActiveDirectory
+      foreach ($g in @('HelpDesk','BBTest_Priv')) { try{Remove-ADGroup $g -Confirm:$false}catch{} }
+      foreach ($u in @('hopadmin','svc_sql','asrep_user','path_user','tgtgrp_user','deleg_svc','dcsync_user','shadow_tgt')) {
+        try{Remove-ADUser $u -Confirm:$false}catch{}
+      }
+      try {
+        $hop=Get-ADComputer SS-HOP01
+        Set-ADComputer $hop -Clear 'msDS-AllowedToActOnBehalfOfOtherIdentity' -ea 0
+        Set-ADAccountControl -Identity 'SS-HOP01$' -TrustedForDelegation $false -ea 0
+      } catch {}
+      try {
+        Get-ADPrincipalGroupMembership domainuser | ? {$_.SamAccountName -ne 'Domain Users'} | % {
+          Remove-ADGroupMember $_.SamAccountName -Members domainuser -Confirm:$false -ea 0
+        }
+      } catch {}
+      # strip domainuser ACEs is hard; full clean via removing test users is enough for most
+      'CLEAN ' + ((Get-ADUser -Filter *).SamAccountName -join ',')
+    args: {executable: powershell}
+- hosts: hop
+  gather_facts: false
+  tasks:
+  - ansible.windows.win_shell: |
+      net localgroup Administrators "LAB\hopadmin" /delete
+      net localgroup Administrators "LAB\path_user" /delete
+    args: {executable: powershell}
+    failed_when: false

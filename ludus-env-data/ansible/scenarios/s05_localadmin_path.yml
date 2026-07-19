@@ -1,0 +1,29 @@
+---
+- hosts: dc
+  gather_facts: false
+  tasks:
+  - ansible.windows.win_shell: |
+      Import-Module ActiveDirectory
+      $dn = 'CN=Users,DC=lab,DC=local'
+      $p = ConvertTo-SecureString 'PathUser!1' -AsPlainText -Force
+      $exists = $false
+      try { Get-ADUser -Identity path_user | Out-Null; $exists = $true } catch { $exists = $false }
+      if (-not $exists) {
+        New-ADUser -Name path_user -SamAccountName path_user -AccountPassword $p -Enabled $true -PasswordNeverExpires $true -Path $dn
+      }
+      $user = Get-ADUser -Identity path_user
+      $src = Get-ADUser -Identity domainuser
+      $acl = Get-Acl -Path ("AD:" + $user.DistinguishedName)
+      $right = [GUID]'00299570-246d-11d0-a768-00aa006e0529'
+      $id = New-Object System.Security.Principal.SecurityIdentifier($src.SID)
+      $rule = New-Object System.DirectoryServices.ActiveDirectoryAccessRule($id,[System.DirectoryServices.ActiveDirectoryRights]::ExtendedRight,[System.Security.AccessControl.AccessControlType]::Allow,$right,[System.DirectoryServices.ActiveDirectorySecurityInheritance]::None)
+      $acl.AddAccessRule($rule)
+      Set-Acl -Path ("AD:" + $user.DistinguishedName) -AclObject $acl
+      (Get-ADUser -Filter *).SamAccountName -join ','
+    args: {executable: powershell}
+- hosts: hop
+  gather_facts: false
+  tasks:
+  - ansible.windows.win_shell: net localgroup Administrators "LAB\path_user" /add
+    args: {executable: powershell}
+    failed_when: false
