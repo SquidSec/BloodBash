@@ -270,6 +270,43 @@ TYPE_FROM_META = {
 # ────────────────────────────────────────────────
 # Abuse Suggestions Helper (Extended for Azure)
 # ────────────────────────────────────────────────
+# When True (--all / --quick-wins), empty detector sections omit header + "No X found".
+# Explicit single-check flags keep the green confirmation that the check ran.
+_QUIET_EMPTY_SECTIONS = False
+
+
+def set_quiet_empty_sections(enabled: bool = True) -> None:
+    global _QUIET_EMPTY_SECTIONS
+    _QUIET_EMPTY_SECTIONS = bool(enabled)
+
+
+class DeferredSection:
+    """Section header printed only when there is content (or when not quiet-empty)."""
+
+    def __init__(self, title: str):
+        self.title = title
+        self._opened = False
+        self.had_content = False
+
+    def mark(self) -> None:
+        """Open the section before the first real finding line."""
+        if not self._opened:
+            console.rule(f"[bold magenta]{self.title}[/bold magenta]")
+            self._opened = True
+        self.had_content = True
+
+    def empty(self, msg: str) -> None:
+        """No hits: suppress entirely under quiet mode; otherwise show green none."""
+        if self.had_content:
+            return
+        if _QUIET_EMPTY_SECTIONS:
+            return
+        if not self._opened:
+            console.rule(f"[bold magenta]{self.title}[/bold magenta]")
+            self._opened = True
+        console.print(f"[green]{msg}[/green]")
+
+
 def print_abuse_panel(vuln_type: str):
     title = f"Abuse Suggestions: {vuln_type}"
     content = ""
@@ -2261,7 +2298,7 @@ PASSWORD_IN_DESC_PATTERNS = (
 
 
 def print_password_in_descriptions(G, domain_filter=None):
-    console.rule("[bold magenta]Passwords in User Descriptions (AD)[/bold magenta]")
+    sec = DeferredSection("Passwords in User Descriptions (AD)")
     found = False
     for n, d in G.nodes(data=True):
         if d.get('is_azure', False):  # Skip Azure for AD-specific checks
@@ -2275,6 +2312,7 @@ def print_password_in_descriptions(G, domain_filter=None):
                 for pattern in PASSWORD_IN_DESC_PATTERNS:
                     if re.search(pattern, description, re.IGNORECASE):
                         found = True
+                        sec.mark()
                         console.print(
                             f"[yellow]Potential password in description[/yellow]: "
                             f"[green]{d['name']}[/green] - '{props.get('description')}'"
@@ -2288,10 +2326,10 @@ def print_password_in_descriptions(G, domain_filter=None):
     if found:
         print_abuse_panel("Password in Description")
     else:
-        console.print("[green]No passwords detected in user descriptions[/green]")
+        sec.empty("No passwords detected in user descriptions")
 
 def print_password_never_expires(G, domain_filter=None):
-    console.rule("[bold magenta]Users with 'Password Never Expires' Set (AD)[/bold magenta]")
+    sec = DeferredSection("Users with 'Password Never Expires' Set (AD)")
     found = False
     hits = 0
     max_display = 50
@@ -2324,6 +2362,7 @@ def print_password_never_expires(G, domain_filter=None):
                 pass
             found = True
             hits += 1
+            sec.mark()
             uac_raw = _prop_raw_ci(props, ['useraccountcontrol', 'UserAccountControl'])
             uac_str = f" | UAC: {decode_uac(uac_raw)}" if uac_raw is not None else ""
             if hits <= max_display:
@@ -2342,10 +2381,10 @@ def print_password_never_expires(G, domain_filter=None):
     if found:
         console.print(Panel("[bold yellow]Impact:[/bold yellow] Passwords may never expire, leading to old/weak passwords persisting indefinitely.\n[bold]Mitigation:[/bold] Review and enforce password policies; consider resetting passwords for affected accounts.\n[bold]Tools:[/bold] Use PowerShell (Get-ADUser) or AD tools to audit.", title="Abuse Suggestions: Password Never Expires", border_style="yellow"))
     else:
-        console.print("[green]No users with 'Password Never Expires' found[/green]")
+        sec.empty("No users with 'Password Never Expires' found")
 
 def print_password_not_required(G, domain_filter=None):
-    console.rule("[bold magenta]Users with 'Password Not Required' Set (AD)[/bold magenta]")
+    sec = DeferredSection("Users with 'Password Not Required' Set (AD)")
     found = False
     hits = 0
     max_display = 50
@@ -2373,6 +2412,7 @@ def print_password_not_required(G, domain_filter=None):
         if password_not_required and _account_is_enabled(props):
             found = True
             hits += 1
+            sec.mark()
             uac_raw = _prop_raw_ci(props, ['useraccountcontrol', 'UserAccountControl'])
             uac_str = f" | UAC: {decode_uac(uac_raw)}" if uac_raw is not None else ""
             if hits <= max_display:
@@ -2400,7 +2440,7 @@ def print_password_not_required(G, domain_filter=None):
     if found:
         console.print(Panel("[bold red]Impact:[/bold red] No password required for login, enabling easy account takeover or unauthorized access.\n[bold]Abuse:[/bold] Log in without a password; escalate privileges if account has rights.\n[bold]Mitigation:[/bold] Enforce passwords; disable or monitor such accounts.\n[bold]Tools:[/bold] ADUC, PowerShell, or BloodHound for auditing.", title="Abuse Suggestions: Password Not Required", border_style="red"))
     else:
-        console.print("[green]No users with 'Password Not Required' found[/green]")
+        sec.empty("No users with 'Password Not Required' found")
 
 def _is_expected_key_credential_holder(name: str) -> bool:
     """
@@ -2423,7 +2463,7 @@ def _is_expected_key_credential_holder(name: str) -> bool:
 
 
 def print_shadow_credentials(G, domain_filter=None):
-    console.rule("[bold magenta]Shadow Credentials Detection (AD)[/bold magenta]")
+    sec = DeferredSection("Shadow Credentials Detection (AD)")
     # Primary: AddKeyCredentialLink (direct msDS-KeyCredentialLink write) — high signal.
     # Secondary: strong ACL control (GenericAll / WriteDacl / WriteOwner) on *users*
     # from non-default principals. GenericWrite on computers is common connector noise
@@ -2479,6 +2519,7 @@ def print_shadow_credentials(G, domain_filter=None):
     primary_items = sorted(primary_agg.items(), key=lambda kv: len(kv[1]), reverse=True)
     for i, ((uname, label), tnames) in enumerate(primary_items):
         found_abuse = True
+        sec.mark()
         n_targets = len(tnames)
         examples = ", ".join(tnames[:3])
         extra = f" … +{n_targets - 3} more" if n_targets > 3 else ""
@@ -2531,6 +2572,7 @@ def print_shadow_credentials(G, domain_filter=None):
         if n_targets > max_targets_for_finding:
             continue
         found_abuse = True
+        sec.mark()
         examples = ", ".join(tnames[:3])
         extra = f" … +{n_targets - 3} more" if n_targets > 3 else ""
         if i < max_secondary_detail:
@@ -2548,6 +2590,7 @@ def print_shadow_credentials(G, domain_filter=None):
         )
     skipped_bulk = sum(1 for _, tnames in secondary_items if len(tnames) > max_targets_for_finding)
     if skipped_bulk:
+        sec.mark()
         console.print(
             f"[dim]… suppressed {skipped_bulk} bulk secondary ACL pair(s) "
             f"(>{max_targets_for_finding} user targets each — connector/over-delegation noise)[/dim]"
@@ -2572,6 +2615,7 @@ def print_shadow_credentials(G, domain_filter=None):
                 key_credential_link = True
         if key_credential_link:
             found_existing = True
+            sec.mark()
             console.print(
                 f"[yellow]Existing KeyCredentialLink[/yellow] (informational): "
                 f"[green]{d['name']}[/green] — may be Windows Hello / legitimate device creds"
@@ -2579,7 +2623,9 @@ def print_shadow_credentials(G, domain_filter=None):
     if found_abuse:
         print_abuse_panel("Shadow Credentials")
     if not found_abuse and not found_existing:
-        console.print("[green]No Shadow Credentials abuse rights or existing KeyCredentialLink found[/green]")
+        sec.empty(
+            "No Shadow Credentials abuse rights or existing KeyCredentialLink found"
+        )
     elif not found_abuse and found_existing:
         console.print(
             "[dim]No non-default AddKeyCredentialLink / ACL abuse rights found; "
@@ -2587,7 +2633,7 @@ def print_shadow_credentials(G, domain_filter=None):
         )
 
 def print_gpo_content_parsing(G, domain_filter=None):
-    console.rule("[bold magenta]GPO Content Parsing for Exploitable Settings (AD)[/bold magenta]")
+    sec = DeferredSection("GPO Content Parsing for Exploitable Settings (AD)")
     found = False
     exploitable_keys = ['taskname', 'scriptpath', 'scheduledtask', 'TaskName', 'ScriptPath', 'ScheduledTask']
     for n, d in G.nodes(data=True):
@@ -2602,6 +2648,7 @@ def print_gpo_content_parsing(G, domain_filter=None):
         lower_props = {k.lower(): v for k, v in props.items()}
         found_keys = [k for k in exploitable_keys if k.lower() in lower_props and lower_props[k.lower()]]
         if found_keys:
+            sec.mark()
             found = True
             console.print(f"[yellow]Exploitable GPO content detected[/yellow]: [bold cyan]{name}[/bold cyan]")
             for key in exploitable_keys:
@@ -2613,14 +2660,17 @@ def print_gpo_content_parsing(G, domain_filter=None):
     if found:
         print_abuse_panel("GPO Abuse")
     else:
-        console.print("[green]No exploitable GPO content found[/green]")
+        sec.empty("No exploitable GPO content found")
         
 def print_gpo_content_analysis(G, gpo_content_dir: str, domain_filter=None):
-    console.rule("[bold magenta]GPO Content Analysis – Scheduled Tasks / Scripts / cPassword (AD)[/bold magenta]")
+    sec = DeferredSection("GPO Content Analysis – Scheduled Tasks / Scripts / cPassword (AD)")
     if not gpo_content_dir or not Path(gpo_content_dir).is_dir():
-        console.print("[yellow]--gpo-content-dir not provided or invalid. Skipping XML analysis.[/yellow]")
+        if not _QUIET_EMPTY_SECTIONS:
+            sec.mark()
+            console.print("[yellow]--gpo-content-dir not provided or invalid. Skipping XML analysis.[/yellow]")
         return
     found_exploitable = False
+    sec.mark()
     gpo_name_to_oid = {}
     for nid, ndata in G.nodes(data=True):
         if ndata.get('type', '').lower() == 'gpo':
@@ -2660,10 +2710,10 @@ def print_gpo_content_analysis(G, gpo_content_dir: str, domain_filter=None):
     if found_exploitable:
         print_abuse_panel("GPO Abuse")
     else:
-        console.print("[green]No exploitable scheduled tasks, scripts, or cPasswords found in GPO XMLs[/green]")
+        sec.empty("No exploitable scheduled tasks, scripts, or cPasswords found in GPO XMLs")
 
 def print_constrained_delegation(G, domain_filter=None):
-    console.rule("[bold magenta]Constrained Delegation Detection (AD)[/bold magenta]")
+    sec = DeferredSection("Constrained Delegation Detection (AD)")
     found = False
     for n, d in G.nodes(data=True):
         if d.get('is_azure', False):
@@ -2708,6 +2758,7 @@ def print_constrained_delegation(G, domain_filter=None):
         if not trusted_to_auth and not allowed_to_delegate_to:
             continue
         found = True
+        sec.mark()
         kind = "User" if typ == "user" else "Computer"
         console.print(
             f"[yellow]Constrained Delegation enabled[/yellow]: "
@@ -2726,7 +2777,7 @@ def print_constrained_delegation(G, domain_filter=None):
     if found:
         print_abuse_panel("Constrained Delegation")
     else:
-        console.print("[green]No Constrained Delegation found[/green]")
+        sec.empty("No Constrained Delegation found")
 
 def _has_laps_enabled(props):
     """SharpHound CE uses haslaps; password attrs are rarely collected and vary in case."""
@@ -2749,7 +2800,7 @@ def _has_laps_enabled(props):
     return False
 
 def print_laps_status(G, domain_filter=None):
-    console.rule("[bold magenta]LAPS (Local Administrator Password Solution) Status (AD)[/bold magenta]")
+    sec = DeferredSection("LAPS (Local Administrator Password Solution) Status (AD)")
     computers = [
         d for _, d in G.nodes(data=True)
         if d['type'].lower() == 'computer'
@@ -2757,7 +2808,7 @@ def print_laps_status(G, domain_filter=None):
         and not d.get('is_azure', False)
     ]
     if not computers:
-        console.print("[green]No computers found[/green]")
+        sec.empty("No computers found")
         return
     enabled = []
     disabled = []
@@ -2768,6 +2819,10 @@ def print_laps_status(G, domain_filter=None):
         else:
             disabled.append(d.get('name') or '')
     total = len(computers)
+    # Quiet mode: only show LAPS section when there is a coverage gap (or all enabled is worth a note)
+    if _QUIET_EMPTY_SECTIONS and not disabled:
+        return
+    sec.mark()
     console.print(
         f"  LAPS enabled: [green]{len(enabled)}[/green] / {total}  ·  "
         f"not enabled: [yellow]{len(disabled)}[/yellow] / {total}"
@@ -2853,7 +2908,7 @@ def collect_laps_readers(G, domain_filter=None, exclude_default_priv: bool = Tru
 
 
 def print_laps_readers(G, domain_filter=None):
-    console.rule("[bold magenta]LAPS Password Readers (ReadLAPSPassword) (AD)[/bold magenta]")
+    sec = DeferredSection("LAPS Password Readers (ReadLAPSPassword) (AD)")
     rows = collect_laps_readers(G, domain_filter)
     # Aggregate by reader — per-computer rows explode on enterprise graphs
     by_reader: Dict[str, List[str]] = defaultdict(list)
@@ -2869,6 +2924,7 @@ def print_laps_readers(G, domain_filter=None):
         samples = ", ".join(computers[:3])
         extra = f" … +{n - 3} more" if n > 3 else ""
         rights = ", ".join(sorted(labels_by_reader[reader]))
+        sec.mark()
         if i < max_display:
             console.print(
                 f"  • [green]{reader}[/green] can read LAPS on "
@@ -2905,7 +2961,7 @@ def print_laps_readers(G, domain_filter=None):
             )
         )
     else:
-        console.print("[green]No non-default LAPS password readers found[/green]")
+        sec.empty("No non-default LAPS password readers found")
 
 
 def is_domain_controller(G, oid: str, max_depth: int = 10) -> bool:
@@ -2943,7 +2999,7 @@ def is_domain_controller(G, oid: str, max_depth: int = 10) -> bool:
 
 
 def print_unconstrained_delegation(G, domain_filter=None):
-    console.rule("[bold magenta]Unconstrained Delegation Detection (AD)[/bold magenta]")
+    sec = DeferredSection("Unconstrained Delegation Detection (AD)")
     dcs: List[dict] = []
     non_dcs: List[dict] = []
     for n, d in G.nodes(data=True):
@@ -2977,14 +3033,15 @@ def print_unconstrained_delegation(G, domain_filter=None):
         else:
             non_dcs.append(entry)
 
-    if dcs:
-        console.print("[bold]Domain Controllers (expected unconstrained)[/bold]")
-        for e in dcs:
-            os_s = f" [{e['os']}]" if e["os"] else ""
-            console.print(
-                f"  [dim]•[/dim] [cyan]{e['name']}[/cyan]{os_s}"
-            )
     if non_dcs:
+        sec.mark()
+        if dcs:
+            console.print("[bold]Domain Controllers (expected unconstrained)[/bold]")
+            for e in dcs:
+                os_s = f" [{e['os']}]" if e["os"] else ""
+                console.print(
+                    f"  [dim]•[/dim] [cyan]{e['name']}[/cyan]{os_s}"
+                )
         console.print("[bold yellow]Non-DC unconstrained delegation (abuse candidates)[/bold yellow]")
         for e in non_dcs:
             os_s = f" [{e['os']}]" if e["os"] else ""
@@ -2997,17 +3054,26 @@ def print_unconstrained_delegation(G, domain_filter=None):
                 f"{typ} {e['name']} allows unconstrained delegation (non-DC)",
                 score=8,
             )
-    if non_dcs:
         print_abuse_panel("Unconstrained Delegation")
     elif dcs:
-        console.print(
-            f"[dim]Only DC unconstrained delegation found ({len(dcs)}); no non-DC abuse candidates.[/dim]"
-        )
+        # DC-only is expected noise under quiet --all
+        if not _QUIET_EMPTY_SECTIONS:
+            sec.mark()
+            console.print("[bold]Domain Controllers (expected unconstrained)[/bold]")
+            for e in dcs:
+                os_s = f" [{e['os']}]" if e["os"] else ""
+                console.print(
+                    f"  [dim]•[/dim] [cyan]{e['name']}[/cyan]{os_s}"
+                )
+            console.print(
+                f"[dim]Only DC unconstrained delegation found ({len(dcs)}); "
+                f"no non-DC abuse candidates.[/dim]"
+            )
     else:
-        console.print("[green]No unconstrained delegation found[/green]")
+        sec.empty("No unconstrained delegation found")
 
 def print_sid_history_abuse(G, domain_filter=None):
-    console.rule("[bold magenta]SID History Abuse (AD)[/bold magenta]")
+    sec = DeferredSection("SID History Abuse (AD)")
     found = False
     high_priv_groups = {'domain admins', 'enterprise admins', 'administrators', 'schema admins'}
     for n, d in G.nodes(data=True):
@@ -3025,6 +3091,7 @@ def print_sid_history_abuse(G, domain_filter=None):
             group_name = hist_name.lower()
             if any(hp in group_name for hp in high_priv_groups) or _is_default_high_priv_name(hist_name):
                 found = True
+                sec.mark()
                 console.print(
                     f"[yellow]SID History potential[/yellow]: [green]{d['name']}[/green] "
                     f"has SID history from [cyan]{hist_name}[/cyan]"
@@ -3032,6 +3099,7 @@ def print_sid_history_abuse(G, domain_filter=None):
                 add_finding("SID History Abuse", f"{d['name']} has SID history from {hist_name}")
             else:
                 # Still surface non-empty history (informational)
+                sec.mark()
                 console.print(
                     f"[dim]SID History present[/dim]: [green]{d['name']}[/green] → [cyan]{hist_name}[/cyan]"
                 )
@@ -3049,6 +3117,7 @@ def print_sid_history_abuse(G, domain_filter=None):
                 if not sid_val:
                     continue
                 found = True
+                sec.mark()
                 console.print(
                     f"[yellow]SID History present[/yellow]: [green]{d['name']}[/green] "
                     f"history SID [cyan]{sid_val}[/cyan]"
@@ -3057,7 +3126,7 @@ def print_sid_history_abuse(G, domain_filter=None):
     if found:
         print_abuse_panel("SID History Abuse")
     else:
-        console.print("[green]No obvious SID history abuse detected[/green]")
+        sec.empty("No obvious SID history abuse detected")
 
 def print_adcs_vulnerabilities(G, domain_filter=None):
     """Detect AD CS misconfigs (SpecterOps ESC1–ESC14 where JSON signals allow).
@@ -3066,7 +3135,7 @@ def print_adcs_vulnerabilities(G, domain_filter=None):
     ESC9+ use template flags when present (NO_SECURITY_EXTENSION, etc.).
     ESC6/ESC8/ESC10–12 need CA registry or HTTP role data SharpHound may omit.
     """
-    console.rule("[bold magenta]ADCS ESC Vulnerabilities (ESC1–ESC14) (AD)[/bold magenta]")
+    sec = DeferredSection("ADCS ESC Vulnerabilities (ESC1–ESC14) (AD)")
     found = False
     adcs_types = {
         'certificate template', 'enterprise ca', 'root ca', 'ntauth store', 'aia ca',
@@ -3081,6 +3150,10 @@ def print_adcs_vulnerabilities(G, domain_filter=None):
             or str(d.get('type') or '').lower().endswith(' ca')
         )
     )
+    # Open section when we will print anything (objects missing is itself a message)
+    if adcs_object_count == 0 and _QUIET_EMPTY_SECTIONS:
+        return
+    sec.mark()
     if adcs_object_count == 0:
         console.print(
             "[yellow]No ADCS objects in this collection[/yellow] "
@@ -3431,7 +3504,8 @@ def print_adcs_vulnerabilities(G, domain_filter=None):
             "not present in all SharpHound collections. ESC9 uses NO_SECURITY_EXTENSION.[/dim]"
         )
     else:
-        console.print("[green]No obvious ESC1–ESC14 misconfigurations detected[/green]")
+        if not _QUIET_EMPTY_SECTIONS:
+            console.print("[green]No obvious ESC1–ESC14 misconfigurations detected[/green]")
 
 def _is_broad_principal_name(name: str) -> bool:
     """Everyone / Authenticated Users / Domain Users — domain-wide ACL holders."""
@@ -3449,7 +3523,7 @@ def _is_broad_principal_name(name: str) -> bool:
 
 
 def print_gpo_abuse(G, domain_filter=None):
-    console.rule("[bold magenta]GPO Abuse Risks (AD)[/bold magenta]")
+    sec = DeferredSection("GPO Abuse Risks (AD)")
     found = False
     high_value_keywords = [
         'domain controllers', 'domain admins', 'enterprise admins',
@@ -3510,6 +3584,7 @@ def print_gpo_abuse(G, domain_filter=None):
     max_findings = 50
     for i, h in enumerate(hits):
         found = True
+        sec.mark()
         risk_color = "[red]" if h["high_risk"] else "[yellow]"
         if i < max_display:
             console.print(
@@ -3540,7 +3615,7 @@ def print_gpo_abuse(G, domain_filter=None):
     if found:
         print_abuse_panel("GPO Abuse")
     else:
-        console.print("[green]No dangerous GPO rights found from non-default principals[/green]")
+        sec.empty("No dangerous GPO rights found from non-default principals")
 
 # Multi-word / unambiguous DCSync holder phrases (substring-safe).
 EXPECTED_DCSYNC_NAME_NEEDLES = (
@@ -3771,13 +3846,14 @@ def print_dcsync_rights(G, domain_filter=None):
     if unexpected:
         print_abuse_panel("DCSync")
     elif not found and not expected_full and not expected_partial and not filtered_n:
-        console.print("[green]No DCSync rights detected[/green]")
+        if not _QUIET_EMPTY_SECTIONS:
+            console.print("[green]No DCSync rights detected[/green]")
     elif not unexpected and (expected_full or expected_partial or filtered_n):
         # expected-only: no abuse panel
         pass
 
 def print_rbcd(G, domain_filter=None):
-    console.rule("[bold magenta]Resource-Based Constrained Delegation (RBCD) (AD)[/bold magenta]")
+    sec = DeferredSection("Resource-Based Constrained Delegation (RBCD) (AD)")
     # RBCD is msDS-AllowedToActOnBehalfOfOtherIdentity / AllowedToAct edges
     # (principal → AllowedToAct → resource). msDS-AllowedToDelegateTo is KCD,
     # handled by print_constrained_delegation — do not treat it as RBCD.
@@ -3818,6 +3894,7 @@ def print_rbcd(G, domain_filter=None):
         principals = [p for p in principals if p]
         if principals:
             found = True
+            sec.mark()
             console.print(
                 f"[yellow]RBCD configured[/yellow]: [bold cyan]{d['name']}[/bold cyan] "
                 f"allows delegation from:"
@@ -3828,7 +3905,7 @@ def print_rbcd(G, domain_filter=None):
     if found:
         print_abuse_panel("RBCD")
     else:
-        console.print("[green]No RBCD configured computers found[/green]")
+        sec.empty("No RBCD configured computers found")
 
 
 # Rights that let a principal set msDS-AllowedToActOnBehalfOfOtherIdentity (RBCD).
@@ -4218,7 +4295,8 @@ def print_can_configure_rbcd(G, domain_filter=None):
             )
         )
     else:
-        console.print("[green]No non-default principals can configure RBCD[/green]")
+        if not _QUIET_EMPTY_SECTIONS:
+            console.print("[green]No non-default principals can configure RBCD[/green]")
 
 
 def print_shortest_paths(G, fast=False, max_paths=10, target_filter=None, domain_filter=None, indirect=False):
@@ -4338,29 +4416,27 @@ def print_shortest_paths(G, fast=False, max_paths=10, target_filter=None, domain
             add_finding("Shortest Paths", f"{count} path(s) to {tname}", score=6)
 
 def print_dangerous_permissions(G, domain_filter=None, indirect=False, fast=False):
-    console.rule("[bold magenta]Dangerous Permissions on High-Value Objects[/bold magenta]")
+    sec = DeferredSection("Dangerous Permissions on High-Value Objects")
     dangerous_rights = {'genericall', 'owns', 'writedacl', 'writeowner', 'allextendedrights', 'genericwrite', 'addmember', 'resetpassword', 'forcechangepassword', 'manageca', 'managecertificates', 'enroll', 'certificateenroll', 'writeproperty'}
     azure_dangerous = {'genericall', 'owns', 'writedacl', 'writeowner', 'addsecret', 'addcertificate', 'addowner', 'execute', 'canread', 'canwrite', 'candelete'}
     targets = get_high_value_targets(G, domain_filter)
     found = False
     if not targets:
-        console.print("[yellow]No high-value targets found[/yellow]")
+        sec.empty("No high-value targets found")
         return
     # Enterprise: prefer classic DA/EA/Administrators/krbtgt when HV set is huge
     max_targets = 40 if fast else 80
+    limited_note = None
     if len(targets) > max_targets:
         priority = _priority_high_value_targets(G, domain_filter, limit=max_targets)
         if priority:
-            console.print(
-                f"[yellow]Limiting dangerous-ACL scan to {len(priority)} priority high-value "
-                f"targets (of {len(targets)} total; use without --fast for more)[/yellow]"
+            limited_note = (
+                f"Limiting dangerous-ACL scan to {len(priority)} priority high-value "
+                f"targets (of {len(targets)} total; use without --fast for more)"
             )
             targets = priority
         else:
             targets = targets[:max_targets]
-    console.print(
-        "[dim]Showing non-default principals only (Domain Admins / EA / Builtin Admins filtered)[/dim]"
-    )
     max_display = 40
     max_findings = 50
     shown = 0
@@ -4384,6 +4460,15 @@ def print_dangerous_permissions(G, domain_filter=None, indirect=False, fast=Fals
             dangerous_edges.append((u, d['label']))
         if dangerous_edges:
             found = True
+            sec.mark()
+            if limited_note:
+                console.print(f"[yellow]{limited_note}[/yellow]")
+                limited_note = None
+            if shown == 0:
+                console.print(
+                    "[dim]Showing non-default principals only "
+                    "(Domain Admins / EA / Builtin Admins filtered)[/dim]"
+                )
             if shown < max_display:
                 console.print(f"\n[bold cyan]{tname} ({ttype}):[/bold cyan]")
                 rights_by_type = defaultdict(list)
@@ -4455,7 +4540,7 @@ def print_dangerous_permissions(G, domain_filter=None, indirect=False, fast=Fals
     if found:
         print_abuse_panel("Dangerous Permissions")
     else:
-        console.print("[green]No non-default dangerous ACLs found on high-value objects[/green]")
+        sec.empty("No non-default dangerous ACLs found on high-value objects")
 
 
 # Non-HV ACL abuse: ForceChangePassword, GenericAll/Write on users/groups/computers
@@ -4562,17 +4647,20 @@ def collect_interesting_acl_abuse(G, domain_filter=None) -> List[dict]:
 
 def print_interesting_acl_abuse(G, domain_filter=None):
     """Surface non-HV ACL abuse that HV-only dangerous-permissions scan misses."""
+    rows = collect_interesting_acl_abuse(G, domain_filter)
+    if not rows:
+        sec = DeferredSection(
+            "Interesting ACL Abuse (users / computers / groups, non-high-value)"
+        )
+        sec.empty(
+            "No interesting non-high-value ACL abuse found "
+            "(non-default ForceChangePassword / GenericAll / GenericWrite / …)"
+        )
+        return
     console.rule(
         "[bold magenta]Interesting ACL Abuse "
         "(users / computers / groups, non-high-value)[/bold magenta]"
     )
-    rows = collect_interesting_acl_abuse(G, domain_filter)
-    if not rows:
-        console.print(
-            "[green]No interesting non-high-value ACL abuse found "
-            "(non-default ForceChangePassword / GenericAll / GenericWrite / …)[/green]"
-        )
-        return
     console.print(
         "[dim]Non-default principals only; bulk computer GenericWrite suppressed; "
         "high-value targets listed in the section above[/dim]"
@@ -4671,13 +4759,14 @@ def collect_broad_principal_acls(G, domain_filter=None) -> List[dict]:
 
 
 def print_broad_principal_acls(G, domain_filter=None):
-    console.rule(
-        "[bold magenta]Broad Principal ACLs (Everyone / Auth Users / Domain Users) (AD)[/bold magenta]"
+    sec = DeferredSection(
+        "Broad Principal ACLs (Everyone / Auth Users / Domain Users) (AD)"
     )
     rows = collect_broad_principal_acls(G, domain_filter)
     max_display = 40
     max_findings = 50
     for i, r in enumerate(rows):
+        sec.mark()
         if i < max_display:
             console.print(
                 f"  • [red]{r['principal']}[/red] --[{r['right']}]--> "
@@ -4703,7 +4792,7 @@ def print_broad_principal_acls(G, domain_filter=None):
             )
         )
     else:
-        console.print("[green]No dangerous ACLs held by Everyone/Auth Users/Domain Users[/green]")
+        sec.empty("No dangerous ACLs held by Everyone/Auth Users/Domain Users")
 
 
 def _user_has_spn(props) -> bool:
@@ -4727,7 +4816,7 @@ def _user_has_spn(props) -> bool:
 
 
 def print_kerberoastable(G, domain_filter=None):
-    console.rule("[bold magenta]Kerberoastable Accounts (AD)[/bold magenta]")
+    sec = DeferredSection("Kerberoastable Accounts (AD)")
     hits = []
     max_display = 50
     for n, d in G.nodes(data=True):
@@ -4748,6 +4837,10 @@ def print_kerberoastable(G, domain_filter=None):
             continue
         if hasspn and enabled:
             hits.append((n, d))
+    if not hits:
+        sec.empty("None found")
+        return
+    sec.mark()
     console.print(f"[dim]Found {len(hits)} kerberoastable account(s)[/dim]")
     for i, (oid, d) in enumerate(hits):
         props = d.get('props') or {}
@@ -4765,13 +4858,10 @@ def print_kerberoastable(G, domain_filter=None):
             f"  [dim]... and {len(hits) - max_display} more "
             f"(total {len(hits)}; use --export json for full list)[/dim]"
         )
-    if hits:
-        print_abuse_panel("Kerberoastable")
-    else:
-        console.print("[green]None found[/green]")
+    print_abuse_panel("Kerberoastable")
 
 def print_as_rep_roastable(G, domain_filter=None):
-    console.rule("[bold magenta]AS-REP Roastable Accounts (DONT_REQ_PREAUTH) (AD)[/bold magenta]")
+    sec = DeferredSection("AS-REP Roastable Accounts (DONT_REQ_PREAUTH) (AD)")
     hits = []
     max_display = 50
     for n, d in G.nodes(data=True):
@@ -4796,6 +4886,10 @@ def print_as_rep_roastable(G, domain_filter=None):
         enabled = _account_is_enabled(props, default=True)
         if dontreqpreauth and enabled:
             hits.append((n, d))
+    if not hits:
+        sec.empty("None found")
+        return
+    sec.mark()
     console.print(f"[dim]Found {len(hits)} AS-REP roastable account(s)[/dim]")
     for i, (oid, d) in enumerate(hits):
         props = d.get('props') or {}
@@ -4816,10 +4910,7 @@ def print_as_rep_roastable(G, domain_filter=None):
             f"  [dim]... and {len(hits) - max_display} more "
             f"(total {len(hits)}; use --export json for full list)[/dim]"
         )
-    if hits:
-        print_abuse_panel("AS-REP Roastable")
-    else:
-        console.print("[green]None found[/green]")
+    print_abuse_panel("AS-REP Roastable")
 
 
 PRIVILEGED_GROUP_MATCHERS = (
@@ -4949,10 +5040,14 @@ def collect_privileged_roast_targets(G, domain_filter=None) -> List[dict]:
 
 
 def print_privileged_roast_targets(G, domain_filter=None):
-    console.rule(
-        "[bold magenta]Privileged Kerberoast / AS-REP (nested into DA/EA/…) (AD)[/bold magenta]"
+    sec = DeferredSection(
+        "Privileged Kerberoast / AS-REP (nested into DA/EA/…) (AD)"
     )
     rows = collect_privileged_roast_targets(G, domain_filter)
+    if not rows:
+        sec.empty("No privileged Kerberoast / AS-REP targets found")
+        return
+    sec.mark()
     max_display = 30
     for i, r in enumerate(rows):
         kinds = []
@@ -4994,8 +5089,6 @@ def print_privileged_roast_targets(G, domain_filter=None):
                 border_style="red",
             )
         )
-    else:
-        console.print("[green]No privileged Kerberoast / AS-REP targets found[/green]")
 
 
 def print_sessions_localadmin(G, domain_filter=None, fast=False):
@@ -8907,6 +9000,11 @@ def main():
             f"[yellow]Large graph ({n_nodes} nodes / {n_edges} edges): "
             f"auto-enabled --fast for --all (pathfinding + ACL display caps)[/yellow]"
         )
+
+    # Suppress empty detector headers under broad triage modes
+    set_quiet_empty_sections(
+        bool(args.all or getattr(args, "quick_wins", False))
+    )
 
     selected_checks = any([
         args.shortest_paths, args.dangerous_permissions, args.adcs, args.gpo_abuse,
