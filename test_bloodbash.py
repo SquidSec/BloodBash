@@ -1350,6 +1350,172 @@ class TestBloodBash(unittest.TestCase):
             any("Non-default" in f[2] for f in bloodbash_globals["global_findings"] if f[1] == "Dangerous Permissions")
         )
 
+    def test_interesting_acl_reports_fcp_and_computer_genericwrite(self):
+        """Non-HV ForceChangePassword and small GenericWrite-on-computer must surface under --all."""
+        G = nx.MultiDiGraph()
+        G.add_node(
+            "SRC",
+            name="DOMAINUSER@LAB.LOCAL",
+            type="User",
+            props={"domain": "LAB.LOCAL"},
+            is_azure=False,
+        )
+        G.add_node(
+            "HD",
+            name="HELPDESK@LAB.LOCAL",
+            type="Group",
+            props={"domain": "LAB.LOCAL"},
+            is_azure=False,
+        )
+        G.add_node(
+            "HOP",
+            name="HOPADMIN@LAB.LOCAL",
+            type="User",
+            props={"domain": "LAB.LOCAL"},
+            is_azure=False,
+        )
+        G.add_node(
+            "PC",
+            name="SS-HOP01.LAB.LOCAL",
+            type="Computer",
+            props={"domain": "LAB.LOCAL"},
+            is_azure=False,
+        )
+        G.add_node(
+            "GRP",
+            name="BBTEST_PRIV@LAB.LOCAL",
+            type="Group",
+            props={"domain": "LAB.LOCAL"},
+            is_azure=False,
+        )
+        G.add_edge("HD", "HOP", label="ForceChangePassword")
+        G.add_edge("SRC", "PC", label="GenericWrite")
+        G.add_edge("SRC", "GRP", label="GenericAll")
+        bloodbash_globals["global_findings"] = []
+        out = self._capture_output(bloodbash_globals["print_interesting_acl_abuse"], G)
+        clean = self._strip_ansi(out)
+        self.assertIn("ForceChangePassword", clean)
+        self.assertIn("HOPADMIN@LAB.LOCAL", clean)
+        self.assertIn("GenericWrite", clean)
+        self.assertIn("SS-HOP01.LAB.LOCAL", clean)
+        self.assertIn("GenericAll", clean)
+        self.assertIn("BBTEST_PRIV@LAB.LOCAL", clean)
+        dets = [f[2] for f in bloodbash_globals["global_findings"] if f[1] == "Dangerous Permissions"]
+        self.assertTrue(any("ForceChangePassword" in d for d in dets), msg=dets)
+        self.assertTrue(any("GenericWrite" in d and "SS-HOP01" in d for d in dets), msg=dets)
+        self.assertTrue(any("GenericAll" in d and "BBTEST" in d for d in dets), msg=dets)
+
+    def test_interesting_acl_suppresses_bulk_computer_genericwrite(self):
+        """Connector GenericWrite on many computers stays noise."""
+        G = nx.MultiDiGraph()
+        G.add_node("C", name="CONNECTORS@LAB.LOCAL", type="Group", props={}, is_azure=False)
+        for i in range(40):
+            G.add_node(f"H{i}", name=f"HOST{i}$.LAB.LOCAL", type="Computer", props={}, is_azure=False)
+            G.add_edge("C", f"H{i}", label="GenericWrite")
+        bloodbash_globals["global_findings"] = []
+        out = self._capture_output(bloodbash_globals["print_interesting_acl_abuse"], G)
+        clean = self._strip_ansi(out)
+        self.assertFalse(
+            any(f[1] == "Dangerous Permissions" for f in bloodbash_globals["global_findings"]),
+            msg=str(bloodbash_globals["global_findings"]),
+        )
+        self.assertIn("No interesting non-high-value ACL abuse", clean)
+
+    def test_interesting_acl_skips_default_admin_holders(self):
+        G = nx.MultiDiGraph()
+        G.add_node("DA", name="DOMAIN ADMINS@LAB.LOCAL", type="Group", props={}, is_azure=False)
+        G.add_node("U", name="alice@LAB.LOCAL", type="User", props={}, is_azure=False)
+        G.add_edge("DA", "U", label="GenericAll")
+        bloodbash_globals["global_findings"] = []
+        out = self._capture_output(bloodbash_globals["print_interesting_acl_abuse"], G)
+        self.assertFalse(bloodbash_globals["global_findings"])
+        self.assertIn("No interesting non-high-value ACL abuse", self._strip_ansi(out))
+
+    def test_dcsync_collapses_expected_and_abuse_only_on_unexpected(self):
+        """Expected holders collapse to a dim summary; abuse panel only if unexpected."""
+        G = nx.MultiDiGraph()
+        G.add_node("DOM", name="LAB.LOCAL", type="Domain", props={"domain": "LAB.LOCAL"}, is_azure=False)
+        G.add_node("DA", name="DOMAIN ADMINS@LAB.LOCAL", type="Group", props={}, is_azure=False)
+        G.add_node("EA", name="ENTERPRISE ADMINS@LAB.LOCAL", type="Group", props={}, is_azure=False)
+        G.add_node("BAD", name="DCSYNC_USER@LAB.LOCAL", type="User", props={}, is_azure=False)
+        G.add_edge("DA", "DOM", label="GetChanges")
+        G.add_edge("DA", "DOM", label="GetChangesAll")
+        G.add_edge("EA", "DOM", label="GetChanges")
+        G.add_edge("EA", "DOM", label="GetChangesAll")
+        G.add_edge("BAD", "DOM", label="GetChanges")
+        G.add_edge("BAD", "DOM", label="GetChangesAll")
+        bloodbash_globals["global_findings"] = []
+        panels = []
+        orig = bloodbash_globals["print_abuse_panel"]
+
+        def track(vt):
+            panels.append(vt)
+            return orig(vt)
+
+        bloodbash_globals["print_abuse_panel"] = track
+        try:
+            out = self._capture_output(bloodbash_globals["print_dcsync_rights"], G)
+        finally:
+            bloodbash_globals["print_abuse_panel"] = orig
+        clean = self._strip_ansi(out)
+        self.assertIn("DCSync possible", clean)
+        self.assertIn("DCSYNC_USER@LAB.LOCAL", clean)
+        self.assertIn("Expected DCSync", clean)
+        self.assertIn("DOMAIN ADMINS@LAB.LOCAL", clean)
+        self.assertLessEqual(clean.lower().count("expected dcsync"), 2)
+        self.assertIn("DCSync", panels)
+        dets = [f[2] for f in bloodbash_globals["global_findings"] if f[1] == "DCSync"]
+        self.assertTrue(any("DCSYNC_USER" in d for d in dets))
+        self.assertFalse(any("DOMAIN ADMINS" in d and "can DCSync" in d for d in dets))
+
+    def test_dcsync_no_abuse_panel_when_only_expected(self):
+        G = nx.MultiDiGraph()
+        G.add_node("DOM", name="LAB.LOCAL", type="Domain", props={}, is_azure=False)
+        G.add_node("DA", name="DOMAIN ADMINS@LAB.LOCAL", type="Group", props={}, is_azure=False)
+        G.add_edge("DA", "DOM", label="GetChanges")
+        G.add_edge("DA", "DOM", label="GetChangesAll")
+        bloodbash_globals["global_findings"] = []
+        panels = []
+        orig = bloodbash_globals["print_abuse_panel"]
+        bloodbash_globals["print_abuse_panel"] = lambda vt: panels.append(vt)
+        try:
+            out = self._capture_output(bloodbash_globals["print_dcsync_rights"], G)
+        finally:
+            bloodbash_globals["print_abuse_panel"] = orig
+        clean = self._strip_ansi(out)
+        self.assertIn("Expected DCSync", clean)
+        self.assertNotIn("DCSync possible", clean)
+        self.assertNotIn("DCSync", panels)
+
+    def test_graph_has_azure_helper(self):
+        G = nx.MultiDiGraph()
+        G.add_node("U", name="a@lab.local", type="User", props={}, is_azure=False)
+        self.assertFalse(bloodbash_globals["graph_has_azure"](G))
+        G.add_node("AZ", name="tenant", type="Azure Tenant", props={}, is_azure=True)
+        self.assertTrue(bloodbash_globals["graph_has_azure"](G))
+
+    def test_busiest_paths_no_spurious_dangerous_permissions_panel(self):
+        G = nx.MultiDiGraph()
+        G.add_node(
+            "DA",
+            name="DOMAIN ADMINS@LAB.LOCAL",
+            type="Group",
+            props={"domain": "LAB.LOCAL", "highvalue": True},
+            is_azure=False,
+        )
+        G.add_node("U", name="alice@LAB.LOCAL", type="User", props={"domain": "LAB.LOCAL"}, is_azure=False)
+        G.add_node("C", name="WS.LAB.LOCAL", type="Computer", props={"domain": "LAB.LOCAL"}, is_azure=False)
+        G.add_edge("U", "C", label="AdminTo")
+        G.add_edge("C", "DA", label="HasSession")
+        panels = []
+        orig = bloodbash_globals["print_abuse_panel"]
+        bloodbash_globals["print_abuse_panel"] = lambda vt: panels.append(vt)
+        try:
+            self._capture_output(bloodbash_globals["print_busiest_paths"], G, mode="short", top=3)
+        finally:
+            bloodbash_globals["print_abuse_panel"] = orig
+        self.assertNotIn("Dangerous Permissions", panels)
+
     def test_no_results_shadow_credentials(self):
         G = nx.MultiDiGraph()
         G.add_node("U", name="User", type="User", props={})

@@ -231,3 +231,8 @@ __marimo__/
 *_bloodhound.zip
 *_BloodHound.zip
 *Zone.Identifier
+
+# Local agent memory (not for remote)
+MEMORY.md
+AGENTS.md
+.agents/

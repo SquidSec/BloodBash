@@ -1,0 +1,18 @@
+---
+- hosts: dc
+  gather_facts: false
+  tasks:
+  - ansible.windows.win_shell: |
+      Import-Module ActiveDirectory
+      $dn='CN=Users,DC=lab,DC=local'
+      $p=ConvertTo-SecureString 'Deleg!Pass1' -AsPlainText -Force
+      try{Get-ADUser deleg_svc|Out-Null}catch{New-ADUser -Name deleg_svc -SamAccountName deleg_svc -AccountPassword $p -Enabled $true -PasswordNeverExpires $true -Path $dn}
+      Set-ADUser deleg_svc -ServicePrincipalNames @{Add='http/deleg.lab.local'}
+      # constrained: deleg_svc -> HOST/SS-DC01
+      Set-ADObject -Identity (Get-ADUser deleg_svc).DistinguishedName -Replace @{
+        'msDS-AllowedToDelegateTo' = @('HOST/SS-DC01.lab.local','HOST/SS-DC01')
+      }
+      Set-ADAccountControl -Identity deleg_svc -TrustedToAuthForDelegation $true
+      Get-ADUser deleg_svc -Properties 'msDS-AllowedToDelegateTo',TrustedToAuthForDelegation | Format-List
+      'S10_OK'
+    args: {executable: powershell}

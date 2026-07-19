@@ -1,0 +1,11 @@
+---
+- hosts: dc
+  gather_facts: false
+  tasks:
+  - ansible.windows.win_shell: |
+      Import-Module ActiveDirectory
+      # TrustedForDelegation on HOP (non-DC unconstrained)
+      Set-ADAccountControl -Identity 'SS-HOP01$' -TrustedForDelegation $true
+      Get-ADComputer SS-HOP01 -Properties TrustedForDelegation | Format-List Name,TrustedForDelegation
+      'S09_OK'
+    args: {executable: powershell}

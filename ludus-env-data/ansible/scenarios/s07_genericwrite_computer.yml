@@ -1,0 +1,14 @@
+---
+- hosts: dc
+  gather_facts: false
+  tasks:
+  - ansible.windows.win_shell: |
+      Import-Module ActiveDirectory
+      $comp=Get-ADComputer 'SS-HOP01'
+      $src=Get-ADUser domainuser
+      $acl=Get-Acl ("AD:"+$comp.DistinguishedName)
+      $id=New-Object System.Security.Principal.SecurityIdentifier($src.SID)
+      $rule=New-Object System.DirectoryServices.ActiveDirectoryAccessRule($id,[System.DirectoryServices.ActiveDirectoryRights]::GenericWrite,[System.Security.AccessControl.AccessControlType]::Allow)
+      $acl.AddAccessRule($rule); Set-Acl ("AD:"+$comp.DistinguishedName) $acl
+      'S07_OK'
+    args: {executable: powershell}

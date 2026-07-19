@@ -3679,6 +3679,9 @@ def print_dcsync_rights(G, domain_filter=None):
         'ds-replication-get-changes-in-filtered-set',
     }
 
+    expected_full: List[Tuple[str, str]] = []  # (principal, domain)
+    expected_partial = 0
+    filtered_n = 0
     for domain_oid in domain_oids:
         domain_name = G.nodes[domain_oid]['name']
         # Collect rights per principal
@@ -3705,10 +3708,7 @@ def print_dcsync_rights(G, domain_filter=None):
             if has_gc and has_gca:
                 found = True
                 if is_expected_dcsync_principal(G, u):
-                    console.print(
-                        f"[dim]Expected DCSync rights[/dim]: [cyan]{principal_name}[/cyan] "
-                        f"on [cyan]{domain_name}[/cyan] (built-in / nested high privilege)"
-                    )
+                    expected_full.append((principal_name, domain_name))
                 else:
                     unexpected += 1
                     console.print(
@@ -3724,10 +3724,7 @@ def print_dcsync_rights(G, domain_filter=None):
                 # Incomplete — note but do not call full DCSync.
                 # Domain Controllers / other expected holders often show this layout; demote noise.
                 if is_expected_dcsync_principal(G, u) or _is_expected_dcsync_name(principal_name):
-                    console.print(
-                        f"[dim]Partial replication (expected layout)[/dim]: [cyan]{principal_name}[/cyan] "
-                        f"has GetChangesAll without GetChanges on [cyan]{domain_name}[/cyan]"
-                    )
+                    expected_partial += 1
                 else:
                     console.print(
                         f"[yellow]Partial replication rights[/yellow]: [green]{principal_name}[/green] "
@@ -3738,21 +3735,46 @@ def print_dcsync_rights(G, domain_filter=None):
                         f"{principal_name} has GetChangesAll only on {domain_name}",
                         score=4,
                     )
-                found = True
+                    found = True
             elif has_filtered and not (has_gc and has_gca):
-                console.print(
-                    f"[dim]Filtered-set replication[/dim]: [cyan]{principal_name}[/cyan] "
-                    f"on [cyan]{domain_name}[/cyan] (RODC-related, not full DCSync)"
-                )
+                filtered_n += 1
+    if expected_full:
+        # Collapse built-in holders into one dim line (still searchable as "Expected DCSync")
+        by_dom: Dict[str, List[str]] = defaultdict(list)
+        for pname, dname in expected_full:
+            by_dom[dname].append(pname)
+        for dname, names in by_dom.items():
+            uniq = sorted(set(names))
+            if len(uniq) <= 6:
+                shown = ", ".join(uniq)
+            else:
+                shown = ", ".join(uniq[:6]) + f" … +{len(uniq) - 6} more"
+            console.print(
+                f"[dim]Expected DCSync holders on {dname}[/dim]: [cyan]{shown}[/cyan] "
+                f"[dim](built-in / nested high privilege)[/dim]"
+            )
+    if expected_partial:
+        console.print(
+            f"[dim]Partial replication (expected layout): {expected_partial} "
+            f"principal(s) with GetChangesAll only[/dim]"
+        )
+    if filtered_n:
+        console.print(
+            f"[dim]Filtered-set replication: {filtered_n} principal(s) "
+            f"(RODC-related, not full DCSync)[/dim]"
+        )
     if unexpected:
         console.print(
             f"[bold red]Unexpected DCSync principals: {unexpected}[/bold red] "
             f"(excluding DA/EA/DC nested membership)"
         )
-    if found:
+    if unexpected:
         print_abuse_panel("DCSync")
-    else:
+    elif not found and not expected_full and not expected_partial and not filtered_n:
         console.print("[green]No DCSync rights detected[/green]")
+    elif not unexpected and (expected_full or expected_partial or filtered_n):
+        # expected-only: no abuse panel
+        pass
 
 def print_rbcd(G, domain_filter=None):
     console.rule("[bold magenta]Resource-Based Constrained Delegation (RBCD) (AD)[/bold magenta]")
@@ -4434,6 +4456,175 @@ def print_dangerous_permissions(G, domain_filter=None, indirect=False, fast=Fals
         print_abuse_panel("Dangerous Permissions")
     else:
         console.print("[green]No non-default dangerous ACLs found on high-value objects[/green]")
+
+
+# Non-HV ACL abuse: ForceChangePassword, GenericAll/Write on users/groups/computers
+# that HV scan misses. Bulk computer GenericWrite (connector noise) is suppressed.
+INTERESTING_ACL_RIGHTS = frozenset({
+    "forcechangepassword",
+    "resetpassword",
+    "genericall",
+    "genericwrite",
+    "writedacl",
+    "writeowner",
+    "owns",
+    "addmember",
+    "addkeycredentiallink",
+    "allextendedrights",
+})
+INTERESTING_ACL_TARGET_TYPES = frozenset({"user", "computer", "group"})
+# Per principal+right: more computer targets than this = connector inventory noise
+INTERESTING_ACL_MAX_COMPUTER_TARGETS = 25
+INTERESTING_ACL_MAX_USER_TARGETS = 40
+INTERESTING_ACL_MAX_GROUP_TARGETS = 40
+INTERESTING_ACL_MAX_DISPLAY = 50
+INTERESTING_ACL_MAX_FINDINGS = 60
+
+
+def _interesting_acl_score(right_l: str, target_type_l: str) -> int:
+    if right_l in ("forcechangepassword", "resetpassword", "addkeycredentiallink"):
+        return 8
+    if right_l in ("genericall", "writedacl", "writeowner", "owns", "allextendedrights"):
+        return 8
+    if right_l == "addmember":
+        return 7
+    if right_l == "genericwrite":
+        return 7 if target_type_l in ("user", "computer", "group") else 6
+    return 6
+
+
+def collect_interesting_acl_abuse(G, domain_filter=None) -> List[dict]:
+    """Non-default dangerous ACLs on user/computer/group targets (including non-HV).
+
+    Complements print_dangerous_permissions (HV-only). Suppresses broad principals,
+    expected admins, and bulk computer GenericWrite/GenericAll (connector noise).
+    """
+    hv_oids = {tid for tid, _, _ in get_high_value_targets(G, domain_filter)}
+    # (principal_name, right, target_type_l) -> list of target names
+    buckets: Dict[Tuple[str, str, str], List[str]] = defaultdict(list)
+    right_display: Dict[Tuple[str, str, str], str] = {}
+
+    for u, v, ed in G.edges(data=True):
+        label = ed.get("label") or ""
+        ll = label.lower()
+        if ll not in INTERESTING_ACL_RIGHTS:
+            continue
+        ud = G.nodes.get(u) or {}
+        vd = G.nodes.get(v) or {}
+        if ud.get("is_azure") or vd.get("is_azure"):
+            continue
+        if domain_filter and not (
+            _domain_matches(ud, domain_filter) or _domain_matches(vd, domain_filter)
+        ):
+            continue
+        ttype = str(vd.get("type") or "").lower()
+        if ttype not in INTERESTING_ACL_TARGET_TYPES:
+            continue
+        # HV targets already covered by print_dangerous_permissions
+        if v in hv_oids:
+            continue
+        uname = ud.get("name") or str(u)
+        if _is_default_high_priv_name(uname) or _is_broad_principal_name(uname):
+            continue
+        if is_expected_admin_principal(G, u):
+            continue
+        tname = vd.get("name") or str(v)
+        key = (uname, ll, ttype)
+        buckets[key].append(tname)
+        right_display[key] = label
+
+    rows: List[dict] = []
+    for key, tnames in buckets.items():
+        uname, ll, ttype = key
+        uniq = sorted(set(tnames))
+        n = len(uniq)
+        if ttype == "computer" and n > INTERESTING_ACL_MAX_COMPUTER_TARGETS:
+            continue
+        if ttype == "user" and n > INTERESTING_ACL_MAX_USER_TARGETS:
+            continue
+        if ttype == "group" and n > INTERESTING_ACL_MAX_GROUP_TARGETS:
+            continue
+        rows.append(
+            {
+                "principal": uname,
+                "right": right_display[key],
+                "right_l": ll,
+                "target_type": ttype,
+                "targets": uniq,
+                "count": n,
+                "score": _interesting_acl_score(ll, ttype),
+            }
+        )
+    # Highest score, then most targets, then name
+    rows.sort(key=lambda r: (-r["score"], -r["count"], r["principal"], r["right_l"]))
+    return rows
+
+
+def print_interesting_acl_abuse(G, domain_filter=None):
+    """Surface non-HV ACL abuse that HV-only dangerous-permissions scan misses."""
+    console.rule(
+        "[bold magenta]Interesting ACL Abuse "
+        "(users / computers / groups, non-high-value)[/bold magenta]"
+    )
+    rows = collect_interesting_acl_abuse(G, domain_filter)
+    if not rows:
+        console.print(
+            "[green]No interesting non-high-value ACL abuse found "
+            "(non-default ForceChangePassword / GenericAll / GenericWrite / …)[/green]"
+        )
+        return
+    console.print(
+        "[dim]Non-default principals only; bulk computer GenericWrite suppressed; "
+        "high-value targets listed in the section above[/dim]"
+    )
+    shown = 0
+    findings_n = 0
+    for r in rows:
+        examples = ", ".join(r["targets"][:3])
+        extra = f" … +{r['count'] - 3} more" if r["count"] > 3 else ""
+        tlabel = r["target_type"]
+        if shown < INTERESTING_ACL_MAX_DISPLAY:
+            if r["count"] == 1:
+                console.print(
+                    f"  • [green]{r['principal']}[/green] --[{r['right']}]--> "
+                    f"[cyan]{r['targets'][0]}[/cyan] ({tlabel})"
+                )
+            else:
+                console.print(
+                    f"  • [green]{r['principal']}[/green] --[{r['right']}]--> "
+                    f"[cyan]{r['count']}[/cyan] {tlabel}(s) "
+                    f"[dim]({examples}{extra})[/dim]"
+                )
+            shown += 1
+        if findings_n < INTERESTING_ACL_MAX_FINDINGS:
+            if r["count"] == 1:
+                detail = (
+                    f"{r['principal']} has {r['right']} on "
+                    f"{r['targets'][0]} ({tlabel})"
+                )
+            else:
+                detail = (
+                    f"{r['principal']} has {r['right']} on {r['count']} {tlabel}(s) "
+                    f"(e.g. {examples}{extra})"
+                )
+            add_finding("Dangerous Permissions", detail, score=r["score"])
+            findings_n += 1
+    if len(rows) > INTERESTING_ACL_MAX_DISPLAY:
+        console.print(
+            f"[dim]… displayed {INTERESTING_ACL_MAX_DISPLAY} of {len(rows)} ACL abuse rows[/dim]"
+        )
+    print_abuse_panel("Dangerous Permissions")
+
+
+def graph_has_azure(G) -> bool:
+    """True if the graph contains any AzureHound / Entra node."""
+    for _, d in G.nodes(data=True):
+        if d.get("is_azure"):
+            return True
+        typ = str(d.get("type") or "").lower()
+        if typ.startswith("azure") or "tenant" in typ:
+            return True
+    return False
 
 
 def collect_broad_principal_acls(G, domain_filter=None) -> List[dict]:
@@ -6176,7 +6367,6 @@ def print_busiest_paths(G, mode="short", top=5, domain_filter=None, fast=False):
         )
     console.print(table)
     add_finding("Busiest Paths", f"Top principal {ranked[0]['name']} on {ranked[0]['path_count']} path(s)", score=7)
-    print_abuse_panel("Dangerous Permissions")
     return ranked
 
 
@@ -8795,6 +8985,7 @@ def main():
         print_dangerous_permissions(
             G, args.domain, args.indirect, fast=bool(args.fast or large_graph)
         )
+        print_interesting_acl_abuse(G, args.domain)
         print_broad_principal_acls(G, args.domain)
     if args.adcs or run_all:
         print_adcs_vulnerabilities(G, args.domain)
@@ -8846,15 +9037,32 @@ def main():
     if args.laps or run_all:
         print_laps_status(G, args.domain)
         print_laps_readers(G, args.domain)
-    if args.azure_privileged_roles or run_all:
+    # Skip empty Azure sections on pure SharpHound graphs under --all.
+    # Explicit --azure-* flags still run (and report "none") so users can force them.
+    _has_azure = graph_has_azure(G)
+    _run_azure = lambda explicit: bool(explicit) or (bool(run_all) and _has_azure)
+    if not _has_azure and run_all and not any(
+        [
+            args.azure_privileged_roles,
+            args.azure_app_secrets,
+            args.azure_mfa_bypass,
+            args.azure_guest_access,
+            args.azure_sp_abuse,
+        ]
+    ):
+        console.print(
+            "[dim]No Azure/Entra objects in collection — skipping Azure checks "
+            "(pass --azure-* to force)[/dim]"
+        )
+    if _run_azure(args.azure_privileged_roles):
         print_azure_privileged_roles(G, args.domain)
-    if args.azure_app_secrets or run_all:
+    if _run_azure(args.azure_app_secrets):
         print_azure_app_secrets(G, args.domain)
-    if args.azure_mfa_bypass or run_all:
+    if _run_azure(args.azure_mfa_bypass):
         print_azure_mfa_bypass(G, args.domain)
-    if args.azure_guest_access or run_all:
+    if _run_azure(args.azure_guest_access):
         print_azure_guest_access(G, args.domain)
-    if args.azure_sp_abuse or run_all:
+    if _run_azure(args.azure_sp_abuse):
         print_azure_service_principal_abuse(G, args.domain)
     if args.owned:
         print_paths_to_owned(G, args.owned, args.domain)

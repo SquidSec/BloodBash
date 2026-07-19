@@ -33,7 +33,8 @@ jobs:
       run: |
         python -m pytest test_bloodbash.py test_members_ingest.py \
           test_detection_variations.py test_compromise_dossier.py \
-          test_synthetic_corpus.py -q
+          test_synthetic_corpus.py test_ludus_collections.py \
+          test_real_data_reliability.py -q
 
     - name: Complex environment battery (required gate)
       # 10 multi-issue synthetic AD labs → BloodBash → ground-truth checks.

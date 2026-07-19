@@ -1,0 +1,17 @@
+---
+- hosts: dc
+  gather_facts: false
+  tasks:
+  - ansible.windows.win_shell: |
+      Import-Module ActiveDirectory
+      $dn = 'CN=Users,DC=lab,DC=local'
+      $p = ConvertTo-SecureString 'Asrep!Pass1' -AsPlainText -Force
+      $exists = $false
+      try { Get-ADUser -Identity asrep_user | Out-Null; $exists = $true } catch { $exists = $false }
+      if (-not $exists) {
+        New-ADUser -Name asrep_user -SamAccountName asrep_user -AccountPassword $p -Enabled $true -PasswordNeverExpires $true -Path $dn
+      }
+      Set-ADAccountControl -Identity asrep_user -DoesNotRequirePreAuth $true
+      Get-ADUser -Identity asrep_user -Properties DoesNotRequirePreAuth | Format-List SamAccountName,DoesNotRequirePreAuth
+      (Get-ADUser -Filter *).SamAccountName -join ','
+    args: {executable: powershell}
