@@ -19,7 +19,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
 </p>
 
-**BloodBash** is an open source offline SharpHound **and** AzureHound JSON analyzer, created and managed by **[SquidSec](https://squidoffense.com/)**. It builds a graph, surfaces AD/Entra attack paths and misconfigs, and prints prioritized findings — no Neo4j or BloodHound UI required.
+**BloodBash** is an open source offline SharpHound **and** AzureHound JSON analyzer, created and managed by **[SquidSec](https://squidoffense.com/)**. It builds a graph, surfaces AD/Entra attack paths and misconfigs, and prints prioritized findings. No Neo4j or BloodHound UI required.
 
 | | |
 |--|--|
@@ -36,7 +36,7 @@ Merges to `main` automatically build **Linux** and **Windows** binaries and publ
 
 ## About SquidSec
 
-BloodBash is built and maintained by **[SquidSec](https://squidoffense.com/)** for the security community — red teamers, pentesters, and defenders who need fast offline AD/Entra analysis without standing up BloodHound infrastructure.
+BloodBash is built and maintained by **[SquidSec](https://squidoffense.com/)** for the security community - red teamers, pentesters, and defenders who need fast offline AD/Entra analysis without standing up BloodHound infrastructure.
 
 - **Website:** [https://squidoffense.com/](https://squidoffense.com/)
 - **Project:** [https://github.com/DotNetRussell/BloodBash](https://github.com/DotNetRussell/BloodBash)
@@ -45,7 +45,7 @@ BloodBash is built and maintained by **[SquidSec](https://squidoffense.com/)** f
 
 ## Download (no Python required)
 
-Standalone **SquidSec** BloodBash executables — no Python, pip, or venv needed:
+Standalone **SquidSec** BloodBash executables - no Python, pip, or venv needed:
 
 | Platform | Latest download |
 |----------|-----------------|
@@ -79,8 +79,8 @@ pipx install git+https://github.com/DotNetRussell/BloodBash
 Or from a clone:
 
 ```bash
-git clone https://github.com/dotnetrussell/bloodbash.git
-cd bloodbash
+git clone https://github.com/DotNetRussell/BloodBash.git
+cd BloodBash
 python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 ```
@@ -92,33 +92,40 @@ Dependencies: `networkx`, `rich`, `tqdm`, `pyyaml`.
 **Start with these 3** (point at a SharpHound/AzureHound directory or `.zip`):
 
 ```bash
-# 1) Day-0 triage — default when you pass only the data path
-python3 BloodBash.py /path/to/json
+# 1) Day-0 triage - default when you pass only the data path
+bloodbash /path/to/json
 # same as:
-python3 BloodBash.py /path/to/json --quick-wins
+bloodbash /path/to/json --quick-wins
 
-# 2) Just owned a user — outbound compromise dossier
-python3 BloodBash.py ./sharpout --from-user alice --from-user-export
+# 2) Just owned a user - outbound compromise dossier
+bloodbash ./sharpout --from-user alice --from-user-export
 
 # 3) Full attack analysis (large env: --fast auto on big graphs)
-python3 BloodBash.py /path/to/json --all --fast
+bloodbash /path/to/json --all --fast
 # inventory ladders still opt-in:
-python3 BloodBash.py /path/to/json --all --inventory
+bloodbash /path/to/json --all --inventory
 ```
+
+From a source checkout, `python3 BloodBash.py` is equivalent to `bloodbash`.
 
 ```bash
 # Binary / pipx
 ./bloodbash /path/to/json
 bloodbash /path/to/json --from-user alice --from-user-export
+
+# Multi-collection merge (low-priv + DA zip, multi-domain forest)
+bloodbash ./lowpriv.zip --merge ./da.zip ./child-domain.zip --all --fast
 ```
 
 Bare directory (no check flags) runs **quick-wins** triage. Use `--all` for full attack-path analysis (not inventory), or `--wizard` for an interactive picker.
 
+Under `--all` and `--quick-wins`, empty detector sections are suppressed so the console stays readable. Selective flags still print green "none found" lines for the checks you asked for.
+
 Sample data: `SampleSharphoundADData/` and `SampleAzurehoundData/`.
 
 ```bash
-python3 BloodBash.py --help            # start-here + cheat sheet
-python3 BloodBash.py --help-advanced   # full flag tables + all examples
+bloodbash --help            # start-here + cheat sheet
+bloodbash --help-advanced   # full flag tables + all examples
 ```
 
 More recipes: [docs/cookbook.md](docs/cookbook.md).
@@ -127,16 +134,17 @@ More recipes: [docs/cookbook.md](docs/cookbook.md).
 
 | Area | Checks |
 |------|--------|
-| **AD privilege** | DCSync (GetChanges+GetChangesAll; nested DA/EA treated as expected), dangerous ACLs on high-value objects, GPO abuse, RBCD (configured + *can configure*), constrained/unconstrained delegation (**DC vs non-DC** sections), SID history |
-| **AD credentials** | Kerberoastable, AS-REP roastable (with **AdminCount / OWNED / LASTLOG** tags), **privileged roast** (`--privileged-roast`: roastable + nested DA/EA), shadow credentials, password in description, PasswordNeverExpires / PasswordNotRequired |
-| **ADCS** | ESC1–ESC7 (+ ESC8/ESC9/ESC13 when collector props exist). ESC10–12 need registry/HTTP role data often absent from SharpHound |
+| **AD privilege** | DCSync (GetChanges+GetChangesAll; nested DA/EA treated as expected), dangerous ACLs on high-value objects, **interesting non-HV ACL abuse** (ForceChangePassword / GenericAll / GenericWrite on users/computers/groups; bulk computer GenericWrite noise suppressed), GPO abuse, RBCD (configured + *can configure*), constrained/unconstrained delegation (**DC vs non-DC** sections), SID history, **domain trusts** (`--trust`) |
+| **AD credentials** | Kerberoastable, AS-REP roastable (with **AdminCount / OWNED / LASTLOG** tags), **privileged roast** (`--privileged-roast`: roastable + nested DA/EA / AdminCount), shadow credentials, password in description, PasswordNeverExpires / PasswordNotRequired. SharpHound `sensitive` (NOT_DELEGATED) does **not** exclude roast candidates |
+| **ADCS** | ESC1-ESC7 (+ ESC8/ESC9/ESC13 when collector props exist). ESC10-12 need registry/HTTP role data often absent from SharpHound. Soft message when the zip has no cert objects |
 | **Azure / Entra** | Privileged roles, app/SP credential *control* paths, explicit MFA disable, guest users, SP abuse rights |
-| **Paths** | Shortest paths to high-value targets (limited set in `--fast`), owned principals (`--owned` = inbound), custom `--path-from` / `--path-to` |
+| **Paths** | Shortest paths to high-value targets (limited set in `--fast`; HV includes Builtin Administrators and **domain controller computers**), owned principals (`--owned` = inbound), custom `--path-from` / `--path-to` |
 | **Compromise dossier** | `--from-user` / `--compromise`: outbound membership, AdminTo/RDP/ACL counts, nested groups, auto paths to HV, txt/csv export including **bulk AdminTo host lists** |
 | **Path remediation** | Busiest-path ranking (`--busiest-paths`), edge removal recommendations (`--path-break`) |
 | **Inventory** | Password-age ladders, stale/inactive accounts, privilege groups, structural (domains/DCs/trusts), owned-object inventory, **stats dashboard with %** |
 | **PlumHound-style CSV pack** | `--csv-pack DIR`: multi-CSV inventory (domains, DA, roastables, LAPS, Everyone/overpriv edges, computer AdminTo computer, dual priv+local admin, bulk AdminTo hosts) + `index.csv` |
-| **Other** | LAPS coverage (`haslaps`) + **LAPS password readers** (`ReadLAPSPassword`), GPO XML (`--gpo-content-dir`), domain `Trusts[]` edges, group nesting, `--list-domains` |
+| **Multi-input** | `--merge PATH…` unions additional dirs/zips into one graph (multi-domain / dual low-priv+DA collections) |
+| **Other** | **Collection health** banner (object counts, session/AdminTo/RDP coverage, ADCS presence), LAPS coverage (`haslaps`) + **LAPS password readers** (`ReadLAPSPassword`), GPO XML (`--gpo-content-dir`), domain `Trusts[]` edges, group nesting, `--list-domains` |
 
 Findings are scored and summarized in a **Prioritized Findings** table (high-volume hygiene categories collapse; use `--all-findings` for the full collapsed list). Abuse panels suggest tools/commands per category.
 
@@ -146,55 +154,64 @@ This is an **offline heuristic analyzer** from SquidSec, not a full BloodHound C
 
 ## Example commands
 
-Replace `./sharpout` with your SharpHound/AzureHound directory or zip. Binary users can substitute `./bloodbash` or `bloodbash` for `python3 BloodBash.py`.
+Replace `./sharpout` with your SharpHound/AzureHound directory or zip. Source checkout: use `python3 BloodBash.py` instead of `bloodbash`.
 
 ### Basics
 
 ```bash
 # Help (tables + examples)
-python3 BloodBash.py --help
+bloodbash --help
+bloodbash --help-advanced
 
 # Default = quick wins (high-signal day-0 triage)
-python3 BloodBash.py ./sharpout
-python3 BloodBash.py ./sharpout --quick-wins
-python3 BloodBash.py ./sharpout --quick-wins --domain CORP.LOCAL
-python3 BloodBash.py ./2024-collection.zip --quick-wins
+bloodbash ./sharpout
+bloodbash ./sharpout --quick-wins
+bloodbash ./sharpout --quick-wins --domain CORP.LOCAL
+bloodbash ./2024-collection.zip --quick-wins
 
 # Interactive picker
-python3 BloodBash.py ./sharpout --wizard
+bloodbash ./sharpout --wizard
 
 # Full attack analysis (--all auto --fast on large graphs; inventory is separate)
-python3 BloodBash.py ./sharpout --all
-python3 BloodBash.py ./sharpout --all --fast
-python3 BloodBash.py ./2024-collection.zip --all
-python3 BloodBash.py ./sharpout --all --inventory
+bloodbash ./sharpout --all
+bloodbash ./sharpout --all --fast
+bloodbash ./2024-collection.zip --all
+bloodbash ./sharpout --all --inventory
+
+# Merge multiple collections into one graph
+bloodbash ./lowpriv.zip --merge ./da.zip --all --fast
+bloodbash ./forest-root --merge ./child-a.zip ./child-b.zip --quick-wins
 
 # One domain / tenant only
-python3 BloodBash.py ./sharpout --all --domain CORP.LOCAL
-python3 BloodBash.py ./azureout --azure-privileged-roles --domain <tenantId>
+bloodbash ./sharpout --all --domain CORP.LOCAL
+bloodbash ./azureout --azure-privileged-roles --domain <tenantId>
+
+# Domain trusts
+bloodbash ./sharpout --trust
+bloodbash ./sharpout --all --trust
 
 # In-repo samples
-python3 BloodBash.py SampleSharphoundADData --quick-wins
-python3 BloodBash.py SampleSharphoundADData --all --fast --all-findings
-python3 BloodBash.py SampleAzurehoundData --azure-privileged-roles --azure-guest-access --all-findings
+bloodbash SampleSharphoundADData --quick-wins
+bloodbash SampleSharphoundADData --all --fast --all-findings
+bloodbash SampleAzurehoundData --azure-privileged-roles --azure-guest-access --all-findings
 ```
 
 ### What `--quick-wins` runs
 
-Curated high-signal set (implies `--fast`, verbose summary, full findings table). **Not** a full inventory/Azure dump:
+Curated high-signal set (implies `--fast`, verbose summary, full findings table). **Not** a full inventory/Azure dump. Empty sections stay quiet.
 
 | Area | Modules |
 |------|---------|
-| Privilege | DCSync (unexpected), ADCS, dangerous ACLs, RBCD + can-configure, unconstrained (DC vs non-DC), constrained, shadow creds, LAPS (+ readers) |
+| Privilege | DCSync (unexpected), ADCS, dangerous ACLs + interesting non-HV ACLs, RBCD + can-configure, unconstrained (DC vs non-DC), constrained, shadow creds, LAPS (+ readers), trusts |
 | Credentials | Kerberoast, AS-REP, **privileged roast**, password-in-description, PasswordNotRequired |
-| Ops | Sessions / local admin summary |
+| Ops | Sessions / local admin summary, collection health |
 | Paths | Shortest paths to HV, busiest short paths, path-break |
 
 Equivalent profile: `--profile quick-wins` (see `profiles/quick-wins.yaml`).
 
 ### Compromise dossier (newly owned / foothold user)
 
-**Outbound** view: “I just compromised this principal — what can they do?”
+**Outbound** view: "I just compromised this principal - what can they do?"
 
 | Flag | Meaning |
 |------|---------|
@@ -204,28 +221,28 @@ Equivalent profile: `--profile quick-wins` (see `profiles/quick-wins.yaml`).
 
 ```bash
 # Console dossier only
-python3 BloodBash.py ./sharpout --from-user alice
-python3 BloodBash.py ./sharpout --compromise alice@corp.local
+bloodbash ./sharpout --from-user alice
+bloodbash ./sharpout --compromise alice@corp.local
 
 # Console + export pack
-python3 BloodBash.py ./sharpout --from-user alice --from-user-export
-python3 BloodBash.py ./sharpout --from-user alice --from-user-export ./alice-dossier
+bloodbash ./sharpout --from-user alice --from-user-export
+bloodbash ./sharpout --from-user alice --from-user-export ./alice-dossier
 
 # Multiple footholds (one subdir each under ./footholds)
-python3 BloodBash.py ./sharpout --from-user alice,bob,svc_backup --from-user-export ./footholds
+bloodbash ./sharpout --from-user alice,bob,svc_backup --from-user-export ./footholds
 
 # Domain-scoped + full findings table
-python3 BloodBash.py ./sharpout --from-user alice --domain CORP.LOCAL --from-user-export --all-findings
+bloodbash ./sharpout --from-user alice --domain CORP.LOCAL --from-user-export --all-findings
 
 # Sample lab: SCOTT has LocalAdmin via Tier2Support and paths to DA
-python3 BloodBash.py SampleSharphoundADData --from-user SCOTT --from-user-export ./scott-out --fast
+bloodbash SampleSharphoundADData --from-user SCOTT --from-user-export ./scott-out --fast
 
 # Pair with inspect / explicit path
-python3 BloodBash.py ./sharpout --from-user alice --inspect alice
-python3 BloodBash.py ./sharpout --path-from alice --path-to 'domain admins@corp.local'
+bloodbash ./sharpout --from-user alice --inspect alice
+bloodbash ./sharpout --path-from alice --path-to 'domain admins@corp.local'
 
-# Inbound (who can reach my loot) — not the dossier
-python3 BloodBash.py ./sharpout --owned alice --owned-inventory --shortest-paths
+# Inbound (who can reach my loot) - not the dossier
+bloodbash ./sharpout --owned alice --owned-inventory --shortest-paths
 ```
 
 **Export layout** (per principal):
@@ -244,79 +261,79 @@ compromise-alice/
 ### Attack paths & remediation
 
 ```bash
-python3 BloodBash.py ./sharpout --shortest-paths
-python3 BloodBash.py ./sharpout --shortest-paths --indirect --fast
-python3 BloodBash.py ./sharpout --busiest-paths short --busiest-paths-top 10
-python3 BloodBash.py ./sharpout --busiest-paths all --busiest-paths-top 5
-python3 BloodBash.py ./sharpout --path-break --path-break-top 20
-python3 BloodBash.py ./sharpout --busiest-paths short --path-break --fast \
+bloodbash ./sharpout --shortest-paths
+bloodbash ./sharpout --shortest-paths --indirect --fast
+bloodbash ./sharpout --busiest-paths short --busiest-paths-top 10
+bloodbash ./sharpout --busiest-paths all --busiest-paths-top 5
+bloodbash ./sharpout --path-break --path-break-top 20
+bloodbash ./sharpout --busiest-paths short --path-break --fast \
   --report-pack ./path-reports --export-zip path-reports.zip
-python3 BloodBash.py ./sharpout --path-from helpdesk --path-to 'domain admins@corp.local'
-python3 BloodBash.py ./sharpout --path-from alice,bob --path-to 'domain admins,enterprise admins'
-python3 BloodBash.py ./sharpout --deep-analysis
-python3 BloodBash.py ./sharpout --inspect 'DOMAIN ADMINS@CORP.LOCAL'
+bloodbash ./sharpout --path-from helpdesk --path-to 'domain admins@corp.local'
+bloodbash ./sharpout --path-from alice,bob --path-to 'domain admins,enterprise admins'
+bloodbash ./sharpout --deep-analysis
+bloodbash ./sharpout --inspect 'DOMAIN ADMINS@CORP.LOCAL'
 ```
 
 ### Selective AD checks
 
 ```bash
 # Critical / common engagement set
-python3 BloodBash.py ./sharpout --dcsync --adcs --dangerous-permissions --verbose
-python3 BloodBash.py ./sharpout --dcsync --adcs --dangerous-permissions --all-findings
+bloodbash ./sharpout --dcsync --adcs --dangerous-permissions --verbose
+bloodbash ./sharpout --dcsync --adcs --dangerous-permissions --all-findings
 
 # Credentials (+ privilege-context tags on roast findings)
-python3 BloodBash.py ./sharpout --kerberoastable --as-rep-roastable --password-descriptions
-# High-priority: roastable users nested into DA/EA/…
-python3 BloodBash.py ./sharpout --privileged-roast
-python3 BloodBash.py ./sharpout --password-never-expires --password-not-required --password-age
+bloodbash ./sharpout --kerberoastable --as-rep-roastable --password-descriptions
+# High-priority: roastable users nested into DA/EA/...
+bloodbash ./sharpout --privileged-roast
+bloodbash ./sharpout --password-never-expires --password-not-required --password-age
 
 # Delegation / RBCD (configured + who can configure AllowedToAct) / shadow creds
-python3 BloodBash.py ./sharpout --unconstrained-delegation --constrained-delegation --rbcd
-python3 BloodBash.py ./sharpout --shadow-credentials
+bloodbash ./sharpout --unconstrained-delegation --constrained-delegation --rbcd
+bloodbash ./sharpout --shadow-credentials
 
-# Sessions, LAPS (coverage + ReadLAPSPassword readers), SID history, GPO
-python3 BloodBash.py ./sharpout --sessions --laps --sid-history
-python3 BloodBash.py ./sharpout --gpo-abuse --gpo-parsing
-python3 BloodBash.py ./sharpout --gpo-abuse --gpo-content-dir ./sysvol-gpo-xml
+# Trusts, sessions, LAPS (coverage + ReadLAPSPassword readers), SID history, GPO
+bloodbash ./sharpout --trust --sessions --laps --sid-history
+bloodbash ./sharpout --gpo-abuse --gpo-parsing
+bloodbash ./sharpout --gpo-abuse --gpo-content-dir ./sysvol-gpo-xml
 ```
 
 ### Inventory, profiles, and deliverables
 
 ```bash
 # List domains / tenants in a collection (then exit)
-python3 BloodBash.py ./sharpout --list-domains
+bloodbash ./sharpout --list-domains
 
 # Inventory modules (opt-in; not part of --all). Stats dashboard still prints on --all.
-python3 BloodBash.py ./sharpout --inventory
-python3 BloodBash.py ./sharpout --stale-accounts --password-age --privilege-inventory
-python3 BloodBash.py ./sharpout --owned alice --owned-inventory
+bloodbash ./sharpout --inventory
+bloodbash ./sharpout --stale-accounts --password-age --privilege-inventory
+bloodbash ./sharpout --owned alice --owned-inventory
 
 # Built-in YAML profiles (see profiles/)
-python3 BloodBash.py ./sharpout --profile quick
-python3 BloodBash.py ./sharpout --profile quick-wins   # same set as --quick-wins
-python3 BloodBash.py ./sharpout --profile adcs-heavy
-python3 BloodBash.py ./sharpout --profile hygiene
-python3 BloodBash.py ./sharpout --profile ./my-engagement.yaml
+bloodbash ./sharpout --profile quick
+bloodbash ./sharpout --profile quick-wins   # same set as --quick-wins
+bloodbash ./sharpout --profile adcs-heavy
+bloodbash ./sharpout --profile hygiene
+bloodbash ./sharpout --profile ./my-engagement.yaml
 
 # Multi-page HTML report pack + zip
-python3 BloodBash.py ./sharpout --inventory --busiest-paths short --path-break \
+bloodbash ./sharpout --inventory --busiest-paths short --path-break \
   --report-pack ./reports --export-zip bloodbash-reports.zip --log-file ./bloodbash.log
 
 # PlumHound-style multi-CSV pack (task CSVs + index.csv; optional zip)
-python3 BloodBash.py ./sharpout --csv-pack ./ph-reports
-python3 BloodBash.py ./sharpout --csv-pack ./ph-reports --export-zip ph-reports.zip
-python3 BloodBash.py ./sharpout --all --fast --csv-pack ./ph-full --export-zip ph-full.zip
+bloodbash ./sharpout --csv-pack ./ph-reports
+bloodbash ./sharpout --csv-pack ./ph-reports --export-zip ph-reports.zip
+bloodbash ./sharpout --all --fast --csv-pack ./ph-full --export-zip ph-full.zip
 
 # Single-file exports
-python3 BloodBash.py ./sharpout --all --export=md
-python3 BloodBash.py ./sharpout --all --export=html
-python3 BloodBash.py ./sharpout --all --export=csv
-python3 BloodBash.py ./sharpout --all --export=json --export-bh --dot graph.dot
-python3 BloodBash.py ./sharpout --all --export=yaml
+bloodbash ./sharpout --all --export=md
+bloodbash ./sharpout --all --export=html
+bloodbash ./sharpout --all --export=csv
+bloodbash ./sharpout --all --export=json --export-bh --dot graph.dot
+bloodbash ./sharpout --all --export=yaml
 
 # SQLite graph cache
-python3 BloodBash.py ./sharpout --all --db bloodbash.db
-python3 BloodBash.py . --db bloodbash.db --from-user alice --from-user-export
+bloodbash ./sharpout --all --db bloodbash.db
+bloodbash . --db bloodbash.db --from-user alice --from-user-export
 ```
 
 ### PlumHound-style CSV pack contents
@@ -343,14 +360,14 @@ python3 BloodBash.py . --db bloodbash.db --from-user alice --from-user-export
 ### Azure / Entra
 
 ```bash
-python3 BloodBash.py ./azureout --azure-privileged-roles
-python3 BloodBash.py ./azureout --azure-app-secrets --azure-sp-abuse
-python3 BloodBash.py ./azureout --azure-mfa-bypass --azure-guest-access
-python3 BloodBash.py ./azureout \
+bloodbash ./azureout --azure-privileged-roles
+bloodbash ./azureout --azure-app-secrets --azure-sp-abuse
+bloodbash ./azureout --azure-mfa-bypass --azure-guest-access
+bloodbash ./azureout \
   --azure-privileged-roles --azure-app-secrets --azure-mfa-bypass \
   --azure-guest-access --azure-sp-abuse --all-findings --export=html
 
-python3 BloodBash.py SampleAzurehoundData \
+bloodbash SampleAzurehoundData \
   --azure-privileged-roles --azure-guest-access --all-findings
 ```
 
@@ -358,15 +375,18 @@ python3 BloodBash.py SampleAzurehoundData \
 
 ```bash
 # Nightly full + deliverable
-python3 BloodBash.py ./sharpout --all --fast --all-findings \
+bloodbash ./sharpout --all --fast --all-findings \
   --report-pack ./nightly --export-zip nightly.zip --log-file nightly.log
 
+# Dual collection (low-priv then DA) in one pass
+bloodbash ./lowpriv.zip --merge ./da.zip --all --fast --csv-pack ./ph-full
+
 # Foothold day-0 then domain hygiene
-python3 BloodBash.py ./sharpout --from-user alice --from-user-export ./dossiers
-python3 BloodBash.py ./sharpout --profile hygiene --report-pack ./hygiene --export-zip hygiene.zip
+bloodbash ./sharpout --from-user alice --from-user-export ./dossiers
+bloodbash ./sharpout --profile hygiene --report-pack ./hygiene --export-zip hygiene.zip
 
 # ADCS-focused with path remediation
-python3 BloodBash.py ./sharpout --profile adcs-heavy --path-break --busiest-paths short \
+bloodbash ./sharpout --profile adcs-heavy --path-break --busiest-paths short \
   --report-pack ./adcs-paths --export-zip adcs-paths.zip
 ```
 
@@ -388,7 +408,7 @@ python3 BloodBash.py ./sharpout --profile adcs-heavy --path-break --busiest-path
 | `--report-pack DIR` | Multi-page HTML suite + `index.html` + per-section CSVs |
 | `--csv-pack DIR` | **PlumHound-style multi-CSV pack** (inventory + overpriv + AdminTo reports + `index.csv`) |
 | `--export-zip [FILE]` | Zip a `--report-pack` or `--csv-pack` directory into one deliverable |
-| `--profile FILE\|name` | YAML analysis profile (`quick`, `adcs-heavy`, `hygiene`, or path) |
+| `--profile FILE\|name` | YAML analysis profile (`quick`, `quick-wins`, `adcs-heavy`, `hygiene`, or path) |
 | `--log-file [FILE]` | Append-friendly run log (default `bloodbash.log`) |
 | `--all-findings` | End of run: print a table of **every** finding (even if empty) |
 
@@ -396,19 +416,21 @@ python3 BloodBash.py ./sharpout --profile adcs-heavy --path-break --busiest-path
 
 | Flag | Purpose |
 |------|---------|
-| `--all` | Run every analysis module |
+| `--all` | Run every analysis module (empty AD sections suppressed) |
 | `--quick-wins` | **High-signal day-0 triage** (also the **default** with no check flags; implies `--fast`) |
+| `--merge PATH…` | Extra SharpHound/AzureHound dirs or zips to union into one graph |
+| `--trust` | Domain trust / SID-filtering abuse checks |
 | `--wizard` | Interactive mode picker (quick-wins / full / dossier / profile) |
 | `--help-advanced` | Full flag tables + all examples (short `--help` is start-here only) |
-| `--fast` | Limit pathfinding to top DA/EA-style targets (not a full skip) |
-| `--domain X` | Filter to one AD domain or Azure `tenantId` |
+| `--fast` | Limit pathfinding to top DA/EA-style targets (not a full skip). Auto-on for large graphs with `--all` |
+| `--domain X` | Filter to one AD domain or Azure `tenantId` (case-insensitive) |
 | `--list-domains` | List AD domains / Azure tenants in the collection and exit |
 | `--owned a,b` | Paths **to** owned principals (inbound) |
 | `--path-from` / `--path-to` | Arbitrary shortest paths |
 | `--inspect NODE` | Dump props + edges for a node |
 | `--indirect` | Include group-mediated paths/rights |
 | `--deep-analysis` | Slow group nesting + cycle detection |
-| `--privileged-roast` | Kerberoast/AS-REP users nested into DA/EA/other priv groups |
+| `--privileged-roast` | Kerberoast/AS-REP users nested into DA/EA/other priv groups (or AdminCount) |
 | `--gpo-content-dir DIR` | Parse GPO XMLs (tasks, scripts, cPassword) |
 | `--export {md,json,html,csv,yaml}` | Write a report (high-value targets + prioritized findings) |
 | `--export-bh` | BloodHound-style graph JSON |
@@ -416,15 +438,15 @@ python3 BloodBash.py ./sharpout --profile adcs-heavy --path-break --busiest-path
 | `--db FILE` | Load/save graph in SQLite |
 | `--debug` | Verbose parse/build logging |
 
-Also included under `--all` / selective flags: privilege-context tags on roast findings; unexpected DCSync split; unconstrained DC vs non-DC; LAPS readers; can-configure RBCD; stats dashboard percentages.
+Also included under `--all` / selective flags: collection health banner; interesting non-HV ACL abuse; privilege-context tags on roast findings; unexpected DCSync split; unconstrained DC vs non-DC; LAPS readers; can-configure RBCD; stats dashboard percentages; quiet empty sections under broad runs.
 
 Azure-only toggles: `--azure-privileged-roles`, `--azure-app-secrets`, `--azure-mfa-bypass`, `--azure-guest-access`, `--azure-sp-abuse`.
 
-Run `python3 BloodBash.py --help` for start-here + cheat sheet, or `--help-advanced` for full flag tables and examples.
+Run `bloodbash --help` for start-here + cheat sheet, or `--help-advanced` for full flag tables and examples.
 
 ## SharpHound CE notes
 
-Ingest understands modern collector output: group `Members`, `AllowedToAct` (RBCD), Sessions / LocalGroups, domain `Trusts[]`, SID history, CE property name aliases, and safe zip extraction. DCSync requires **GetChanges + GetChangesAll**. ADCS labels follow SpecterOps ESC1–ESC8 (+ ESC9/ESC13 candidates when flags exist).
+Ingest understands modern collector output: group `Members`, `AllowedToAct` (RBCD), Sessions / LocalGroups, domain `Trusts[]`, SID history, CE property name aliases, and safe zip extraction (Zip Slip blocked). DCSync requires **GetChanges + GetChangesAll**. ADCS labels follow SpecterOps ESC1-ESC8 (+ ESC9/ESC13 candidates when flags exist). Domain controller computer objects stay high-value targets. Workstation `highvalue` flags on local admin groups do not flood the HV set.
 
 ## Metasploit module
 
@@ -465,7 +487,8 @@ binary (non-`.py`) to skip the Python interpreter. Domain filtering is case-inse
 pip install -r requirements-dev.txt
 python3 -m pytest test_bloodbash.py test_members_ingest.py \
   test_detection_variations.py test_compromise_dossier.py \
-  test_synthetic_corpus.py -q
+  test_synthetic_corpus.py test_ludus_collections.py \
+  test_real_data_reliability.py -q
 ```
 
 ### Synthetic SharpHound corpus (high-entropy regression)
@@ -490,7 +513,7 @@ python3 tools/run_scenario_battery.py --list-profiles
 python3 tools/run_scenario_battery.py --keep --work-dir /tmp/bb-engagements
 ```
 
-CI (PR + main release) runs unit tests **and** `run_scenario_battery.py --count 20`
+CI (PR + main) runs unit/integration tests **and** `run_scenario_battery.py --count 20 --seed 42`
 (20 engagement chains). Branch protection requires the **test** status check.
 
 Accuracy helpers (no customer data):
@@ -511,13 +534,13 @@ python3 BloodBash.py testData/synthetic-corp-lab \
 python3 -m venv .venv-build && source .venv-build/bin/activate
 pip install -r requirements.txt -r requirements-build.txt
 pyinstaller --onefile --console --name bloodbash-linux-x64 BloodBash.py
-# → dist/bloodbash-linux-x64
+# -> dist/bloodbash-linux-x64
 ```
 
-CI (on every push to `main`) runs tests, builds Linux + Windows one-file binaries with PyInstaller, and publishes a Release with stable asset names for the `/releases/latest/download/...` links above.
+CI (on every push to `main`) runs tests, builds Linux + Windows one-file binaries with PyInstaller, and publishes a Release with stable asset names for the `/releases/latest/download/...` links above. Tags look like `v1.4.1-build.N`.
 
 ## License & attribution
 
-MIT — for **authorized** security testing and red teaming only.
+MIT - for **authorized** security testing and red teaming only.
 
 **BloodBash** is an open source project created and managed by **[SquidSec](https://squidoffense.com/)**.
