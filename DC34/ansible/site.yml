@@ -1,0 +1,175 @@
+---
+# DEF CON 34 BloodBash CTF - scenario pack
+# Plants: HelpDesk -> ForceChangePassword hopadmin -> AdminTo HOP01 -> DA HasSession
+#
+# Usage (from a host that can reach 10.x range IPs, usually the Ludus server):
+#   ansible-playbook -i inventory.yml site.yml
+# Lab test against lab.local:
+#   ansible-playbook -i inventory.yml site.yml -e @group_vars/lab-test.yml
+
+- name: Plant CTF AD path on domain controller
+  hosts: dc
+  gather_facts: false
+  vars_files:
+    - group_vars/all.yml
+  vars:
+    ansible_user: "{{ domain_netbios }}\\{{ da_user }}"
+    ansible_password: "{{ da_password }}"
+  tasks:
+    - name: Ensure AD tools present
+      ansible.windows.win_feature:
+        name: RSAT-AD-PowerShell
+        state: present
+      register: feat
+      failed_when: false
+
+    - name: Create HelpDesk group
+      ansible.windows.win_shell: |
+        Import-Module ActiveDirectory
+        $g = "{{ helpdesk_group }}"
+        if (-not (Get-ADGroup -Filter "Name -eq '$g'" -ErrorAction SilentlyContinue)) {
+          New-ADGroup -Name $g -GroupScope Global -GroupCategory Security -Path "CN=Users,{{ domain_dn }}"
+        }
+      args:
+        executable: powershell
+
+    - name: Ensure start user in HelpDesk
+      ansible.windows.win_shell: |
+        Import-Module ActiveDirectory
+        $u = "{{ start_user }}"
+        $g = "{{ helpdesk_group }}"
+        Add-ADGroupMember -Identity $g -Members $u -ErrorAction SilentlyContinue
+      args:
+        executable: powershell
+
+    - name: Create hopadmin user
+      ansible.windows.win_shell: |
+        Import-Module ActiveDirectory
+        $u = "{{ hopadmin_user }}"
+        $p = '{{ hopadmin_password }}'
+        if (-not (Get-ADUser -Filter "SamAccountName -eq '$u'" -ErrorAction SilentlyContinue)) {
+          $sec = ConvertTo-SecureString $p -AsPlainText -Force
+          New-ADUser -Name $u -SamAccountName $u -AccountPassword $sec -Enabled $true -PasswordNeverExpires $true -Path "CN=Users,{{ domain_dn }}"
+        } else {
+          $sec = ConvertTo-SecureString $p -AsPlainText -Force
+          Set-ADAccountPassword -Identity $u -NewPassword $sec -Reset
+          Enable-ADAccount -Identity $u
+        }
+      args:
+        executable: powershell
+
+    - name: ACL HelpDesk ForceChangePassword on hopadmin
+      ansible.windows.win_shell: |
+        Import-Module ActiveDirectory
+        $user = Get-ADUser "{{ hopadmin_user }}"
+        $group = Get-ADGroup "{{ helpdesk_group }}"
+        $path = "AD:$($user.DistinguishedName)"
+        $acl = Get-Acl -Path $path
+        # ForceChangePassword extended right GUID
+        $right = [GUID]"00299570-246d-11d0-a768-00aa006e0529"
+        $id = New-Object System.Security.Principal.SecurityIdentifier($group.SID)
+        $rule = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
+          $id,
+          [System.DirectoryServices.ActiveDirectoryRights]::ExtendedRight,
+          [System.Security.AccessControl.AccessControlType]::Allow,
+          $right,
+          [System.DirectoryServices.ActiveDirectorySecurityInheritance]::None
+        )
+        # Remove existing same ACE then add
+        $acl.Access | Where-Object { $_.IdentityReference -eq $group.SID -or $_.IdentityReference -match "{{ helpdesk_group }}" } | ForEach-Object { $acl.RemoveAccessRuleSpecific($_) | Out-Null }
+        $acl.AddAccessRule($rule)
+        Set-Acl -Path $path -AclObject $acl
+        "ACL_OK"
+      args:
+        executable: powershell
+      register: acl_out
+
+    - name: Show ACL result
+      debug:
+        var: acl_out.stdout_lines
+
+    - name: Flag 3 on SYSVOL-style staff path (DC)
+      ansible.windows.win_copy:
+        content: "{{ flag3_content }}\n"
+        dest: C:\Users\Public\Documents\flag_da.txt
+
+- name: Plant hop local admin and DA session edges
+  hosts: hop
+  gather_facts: false
+  vars_files:
+    - group_vars/all.yml
+  vars:
+    ansible_user: "{{ domain_netbios }}\\{{ da_user }}"
+    ansible_password: "{{ da_password }}"
+  tasks:
+    - name: Add hopadmin to local Administrators
+      ansible.windows.win_group_membership:
+        name: Administrators
+        members:
+          - "{{ domain_netbios }}\\{{ hopadmin_user }}"
+        state: present
+
+    - name: Flag 2 for hopadmin
+      ansible.windows.win_copy:
+        content: "{{ flag2_content }}\n"
+        dest: C:\Users\Public\Documents\flag_hop.txt
+
+    - name: Allow domainadmin batch/service logon style keepalive task
+      ansible.windows.win_shell: |
+        $tn = "CTF-DA-Session"
+        schtasks /Delete /TN $tn /F 2>$null
+        # Run as DA so session/logon material exists for collectors
+        $ru = "{{ domain_netbios }}\{{ da_user }}"
+        $rp = '{{ da_password }}'
+        schtasks /Create /TN $tn /SC MINUTE /MO 5 /RU $ru /RP $rp /RL HIGHEST /TR "cmd.exe /c hostname > C:\Users\Public\da_keepalive.txt" /F
+        schtasks /Run /TN $tn
+        Start-Sleep -Seconds 3
+        if (Test-Path C:\Users\Public\da_keepalive.txt) { "TASK_OK" } else { "TASK_RAN" }
+      args:
+        executable: powershell
+      register: task_out
+      failed_when: false
+
+    - name: Also open WinRM as DA once (network logon artifact)
+      ansible.windows.win_shell: |
+        whoami
+        hostname
+      args:
+        executable: powershell
+
+    - name: Task output
+      debug:
+        var: task_out.stdout_lines
+
+- name: Foothold player breadcrumbs
+  hosts: foothold
+  gather_facts: false
+  vars_files:
+    - group_vars/all.yml
+  vars:
+    ansible_user: "{{ domain_netbios }}\\{{ da_user }}"
+    ansible_password: "{{ da_password }}"
+  tasks:
+    - name: Player readme on desktop public
+      ansible.windows.win_copy:
+        content: |
+          DEF CON BloodBash CTF
+          ====================
+          You are {{ domain_netbios }}\{{ start_user }} on FOOTHOLD.
+
+          1. Run SharpHound (All) as this user.
+          2. Copy the zip to your laptop.
+          3. Analyze with BloodBash (offline).
+          4. Follow the graph to Domain Admin.
+
+          Start password was given by staff.
+          Do not attack infrastructure outside this range.
+        dest: C:\Users\Public\Desktop\README_CTF.txt
+
+    - name: Ensure start user can RDP (optional)
+      ansible.windows.win_group_membership:
+        name: Remote Desktop Users
+        members:
+          - "{{ domain_netbios }}\\{{ start_user }}"
+        state: present
+      failed_when: false

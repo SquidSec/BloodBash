@@ -1,0 +1,17 @@
+domain_dns: ctf.local
+domain_netbios: CTF
+domain_dn: "DC=ctf,DC=local"
+da_user: domainadmin
+da_password: "CtfDA!ChangeMe"
+start_user: domainuser
+start_password: "CtfStart123!"
+helpdesk_group: HelpDesk
+hopadmin_user: hopadmin
+hopadmin_password: "HopAdmin!ChangeMe"
+dc_host: 10.1.10.10
+hop_host: 10.1.10.20
+foothold_host: 10.1.10.30
+flag1_hint: "BloodBash path domainuser to Domain Admins"
+flag2_content: "FLAG{hopadmin_owns_the_jump}"
+flag3_content: "FLAG{domain_admin_via_bloodbash}"
+flag1_content: "FLAG{bloodbash_start_foothold}"

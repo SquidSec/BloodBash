@@ -1,0 +1,54 @@
+---
+# Desktop flags for CTF tiers
+- hosts: foothold
+  gather_facts: false
+  vars_files: [group_vars/all.yml]
+  vars:
+    ansible_user: "{{ domain_netbios }}\\{{ da_user }}"
+    ansible_password: "{{ da_password }}"
+  tasks:
+    - name: Start flag / welcome on Public Desktop
+      ansible.windows.win_copy:
+        content: |
+          FLAG{bloodbash_start_foothold}
+          You are the assumed breach. Collect AD, analyze with BloodBash, reach Domain Admin.
+        dest: C:\Users\Public\Desktop\FLAG_start.txt
+    - name: Start flag on user Desktop
+      ansible.windows.win_copy:
+        content: |
+          FLAG{bloodbash_start_foothold}
+          Double-click BloodBash-CTF\Collect-AD.bat
+        dest: "C:\\Users\\{{ start_user }}\\Desktop\\FLAG_start.txt"
+      failed_when: false
+
+- hosts: hop
+  gather_facts: false
+  vars_files: [group_vars/all.yml]
+  vars:
+    ansible_user: "{{ domain_netbios }}\\{{ da_user }}"
+    ansible_password: "{{ da_password }}"
+  tasks:
+    - name: Hop flag Public Desktop
+      ansible.windows.win_copy:
+        content: "{{ flag2_content | default('FLAG{hopadmin_owns_the_jump}') }}\n"
+        dest: C:\Users\Public\Desktop\FLAG_hop.txt
+    - name: Hop flag Documents (backup)
+      ansible.windows.win_copy:
+        content: "{{ flag2_content | default('FLAG{hopadmin_owns_the_jump}') }}\n"
+        dest: C:\Users\Public\Documents\flag_hop.txt
+
+- hosts: dc
+  gather_facts: false
+  vars_files: [group_vars/all.yml]
+  vars:
+    ansible_user: "{{ domain_netbios }}\\{{ da_user }}"
+    ansible_password: "{{ da_password }}"
+  tasks:
+    - name: DA flag Public Desktop
+      ansible.windows.win_copy:
+        content: "{{ flag3_content | default('FLAG{domain_admin_via_bloodbash}') }}\n"
+        dest: C:\Users\Public\Desktop\FLAG_da.txt
+    - name: DA flag Documents
+      ansible.windows.win_copy:
+        content: "{{ flag3_content | default('FLAG{domain_admin_via_bloodbash}') }}\n"
+        dest: C:\Users\Public\Documents\flag_da.txt

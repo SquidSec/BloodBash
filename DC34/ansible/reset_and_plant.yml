@@ -1,0 +1,7 @@
+---
+# After Ludus range is SUCCESS, run:
+#   ansible-playbook -i inventory.yml reset_and_plant.yml -e @group_vars/lab-test.yml \
+#     -e "ansible_user=LAB\\domainadmin" -e "ansible_password=password"
+- import_playbook: site.yml
+- import_playbook: plant_collect_ui.yml
+- import_playbook: plant_flags.yml

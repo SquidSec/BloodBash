@@ -228,19 +228,25 @@ for _sid, _name, _funcs, _pats in LUDUS_EXPECTATIONS:
     )
 
 
-class TestDC34Placeholder(unittest.TestCase):
-    """Structural test for new DC34 dir added for DefCon 34 data."""
+class TestDC34CTFPack(unittest.TestCase):
+    """Test that the DC34 DefCon 34 CTF pack directory is present with expected structure."""
 
     def test_dc34_dir_exists(self):
-        dc34 = ROOT / "ludus-env-data" / "DC34"
-        self.assertTrue(dc34.is_dir(), "DC34 dir must exist under ludus-env-data")
+        dc34 = ROOT / "DC34"
+        self.assertTrue(dc34.is_dir(), "DC34 dir must exist at repo root")
 
-    def test_dc34_has_readme(self):
-        readme = ROOT / "ludus-env-data" / "DC34" / "README.md"
-        self.assertTrue(readme.is_file(), "DC34/README.md must exist")
-        content = readme.read_text()
-        self.assertIn("DefCon 34", content)
-        self.assertIn("placeholder", content.lower())
+    def test_dc34_has_key_files(self):
+        dc34 = ROOT / "DC34"
+        self.assertTrue((dc34 / "README.md").is_file())
+        self.assertTrue((dc34 / "ansible").is_dir())
+        self.assertTrue((dc34 / "docs").is_dir())
+        self.assertTrue((dc34 / "ludus").is_dir())
+
+    def test_dc34_readme_content(self):
+        readme = (ROOT / "DC34" / "README.md").read_text()
+        self.assertIn("DEF CON 34", readme)
+        self.assertIn("BloodBash CTF pack", readme)
+        self.assertIn("ansible", readme)
 
 
 if __name__ == "__main__":
