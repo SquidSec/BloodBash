@@ -53,4 +53,4 @@ High level:
 - DC desktop: Domain Admin flag  
 
 ## Rules
-Stay in range. No attacking infra or other players. Use the BloodBash install on FOOTHOLD.
+Stay inside the range. Do not attack the infra or other players. Use the BloodBash that is already on the FOOTHOLD.

@@ -1,9 +1,8 @@
-# Operator runbook
+# Runbook
 
-## Player flow (keep this)
-RDP -> double-click Collect-AD.bat -> zip + bloodbash.exe on FOOTHOLD
+RDP to the foothold, double-click Collect-AD.bat to get the zip and bloodbash.exe on the box.
 
-Never instruct players to use Evil-WinRM for SharpHound.
+Do not tell players to use Evil-WinRM for SharpHound.
 
 ## Deploy
 1. `ludus range config set -f ludus/defcon-ctf-range.yml`
@@ -11,23 +10,20 @@ Never instruct players to use Evil-WinRM for SharpHound.
 3. Snapshot clean
 4. `ansible-playbook -i inventory.yml site.yml`
 5. `ansible-playbook -i inventory.yml plant_collect_ui.yml`
-6. Copy SharpHound.exe into Public Desktop\BloodBash-CTF\ (or bake into role)
+6. Put SharpHound.exe on the Public Desktop under BloodBash-CTF\ (or bake it in)
 
 ## Why RDP
-SharpHound LDAP fails under WinRM network logons. Interactive RDP works with a plain exe run / the bat file.
-
+SharpHound LDAP fails under WinRM network logons. Use interactive RDP with the exe or bat file.
 
 ## Full attack commands
-See **docs/ATTACK-PATH.md** (includes BloodBash flags, bloodyAD, secretsdump, John the Ripper mscash2).
+See **docs/ATTACK-PATH.md** for the steps with BloodBash, bloodyAD, secretsdump, and John mscash2.
 
+## Tools on FOOTHOLD
+The plant_collect_ui.yml playbook puts:
+- SharpHound.exe
+- bloodbash.exe (or pull from GitHub releases)
+- Collect-AD.bat
 
-## Tools baked onto FOOTHOLD
-`ansible/plant_collect_ui.yml` deploys:
-- `files/tools/SharpHound.exe` (required in pack)
-- `files/tools/bloodbash.exe` (or download from GitHub)
-- `files/Collect-AD.bat`
+Put the binaries in ansible/files/tools/ before you run the plant playbook.
 
-Place binaries in `ansible/files/tools/` before running the plant playbook.
-
-
-Players use **bloodbash.exe on FOOTHOLD**. Do not instruct them to copy the zip to a laptop.
+Players run bloodbash.exe right on the FOOTHOLD. No copying the zip to their laptop.

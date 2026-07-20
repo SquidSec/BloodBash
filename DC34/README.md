@@ -1,10 +1,10 @@
 # DEF CON 34 - BloodBash CTF pack (SquidSec)
 
-Hand this folder to Red Team Village / Ludus operators.
+Pack for the DefCon 34 CTF. Drop it on the Ludus host and run the playbooks.
 
 ## Structure
 ```
-Defcon34/
+DC34/
   README.md
   ludus/
     defcon-ctf-range.yml      # CTF empty AD (ctf.local)
@@ -26,7 +26,7 @@ Defcon34/
     SCENARIO.md               # design
 ```
 
-## Operator summary
+## Deploy steps
 1. Build templates: debian-12, win2022, win11  
 2. `ludus range config set -f ludus/defcon-ctf-range.yml`  
 3. `ludus range deploy` → SUCCESS  
@@ -42,16 +42,15 @@ Defcon34/
 8. Reset: revert clean snapshot (or redeploy + plant)
 
 ## Player flow
-RDP FOOTHOLD → double-click Collect-AD.bat → run bloodbash.exe on the zip **on the machine** (do not require laptop copy).
+RDP to FOOTHOLD, double-click Collect-AD.bat, then run bloodbash.exe on the zip right there on the machine. No need to copy the zip off to a laptop.
 
 ## Docs
 | File | Audience |
 |------|----------|
 | docs/PLAYER.md | Players |
 | docs/ATTACK-PATH.md | Full command path + John mscash2 |
-| docs/RUNBOOK.md | Operators / RTV |
+| docs/RUNBOOK.md | Operators |
 | docs/SCENARIO.md | Path design |
-| docs/ATTACK-PATH.md | Flags + steps |
 
 ## Important
 - **RDP for SharpHound**, not Evil-WinRM (network logon breaks SH LDAP).  
