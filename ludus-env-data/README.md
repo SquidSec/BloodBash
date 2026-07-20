@@ -6,6 +6,7 @@ BloodBash **accuracy** corpora (not Defcon CTF).
 ludus-env-data/
   README.md
   RESULTS.md                 # validation status
+  DC34/                      # DefCon 34 placeholder (demo data, RTV)
   scenarios/s0N_*.md         # ground truth per scenario
   collections/s0N.zip        # SharpHound zips
   collections/s0N_bloodbash.txt
