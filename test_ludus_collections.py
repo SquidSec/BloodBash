@@ -228,5 +228,20 @@ for _sid, _name, _funcs, _pats in LUDUS_EXPECTATIONS:
     )
 
 
+class TestDC34Placeholder(unittest.TestCase):
+    """Structural test for new DC34 dir added for DefCon 34 data."""
+
+    def test_dc34_dir_exists(self):
+        dc34 = ROOT / "ludus-env-data" / "DC34"
+        self.assertTrue(dc34.is_dir(), "DC34 dir must exist under ludus-env-data")
+
+    def test_dc34_has_readme(self):
+        readme = ROOT / "ludus-env-data" / "DC34" / "README.md"
+        self.assertTrue(readme.is_file(), "DC34/README.md must exist")
+        content = readme.read_text()
+        self.assertIn("DefCon 34", content)
+        self.assertIn("placeholder", content.lower())
+
+
 if __name__ == "__main__":
     unittest.main()
