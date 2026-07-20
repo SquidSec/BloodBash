@@ -1,0 +1,16 @@
+domain_dns: lab.local
+domain_netbios: LAB
+domain_dn: "DC=lab,DC=local"
+da_user: domainadmin
+da_password: "password"
+start_user: domainuser
+start_password: "password"
+helpdesk_group: HelpDesk
+hopadmin_user: hopadmin
+hopadmin_password: "HopAdmin!ChangeMe"
+dc_host: 10.1.10.10
+hop_host: 10.1.10.20
+foothold_host: 10.1.10.30
+flag2_content: "FLAG{hopadmin_owns_the_jump}"
+flag3_content: "FLAG{domain_admin_via_bloodbash}"
+flag1_content: "FLAG{bloodbash_start_foothold}"

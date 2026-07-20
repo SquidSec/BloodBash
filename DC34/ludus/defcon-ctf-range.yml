@@ -1,0 +1,88 @@
+# yaml-language-server: $schema=https://docs.ludus.cloud/schemas/range-config.json
+# DEF CON 34 / RTV - BloodBash path CTF
+# Empty AD only. Scenario pack plants the attack path after deploy.
+# No Kali. No debian-11. Players attack from their own laptop.
+#
+# Templates required (built on Ludus host):
+#   debian-12-x64-server-template
+#   win2022-server-x64-template
+#   win11-22h2-x64-enterprise-template
+#
+# Deploy:
+#   ludus range config set -f defcon-ctf-range.yml
+#   ludus range deploy
+# Then:
+#   ansible-playbook -i inventory.yml site.yml
+
+ludus:
+  - vm_name: "{{ range_id }}-dc"
+    hostname: "{{ range_id }}-DC01"
+    template: win2022-server-x64-template
+    vlan: 10
+    ip_last_octet: 10
+    ram_gb: 4
+    cpus: 2
+    windows:
+      sysprep: true
+    domain:
+      fqdn: ctf.local
+      role: primary-dc
+    testing:
+      snapshot: true
+      block_internet: true
+
+  - vm_name: "{{ range_id }}-hop"
+    hostname: "{{ range_id }}-HOP01"
+    template: win2022-server-x64-template
+    vlan: 10
+    ip_last_octet: 20
+    ram_gb: 4
+    cpus: 2
+    windows:
+      sysprep: true
+    domain:
+      fqdn: ctf.local
+      role: member
+    testing:
+      snapshot: true
+      block_internet: true
+
+  - vm_name: "{{ range_id }}-foothold"
+    hostname: "{{ range_id }}-FOOTHOLD"
+    template: win11-22h2-x64-enterprise-template
+    vlan: 10
+    ip_last_octet: 30
+    ram_gb: 4
+    cpus: 2
+    windows:
+      sysprep: true
+      autologon_user: domainuser
+      autologon_password: "CtfStart123!"
+    domain:
+      fqdn: ctf.local
+      role: member
+    testing:
+      snapshot: true
+      block_internet: true
+
+router:
+  vm_name: "{{ range_id }}-router"
+  hostname: "{{ range_id }}-router"
+  template: debian-12-x64-server-template
+  ram_gb: 2
+  cpus: 2
+
+defaults:
+  ad_domain_functional_level: Win2012R2
+  ad_forest_functional_level: Win2012R2
+  ad_domain_admin: domainadmin
+  ad_domain_admin_password: "CtfDA!ChangeMe"
+  ad_domain_user: domainuser
+  ad_domain_user_password: "CtfStart123!"
+  ad_domain_safe_mode_password: "CtfSafe!ChangeMe"
+  timezone: America/Las_Vegas
+  enable_dynamic_wallpaper: false
+
+network:
+  inter_vlan_default: ACCEPT
+  external_default: REJECT

@@ -1,0 +1,82 @@
+---
+- hosts: foothold
+  gather_facts: false
+  vars_files:
+    - group_vars/all.yml
+  vars:
+    ansible_user: "{{ domain_netbios }}\\{{ da_user }}"
+    ansible_password: "{{ da_password }}"
+    tool_dir: C:\Users\Public\Desktop\BloodBash-CTF
+    bloodbash_url: "https://github.com/DotNetRussell/BloodBash/releases/latest/download/bloodbash-windows-x64.exe"
+  tasks:
+    - name: Create tool directory
+      ansible.windows.win_file:
+        path: "{{ tool_dir }}"
+        state: directory
+
+    - name: Deploy Collect-AD.bat
+      ansible.windows.win_copy:
+        src: files/Collect-AD.bat
+        dest: "{{ tool_dir }}\\Collect-AD.bat"
+
+    - name: Deploy SharpHound.exe
+      ansible.windows.win_copy:
+        src: files/tools/SharpHound.exe
+        dest: "{{ tool_dir }}\\SharpHound.exe"
+
+    - name: Deploy bloodbash.exe
+      ansible.windows.win_copy:
+        src: files/tools/bloodbash.exe
+        dest: "{{ tool_dir }}\\bloodbash.exe"
+      register: bb_copy
+      failed_when: false
+
+    - name: Download bloodbash if copy failed
+      ansible.windows.win_get_url:
+        url: "{{ bloodbash_url }}"
+        dest: "{{ tool_dir }}\\bloodbash.exe"
+      when: bb_copy is failed or bb_copy is skipped
+      failed_when: false
+
+    - name: Mirror to start-user Desktop
+      ansible.windows.win_shell: |
+        $src = '{{ tool_dir }}'
+        $dst = 'C:\Users\{{ start_user }}\Desktop\BloodBash-CTF'
+        New-Item -ItemType Directory -Force -Path $dst | Out-Null
+        Copy-Item -Force "$src\*" $dst -ErrorAction SilentlyContinue
+      args:
+        executable: powershell
+      failed_when: false
+
+    - name: Start user local admin
+      ansible.windows.win_group_membership:
+        name: Administrators
+        members: ["{{ domain_netbios }}\\{{ start_user }}"]
+        state: present
+
+    - name: RDP users
+      ansible.windows.win_group_membership:
+        name: Remote Desktop Users
+        members: ["{{ domain_netbios }}\\{{ start_user }}"]
+        state: present
+
+    - name: Enable RDP
+      ansible.windows.win_shell: |
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name fDenyTSConnections -Value 0
+        Enable-NetFirewallRule -DisplayGroup 'Remote Desktop' -ErrorAction SilentlyContinue
+      args:
+        executable: powershell
+
+    - name: README
+      ansible.windows.win_copy:
+        content: |
+          SharpHound.exe + bloodbash.exe + Collect-AD.bat
+          Double-click Collect-AD.bat then:
+          Use on-box bloodbash.exe (do not copy zip off the machine):
+          bloodbash.exe ..\bloodhound.zip --from-user domainuser --shortest-paths
+        dest: "{{ tool_dir }}\\README.txt"
+
+    - name: List tools
+      ansible.windows.win_shell: Get-ChildItem '{{ tool_dir }}' | Format-Table Name,Length -AutoSize
+      args:
+        executable: powershell
