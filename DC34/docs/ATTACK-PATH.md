@@ -61,16 +61,14 @@ domainuser (FOOTHOLD)
   → domainadmin on DC
 ```
 
-## Important notes
+## Notes
 
-1. **RDP for SharpHound** — Do not run SharpHound under Evil-WinRM (network logon breaks LDAP). Use RDP + Collect-AD.bat.
-2. **BloodBash flags** — `--from-user` and `--compromise` are aliases. Use:
-   - `bloodbash zip --from-user domainuser`
-   - NOT `--from-user domainuser --compromise` (missing argument).
-3. **ForceChangePassword** — `net user hopadmin ... /domain` often Access Denied. Use bloodyAD/rpcclient/SetPassword.
-4. **Credential dump** — Prefer `impacket-secretsdump` from the player laptop over mimikatz on the host (Defender).
-5. **Cracking** — Use **John the Ripper** with `--format=mscash2` for DCC2/ Domained Cached Credentials. hashcat needs GPU/OpenCL; John works on CPU.
-6. **CTF handoff** — Swap lab IPs/creds for event values; keep the same order of steps.
+- Use RDP for SharpHound. Evil-WinRM network logons break LDAP. Stick with RDP + Collect-AD.bat.
+- `--from-user` and `--compromise` are the same. Use one: `bloodbash zip --from-user domainuser`
+- `net user ... /domain` for ForceChangePassword often gets denied. Use bloodyAD or rpcclient.
+- Dump creds with impacket-secretsdump from your laptop instead of mimikatz on the target.
+- Crack with John the Ripper `--format=mscash2`. It works on CPU; hashcat wants GPU.
+- For the real event, swap in the CTF IPs and creds but keep the step order.
 
 ## Optional alternatives
 

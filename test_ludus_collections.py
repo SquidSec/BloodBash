@@ -248,6 +248,14 @@ class TestDC34CTFPack(unittest.TestCase):
         self.assertIn("BloodBash CTF pack", readme)
         self.assertIn("ansible", readme)
 
+    def test_dc34_no_ai_handoff_notes(self):
+        readme = (ROOT / "DC34" / "README.md").read_text()
+        self.assertNotIn("Hand this folder to", readme)
+        self.assertNotIn("keep this", readme.lower())
+
+        runbook = (ROOT / "DC34" / "docs" / "RUNBOOK.md").read_text()
+        self.assertNotIn("keep this", runbook.lower())
+
 
 if __name__ == "__main__":
     unittest.main()
