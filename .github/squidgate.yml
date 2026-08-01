@@ -1,0 +1,37 @@
+# SquidGate — PR security gate
+# https://github.com/SquidSec/SquidGate
+version: 1
+
+llm:
+  provider: custom
+  model: grok-build-0.1
+
+policy:
+  block_on: high
+  min_confidence: medium
+  categories:
+    secrets: true
+    injection: true
+    authn_authz: true
+    cryptography: true
+    insecure_deserialization: true
+    path_traversal: true
+    ssrf: true
+    xss: true
+    csrf: true
+    supply_chain: true
+    hardcoded_credentials: true
+    dangerous_functions: true
+    misconfiguration: true
+  custom_rules: []
+
+context:
+  lines_before: 30
+  lines_after: 30
+  max_files: 50
+  max_diff_bytes: 500000
+
+output:
+  comment_on_pr: true
+  annotate_lines: true
+  fail_on_error: true
