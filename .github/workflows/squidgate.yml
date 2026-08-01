@@ -1,0 +1,26 @@
+name: SquidGate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+jobs:
+  squidgate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: SquidGate
+        uses: SquidSec/SquidGate@v1
+        with:
+          llm-api-key: ${{ secrets.LLM_API_KEY }}
+          llm-provider: custom
+          llm-model: grok-build-0.1
+          llm-base-url: https://api.x.ai/v1
