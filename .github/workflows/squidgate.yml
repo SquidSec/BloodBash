@@ -3,6 +3,7 @@ name: SquidGate
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+    branches: [main, master]
 
 permissions:
   contents: read
@@ -11,16 +12,28 @@ permissions:
 
 jobs:
   squidgate:
-    runs-on: ubuntu-latest
+    # Same-repo PRs only — never run fork workflow code on self-hosted
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64, squidsec]
+    env:
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: SquidGate
-        uses: SquidSec/SquidGate@v1
+        if: env.LLM_API_KEY != ''
+        uses: SquidSec/SquidGate@v1.0.0-build.4
         with:
-          llm-api-key: ${{ secrets.LLM_API_KEY }}
+          llm-api-key: ${{ env.LLM_API_KEY }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           llm-provider: custom
           llm-model: grok-build-0.1
           llm-base-url: https://api.x.ai/v1
+
+      - name: SquidGate not configured
+        if: env.LLM_API_KEY == ''
+        run: |
+          echo "::notice title=SquidGate::Add repository secret LLM_API_KEY to enable the PR security gate (SquidSec/SquidGate@v1.0.0-build.4)."
+

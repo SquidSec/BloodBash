@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, squidsec]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -49,10 +49,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: [self-hosted, Linux, X64, squidsec]
             artifact_name: bloodbash-linux-x64
             pyinstaller_name: bloodbash-linux-x64
-          - os: windows-latest
+          - os: [self-hosted, Windows, X64, squidsec]
             artifact_name: bloodbash-windows-x64.exe
             pyinstaller_name: bloodbash-windows-x64
 
@@ -118,7 +118,7 @@ jobs:
 
   release:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, squidsec]
     steps:
       - name: Checkout (for version metadata)
         uses: actions/checkout@v4
