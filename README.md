@@ -266,6 +266,14 @@ compromise-alice/
 ```bash
 bloodbash ./sharpout --shortest-paths
 bloodbash ./sharpout --shortest-paths --indirect --fast
+# Prefer multi-hop abuse chains (FCP / AdminTo / session / ACL) over pure MemberOf
+bloodbash ./sharpout --shortest-paths --path-mode abuse
+# Deep discoverability: deeper hops, alternate paths, stepping stones, path-break
+bloodbash ./sharpout --deep-paths
+bloodbash ./sharpout --path-mode deep --path-depth 16 --path-sources 400 --max-paths 20
+# One path to Domain Admins only (stdout = single plain-text path; exit 1 if none)
+bloodbash ./sharpout --golden-path
+bloodbash ./sharpout --golden-path --from-user alice --domain CORP.LOCAL
 bloodbash ./sharpout --busiest-paths short --busiest-paths-top 10
 bloodbash ./sharpout --busiest-paths all --busiest-paths-top 5
 bloodbash ./sharpout --path-break --path-break-top 20

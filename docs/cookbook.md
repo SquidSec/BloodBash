@@ -80,6 +80,13 @@ python3 BloodBash.py DIR --laps --sessions
 
 ```bash
 python3 BloodBash.py DIR --shortest-paths --fast
+# Multi-hop lateral (user→user→…→DA), not just short MemberOf
+python3 BloodBash.py DIR --path-mode abuse --shortest-paths
+python3 BloodBash.py DIR --deep-paths
+python3 BloodBash.py DIR --path-mode deep --path-depth 16 --max-paths 20
+# One path to Domain Admins only (plain text, no other output)
+python3 BloodBash.py DIR --golden-path
+python3 BloodBash.py DIR --golden-path --from-user alice
 python3 BloodBash.py DIR --busiest-paths short --path-break
 python3 BloodBash.py DIR --path-from helpdesk --path-to 'domain admins'
 ```
