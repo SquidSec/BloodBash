@@ -48,7 +48,8 @@ SEVERITY_SCORES = {
     "Broad Principal ACL": 9,
     "Owned Paths": 9, "Password in Description": 6,
     "Arbitrary Paths": 6, "Trust Abuse": 7, "Deep Group Nesting": 6,
-    "Busiest Paths": 7, "Path Break": 8, "Password Age": 5, "Stale Accounts": 4,
+    "Busiest Paths": 7, "Path Break": 8, "Stepping Stones": 8, "Deep Paths": 7,
+    "Password Age": 5, "Stale Accounts": 4,
     "Privilege Inventory": 6, "Owned Inventory": 7, "Compromise Dossier": 8,
     "Privileged Kerberoastable": 9, "Privileged AS-REP Roastable": 9,
     "Collection Health": 3,
@@ -4676,9 +4677,393 @@ def print_can_configure_rbcd(G, domain_filter=None):
             console.print("[green]No non-default principals can configure RBCD[/green]")
 
 
-def print_shortest_paths(G, fast=False, max_paths=10, target_filter=None, domain_filter=None, indirect=False):
-    console.rule("[bold magenta]Shortest Paths to High-Value Targets[/bold magenta]")
-    users = [n for n, d in G.nodes(data=True) if d['type'].lower() in ['user', 'azure user'] and _domain_matches(d, domain_filter)]
+# Edge costs for weighted pathfinding (lower = preferred). Pure MemberOf is
+# expensive so multi-hop abuse chains surface over nested-group "straight to DA".
+_PATH_EDGE_COSTS = {
+    "forcechangepassword": 1,
+    "genericall": 1,
+    "genericwrite": 1,
+    "writedacl": 1,
+    "writeowner": 1,
+    "owns": 1,
+    "addkeycredentiallink": 1,
+    "allowedtoact": 1,
+    "addallowedtoact": 1,
+    "writeaccountrestrictions": 1,
+    "allextendedrights": 1,
+    "getchanges": 1,
+    "getchangesall": 1,
+    "addmember": 2,
+    "addself": 2,
+    "adminto": 2,
+    "localadmin": 2,
+    "canrdp": 2,
+    "candra": 2,
+    "canpsremote": 2,
+    "executeDCOM": 2,
+    "executedcom": 2,
+    "hassession": 2,
+    "hasSIDHistory": 2,
+    "hassidhistory": 2,
+    "memberof": 10,
+    "member": 10,
+    "contains": 9,
+    "gplink": 6,
+}
+_PATH_ABUSE_EDGE_SET = frozenset(
+    k for k, c in _PATH_EDGE_COSTS.items() if c <= 3 and k not in ("memberof", "member", "contains")
+)
+
+
+def _norm_edge_label(label: Optional[str]) -> str:
+    return (label or "").strip().lower().replace(" ", "").replace("_", "")
+
+
+def edge_traversal_cost(label: Optional[str], mode: str = "short") -> float:
+    """Hop cost for Dijkstra; abuse/deep modes discount control edges."""
+    if (mode or "short").lower() == "short":
+        return 1.0
+    lab = _norm_edge_label(label)
+    if lab in _PATH_EDGE_COSTS:
+        return float(_PATH_EDGE_COSTS[lab])
+    # Unknown edges: mild cost (not free membership spam)
+    return 4.0
+
+
+def path_abuse_score(G, path) -> int:
+    """Higher = more high-signal abuse edges (control / session / admin)."""
+    score = 0
+    for i in range(len(path) - 1):
+        lab = _norm_edge_label(_edge_label(G, path[i], path[i + 1]))
+        cost = _PATH_EDGE_COSTS.get(lab, 4)
+        if cost <= 1:
+            score += 4
+        elif cost <= 2:
+            score += 3
+        elif cost <= 3:
+            score += 2
+        elif lab in ("memberof", "member", "contains"):
+            score += 0
+        else:
+            score += 1
+    return score
+
+
+def path_has_abuse_edge(G, path) -> bool:
+    for i in range(len(path) - 1):
+        lab = _norm_edge_label(_edge_label(G, path[i], path[i + 1]))
+        if lab in _PATH_ABUSE_EDGE_SET or _PATH_EDGE_COSTS.get(lab, 99) <= 2:
+            return True
+    return False
+
+
+def _dijkstra_path_weighted(G, source, target, mode: str = "abuse"):
+    """Shortest path under abuse edge costs (MultiDiGraph-safe)."""
+
+    def _weight(u, v, d):
+        # MultiDiGraph: d is attribute dict for one edge key
+        if isinstance(d, dict):
+            return edge_traversal_cost(d.get("label"), mode)
+        return edge_traversal_cost(None, mode)
+
+    return nx.shortest_path(G, source, target, weight=_weight)
+
+
+def _bounded_abuse_dfs_paths(
+    G,
+    source,
+    target,
+    *,
+    cutoff: int = 8,
+    max_paths: int = 8,
+    max_expansions: int = 4000,
+) -> List[list]:
+    """
+    Bounded DFS that expands abuse/control edges before pure MemberOf.
+
+    Avoids nx.all_simple_paths explosion on dense MemberOf graphs while still
+    finding multi-hop lateral chains (user→user→host→DA).
+    """
+    if source not in G or target not in G or source == target:
+        return []
+    results: List[list] = []
+    seen_paths = set()
+    expansions = [0]
+
+    def _edge_priority(u, v) -> int:
+        lab = _norm_edge_label(_edge_label(G, u, v))
+        cost = _PATH_EDGE_COSTS.get(lab, 4)
+        return cost  # lower first
+
+    def _dfs(node, path, visited):
+        if len(results) >= max_paths or expansions[0] >= max_expansions:
+            return
+        if len(path) - 1 > cutoff:
+            return
+        if node == target and len(path) > 1:
+            key = tuple(path)
+            if key not in seen_paths:
+                seen_paths.add(key)
+                results.append(list(path))
+            return
+        # Neighbors sorted: abuse edges first
+        nbrs = []
+        try:
+            for nbr in G.successors(node):
+                if nbr in visited:
+                    continue
+                nbrs.append((_edge_priority(node, nbr), nbr))
+        except (nx.NetworkXError, KeyError):
+            return
+        nbrs.sort(key=lambda x: x[0])
+        # Limit branching on pure membership fan-out
+        abuse_n = [n for c, n in nbrs if c <= 3]
+        member_n = [n for c, n in nbrs if c > 3]
+        ordered = abuse_n + member_n[:12]
+        for nbr in ordered:
+            if len(results) >= max_paths or expansions[0] >= max_expansions:
+                return
+            expansions[0] += 1
+            visited.add(nbr)
+            path.append(nbr)
+            _dfs(nbr, path, visited)
+            path.pop()
+            visited.remove(nbr)
+
+    _dfs(source, [source], {source})
+    return results
+
+
+def discover_paths_between(
+    G,
+    source,
+    target,
+    *,
+    mode: str = "short",
+    cutoff: int = 12,
+    max_paths: int = 5,
+    pool_cap: int = 40,
+) -> List[list]:
+    """
+    Discover hop-shortest and (optionally) abuse-weighted / alternate paths.
+
+    mode:
+      short — hop-shortest only (+ abuse-weighted if different)
+      abuse — hop + weighted + attack-first + bounded DFS
+      deep  — higher budgets for multi-hop lateral chains
+    """
+    mode = (mode or "short").lower()
+    if mode not in ("short", "abuse", "deep"):
+        mode = "short"
+    found: List[list] = []
+    seen = set()
+
+    def _add(path) -> None:
+        if not path or len(path) < 2:
+            return
+        if len(path) - 1 > cutoff:
+            return
+        key = tuple(path)
+        if key in seen:
+            return
+        seen.add(key)
+        found.append(list(path))
+
+    # 1) Hop-count shortest (classic)
+    try:
+        p = nx.shortest_path(G, source, target)
+        _add(p)
+    except (nx.NetworkXNoPath, nx.NodeNotFound, nx.NetworkXError):
+        pass
+
+    # 2) Abuse-weighted shortest
+    if mode in ("abuse", "deep", "short"):
+        try:
+            p = _dijkstra_path_weighted(G, source, target, mode="abuse")
+            _add(p)
+        except (nx.NetworkXNoPath, nx.NodeNotFound, nx.NetworkXError, ValueError, TypeError):
+            pass
+
+    # 2b) Attack-edge-first path (MemberOf only when landing on groups)
+    if mode in ("abuse", "deep"):
+        try:
+            H = nx.MultiDiGraph()
+            H.add_nodes_from(G.nodes(data=True))
+            for u, v, k, d in G.edges(keys=True, data=True):
+                lab = _norm_edge_label((d or {}).get("label"))
+                vtype = str((G.nodes.get(v) or {}).get("type") or "").lower()
+                if lab in ("memberof", "member") and vtype not in ("group", "azure group"):
+                    continue
+                if lab in ("contains",):
+                    continue
+                H.add_edge(u, v, key=k, **(d or {}))
+            p = _dijkstra_path_weighted(H, source, target, mode="abuse")
+            _add(p)
+        except (nx.NetworkXNoPath, nx.NodeNotFound, nx.NetworkXError, ValueError, TypeError):
+            pass
+
+    # 3) Bounded abuse-preferring DFS (NOT all_simple_paths — that explodes on MemberOf)
+    if mode in ("abuse", "deep") or (mode == "short" and len(found) < 2):
+        dfs_cut = min(cutoff, 10 if mode == "deep" else 8)
+        dfs_max = min(pool_cap, 12 if mode == "deep" else 6)
+        expansions = 8000 if mode == "deep" else 3000
+        for p in _bounded_abuse_dfs_paths(
+            G,
+            source,
+            target,
+            cutoff=dfs_cut,
+            max_paths=dfs_max,
+            max_expansions=expansions,
+        ):
+            _add(p)
+
+    def _rank(path):
+        abuse = path_abuse_score(G, path)
+        length = len(path) - 1
+        has_abuse = 1 if path_has_abuse_edge(G, path) else 0
+        if mode in ("deep", "abuse"):
+            return (-has_abuse, -abuse, length)
+        return (-has_abuse, length, -abuse)
+
+    found.sort(key=_rank)
+    return found[:max_paths]
+
+
+def collect_stepping_stones(
+    G,
+    paths: Sequence[dict],
+    *,
+    top: int = 15,
+) -> List[dict]:
+    """
+    Rank intermediate principals that bridge multi-hop paths to high-value.
+
+    These are the 'user → user → … → DA' choke points DEF CON feedback asked for.
+    """
+    counts: Counter = Counter()
+    targets_hit: Dict[Any, set] = defaultdict(set)
+    abuse_roles: Dict[Any, Counter] = defaultdict(Counter)
+    for p in paths:
+        path = p.get("path") or []
+        if len(path) < 3:
+            continue
+        tname = p.get("target") or ""
+        for j in range(1, len(path) - 1):
+            nid = path[j]
+            counts[nid] += 1
+            if tname:
+                targets_hit[nid].add(tname)
+            lab_in = _norm_edge_label(_edge_label(G, path[j - 1], path[j]))
+            if lab_in:
+                abuse_roles[nid][lab_in] += 1
+            lab_out = _norm_edge_label(_edge_label(G, path[j], path[j + 1]))
+            if lab_out:
+                abuse_roles[nid][f"out:{lab_out}"] += 1
+
+    ranked = []
+    for nid, cnt in counts.most_common():
+        d = G.nodes.get(nid) or {}
+        name = d.get("name") or str(nid)
+        if _is_default_high_priv_name(name) or _is_classic_high_value_name(name):
+            # Skip pure DA/EA group objects as "stones"
+            if str(d.get("type") or "").lower() in ("group",):
+                continue
+        roles = abuse_roles.get(nid) or Counter()
+        top_roles = [r for r, _ in roles.most_common(4) if not r.startswith("out:")]
+        top_out = [r[4:] for r, _ in roles.most_common(6) if r.startswith("out:")][:3]
+        ranked.append({
+            "id": nid,
+            "name": name,
+            "type": d.get("type") or "?",
+            "path_count": cnt,
+            "targets": sorted(targets_hit.get(nid) or []),
+            "inbound_edges": top_roles,
+            "outbound_edges": top_out,
+            "depth_hint": "multi-hop bridge",
+        })
+        if len(ranked) >= top:
+            break
+    return ranked
+
+
+def print_stepping_stones(stones: Sequence[dict], *, top: int = 15) -> None:
+    if not stones:
+        return
+    console.rule("[bold magenta]Stepping stones (multi-hop bridges)[/bold magenta]")
+    console.print(
+        "[dim]Intermediates on paths to high-value — force-change, local admin, "
+        "sessions, ACLs that enable user→user→…→DA chains.[/dim]"
+    )
+    table = Table(
+        title=f"Top {min(top, len(stones))} stepping stones",
+        show_header=True,
+        header_style="bold red",
+    )
+    table.add_column("#", justify="right", style="dim")
+    table.add_column("Principal", style="cyan")
+    table.add_column("Type")
+    table.add_column("On paths", justify="right", style="red")
+    table.add_column("Inbound", style="yellow")
+    table.add_column("Outbound", style="green")
+    table.add_column("HV targets", style="magenta")
+    for i, row in enumerate(list(stones)[:top], 1):
+        table.add_row(
+            str(i),
+            str(row.get("name") or ""),
+            str(row.get("type") or ""),
+            str(row.get("path_count") or 0),
+            ", ".join(row.get("inbound_edges") or [])[:40] or "—",
+            ", ".join(row.get("outbound_edges") or [])[:40] or "—",
+            ", ".join((row.get("targets") or [])[:2])[:50],
+        )
+    console.print(table)
+    top1 = stones[0]
+    add_finding(
+        "Stepping Stones",
+        f"{top1.get('name')} bridges {top1.get('path_count')} path(s) toward high-value",
+        score=8,
+    )
+
+
+def print_shortest_paths(
+    G,
+    fast=False,
+    max_paths=10,
+    target_filter=None,
+    domain_filter=None,
+    indirect=False,
+    path_mode: str = "short",
+    path_depth: Optional[int] = None,
+    path_sources: Optional[int] = None,
+    show_stepping_stones: bool = True,
+):
+    """
+    Paths from non-admin users to high-value targets.
+
+    path_mode:
+      short — hop-shortest (default); still surfaces abuse-weighted variants
+      abuse — prefer control/session chains over pure MemberOf
+      deep  — deeper hop budget + more alternate multi-hop paths
+    """
+    mode = (path_mode or "short").lower()
+    if mode not in ("short", "abuse", "deep"):
+        mode = "short"
+    title = {
+        "short": "Paths to High-Value Targets",
+        "abuse": "Abuse-weighted Paths to High-Value Targets",
+        "deep": "Deep multi-hop Paths to High-Value Targets",
+    }.get(mode, "Paths to High-Value Targets")
+    console.rule(f"[bold magenta]{title}[/bold magenta]")
+    if mode != "short":
+        console.print(
+            f"[dim]Path mode=[/dim][cyan]{mode}[/cyan][dim] — "
+            "prefer lateral abuse edges (FCP/AdminTo/session/ACL) over nested MemberOf[/dim]"
+        )
+
+    users = [
+        n for n, d in G.nodes(data=True)
+        if d['type'].lower() in ['user', 'azure user'] and _domain_matches(d, domain_filter)
+    ]
     targets = get_high_value_targets(G, domain_filter)
     if target_filter:
         targets = [t for t in targets if target_filter.lower() in t[1].lower()]
@@ -4688,9 +5073,7 @@ def print_shortest_paths(G, fast=False, max_paths=10, target_filter=None, domain
     if not users:
         console.print("[yellow]No user objects found for path calculation[/yellow]")
         return
-    # Prefer non-admin footholds as path sources (paths *from* Domain Admins group
-    # objects are noise). Nested DA *members* must still appear as sources —
-    # that is the attack path.
+
     def _is_noisy_source(oid: str) -> bool:
         name = (G.nodes[oid].get("name") or "")
         return _is_default_high_priv_name(name)
@@ -4698,60 +5081,72 @@ def print_shortest_paths(G, fast=False, max_paths=10, target_filter=None, domain
     interesting_users = [u for u in users if not _is_noisy_source(u)]
     if not interesting_users:
         interesting_users = users
-    # Prioritize classic DA/EA/Administrators/krbtgt-style targets; in --fast only use these few
+
     priority_kw = (
         'domain admins', 'enterprise admins', 'schema admins', 'administrators', 'krbtgt',
         'global admin', 'privileged role admin',
     )
     prioritized = [t for t in targets if any(k in t[1].lower() for k in priority_kw)]
+
+    # Budgets: deep/abuse get more room; fast still caps for enterprise graphs
+    if path_depth is None:
+        if mode == "deep":
+            cutoff = 8 if fast else 16
+        elif mode == "abuse":
+            cutoff = 8 if fast else 14
+        else:
+            cutoff = 8 if fast else 12
+    else:
+        cutoff = max(2, int(path_depth))
+        # --fast still caps expensive deep searches even if user set path-depth high
+        if fast:
+            cutoff = min(cutoff, 10 if mode == "deep" else 8)
+
+    if path_sources is None:
+        if mode == "deep":
+            src_cap = 100 if fast else 400
+        elif mode == "abuse":
+            src_cap = 80 if fast else 300
+        else:
+            src_cap = 80 if fast else 250
+    else:
+        src_cap = max(10, int(path_sources))
+
     if fast:
         targets_run = (prioritized or targets)[:3]
-        max_paths = min(max_paths, 3)
+        max_paths = min(max_paths, 5 if mode == "deep" else 3)
         console.print(
             f"[yellow]Fast mode: limited pathfinding "
-            f"({len(targets_run)} high-value targets, max {max_paths} paths each)[/yellow]"
+            f"({len(targets_run)} high-value targets, max {max_paths} paths each, "
+            f"depth≤{cutoff})[/yellow]"
         )
     else:
-        # Prefer priority HV; fill remaining slots
         targets_run = list(prioritized)
-        seen = {t[0] for t in targets_run}
+        seen_t = {t[0] for t in targets_run}
+        t_limit = 10 if mode == "deep" else (8 if mode == "abuse" else 8)
         for t in targets:
-            if t[0] not in seen:
+            if t[0] not in seen_t:
                 targets_run.append(t)
-                seen.add(t[0])
-            if len(targets_run) >= 8:
+                seen_t.add(t[0])
+            if len(targets_run) >= t_limit:
                 break
-    abuse_labels = {
-        'genericall', 'genericwrite', 'writedacl', 'writeowner', 'owns',
-        'forcechangepassword', 'addmember', 'allowedtoact',
-        'adminto', 'localadmin', 'addkeycredentiallink', 'getchanges',
-        'getchangesall', 'allextendedrights',
-    }
 
-    def _path_abuse_score(path) -> int:
-        """Higher = more abuse edges (prefer interesting paths over pure MemberOf chains)."""
-        score = 0
-        for i in range(len(path) - 1):
-            lab = (_edge_label(G, path[i], path[i + 1]) or "").lower()
-            if lab in abuse_labels or lab.replace(" ", "") in abuse_labels:
-                score += 3
-            elif lab in ('memberof', 'member', 'contains'):
-                score += 0
-            elif lab in ('hassession',):
-                score += 2
-            else:
-                score += 1
-        return score
+    console.print(
+        f"[dim]Searching up to {src_cap} sources · hop depth ≤ {cutoff} · "
+        f"mode={mode} · max {max_paths} path(s)/target[/dim]"
+    )
+
+    all_path_records: List[dict] = []
+    total_shown = 0
 
     for tid, tname, ttype in targets_run:
         console.print(f"\n[bold]Target:[/bold] [bold cyan]{tname}[/bold cyan] ({ttype})")
-        count = 0
-        # Prefer reverse shortest paths from target (cheaper than has_path × all users)
         try:
-            lengths = nx.single_source_shortest_path_length(G.reverse(copy=False), tid, cutoff=12)
+            lengths = nx.single_source_shortest_path_length(
+                G.reverse(copy=False), tid, cutoff=cutoff
+            )
         except Exception:
             lengths = {}
-        # Candidate sources: non-admin users that reach target
         candidates = []
         for source in interesting_users:
             if source == tid:
@@ -4759,26 +5154,87 @@ def print_shortest_paths(G, fast=False, max_paths=10, target_filter=None, domain
             if source in lengths:
                 candidates.append((lengths[source], source))
         candidates.sort(key=lambda x: x[0])
+
+        # Prefer sources that are "farther" in hop count slightly for deep mode
+        # so we do not only sample length-1 MemberOf noise — still walk near first.
+        pool = candidates[:src_cap]
+        if mode == "deep" and len(candidates) > src_cap:
+            # Mix nearest + mid-distance footholds for lateral chains
+            near = candidates[: src_cap // 2]
+            mid = candidates[src_cap // 2 : src_cap * 2]
+            step = max(1, len(mid) // max(1, src_cap // 2))
+            far_sample = mid[::step][: src_cap // 2]
+            seen_s = set()
+            pool = []
+            for item in near + far_sample:
+                if item[1] not in seen_s:
+                    seen_s.add(item[1])
+                    pool.append(item)
+            pool = pool[:src_cap]
+
         scored_paths = []
-        for _, source in candidates[:200]:  # bound work
-            try:
-                path = nx.shortest_path(G, source, tid)
-                scored_paths.append((-_path_abuse_score(path), len(path), path))
-            except (nx.NetworkXNoPath, nx.NodeNotFound):
-                continue
+        per_source_alts = 3 if mode == "deep" else (2 if mode == "abuse" else 1)
+        # Cap work: deep mode still evaluates many sources × DFS
+        for _, source in pool:
+            paths = discover_paths_between(
+                G,
+                source,
+                tid,
+                mode=mode,
+                cutoff=min(cutoff, 12 if mode == "deep" else cutoff),
+                max_paths=per_source_alts,
+                pool_cap=16 if mode == "deep" else 8,
+            )
+            for path in paths:
+                scored_paths.append(
+                    (
+                        -path_abuse_score(G, path),
+                        0 if path_has_abuse_edge(G, path) else 1,
+                        len(path),
+                        path,
+                        source,
+                    )
+                )
         scored_paths.sort()
-        for _, __, path in scored_paths:
+        # Deduplicate by node sequence
+        shown_keys = set()
+        count = 0
+        for _neg_ab, _ha, _ln, path, source in scored_paths:
+            key = tuple(path)
+            if key in shown_keys:
+                continue
+            shown_keys.add(key)
             path_length = len(path) - 1
+            abuse = path_abuse_score(G, path)
+            tag = ""
+            if path_has_abuse_edge(G, path):
+                tag = " [abuse]"
+            elif path_length >= 4:
+                tag = " [deep]"
             formatted_path = format_path(G, path)
-            console.print(f"  [dim]→[/dim] (Length: {path_length}) {formatted_path}")
+            console.print(
+                f"  [dim]→[/dim] (hops: {path_length}, interest: {abuse}){tag} {formatted_path}"
+            )
+            all_path_records.append({
+                "source_id": source,
+                "source": G.nodes[source].get("name", source),
+                "target_id": tid,
+                "target": tname,
+                "target_type": ttype,
+                "length": path_length,
+                "path": path,
+                "abuse_score": abuse,
+            })
             count += 1
+            total_shown += 1
             if count >= max_paths:
                 break
+
         if indirect and not fast:
-            console.print(f"  [dim]Indirect paths (via groups):[/dim]")
+            console.print(f"  [dim]Indirect paths (via groups, cutoff 5):[/dim]")
             indirect_count = 0
-            for source in users:
-                paths = get_indirect_paths(G, source, tid)
+            for source in users[: min(len(users), 100)]:
+                paths = get_indirect_paths(G, source, tid, max_depth=min(5, cutoff))
                 for path in paths:
                     formatted_path = format_path(G, path)
                     console.print(f"    [dim]→[/dim] {formatted_path}")
@@ -4790,7 +5246,19 @@ def print_shortest_paths(G, fast=False, max_paths=10, target_filter=None, domain
         if count == 0:
             console.print("    [dim]No paths found within limit[/dim]")
         else:
-            add_finding("Shortest Paths", f"{count} path(s) to {tname}", score=6)
+            cat = "Deep Paths" if mode == "deep" else "Shortest Paths"
+            add_finding(cat, f"{count} path(s) to {tname} (mode={mode})", score=7 if mode != "short" else 6)
+
+    if show_stepping_stones and all_path_records:
+        stones = collect_stepping_stones(G, all_path_records, top=15)
+        if stones:
+            print_stepping_stones(stones, top=12 if not fast else 6)
+        elif mode in ("abuse", "deep"):
+            console.print(
+                "[dim]No multi-hop stepping stones (paths may be direct MemberOf only — "
+                "collection may lack sessions/ACLs/AdminTo).[/dim]"
+            )
+    return all_path_records
 
 def print_dangerous_permissions(G, domain_filter=None, indirect=False, fast=False):
     sec = DeferredSection("Dangerous Permissions on High-Value Objects")
@@ -5704,6 +6172,589 @@ def print_paths_to_owned(G, owned_str, domain_filter=None):
                 continue
         add_finding("Owned Paths", f"Paths to owned {tname}", score=9)
 
+def format_path_plain(G, path) -> str:
+    """Plain-text path string (no Rich markup) for --golden-path."""
+    if not path:
+        return ""
+    parts: List[str] = []
+    for i in range(len(path) - 1):
+        u, v = path[i], path[i + 1]
+        uname = (G.nodes.get(u) or {}).get("name") or str(u)
+        lab = _edge_label(G, u, v)
+        parts.append(f"{uname} --[{lab}]-->")
+    last = path[-1]
+    lname = (G.nodes.get(last) or {}).get("name") or str(last)
+    parts.append(str(lname))
+    return " ".join(parts)
+
+
+def resolve_domain_admin_targets(G, domain_filter=None) -> List[Tuple[Any, str, str]]:
+    """Locate Domain Admins group node(s) (exact-ish name match)."""
+    hits: List[Tuple[Any, str, str, int]] = []
+    for oid, d in G.nodes(data=True):
+        if not _domain_matches(d, domain_filter):
+            continue
+        name = d.get("name") or ""
+        nl = name.lower()
+        typ = str(d.get("type") or "").lower()
+        if "domain admins" not in nl:
+            continue
+        # Prefer group objects named Domain Admins
+        rank = 0
+        if typ in ("group", "azure group"):
+            rank -= 10
+        if nl.startswith("domain admins@") or nl == "domain admins":
+            rank -= 5
+        if "enterprise" in nl:
+            rank += 20  # not Domain Admins
+            continue
+        hits.append((oid, name, typ or "Group", rank))
+    hits.sort(key=lambda x: (x[3], x[1].lower()))
+    return [(oid, name, typ) for oid, name, typ, _ in hits]
+
+
+def _resolve_named_sources(G, names_csv: Optional[str], domain_filter=None) -> List[Any]:
+    if not names_csv:
+        return []
+    out = []
+    for raw in str(names_csv).split(","):
+        ident = raw.strip()
+        if not ident:
+            continue
+        oid = resolve_principal_oid(G, ident, domain_filter=domain_filter)
+        if oid is not None:
+            out.append(oid)
+    return out
+
+
+def find_golden_path(
+    G,
+    domain_filter=None,
+    *,
+    from_principals: Optional[str] = None,
+    path_depth: int = 16,
+    prefer_abuse: bool = True,
+) -> Optional[dict]:
+    """
+    Find a single best path to Domain Admins.
+
+    Preference order:
+      1. Optional --from-user / --path-from style sources if provided
+      2. Abuse-heavy multi-hop chains over pure MemberOf
+      3. Non-admin footholds over nested DA members as the start
+    """
+    targets = resolve_domain_admin_targets(G, domain_filter)
+    if not targets:
+        return None
+
+    forced_sources = _resolve_named_sources(G, from_principals, domain_filter)
+    cutoff = max(2, int(path_depth or 16))
+    best: Optional[Tuple] = None  # (rank_tuple, path, tid, tname, source)
+
+    def _is_noisy_start(oid: str) -> bool:
+        name = (G.nodes.get(oid) or {}).get("name") or ""
+        return _is_default_high_priv_name(name) or _is_classic_high_value_name(name)
+
+    for tid, tname, ttype in targets:
+        try:
+            lengths = nx.single_source_shortest_path_length(
+                G.reverse(copy=False), tid, cutoff=cutoff
+            )
+        except Exception:
+            lengths = {}
+        if not lengths:
+            continue
+
+        if forced_sources:
+            candidates = [s for s in forced_sources if s in lengths and s != tid]
+        else:
+            # Users (prefer) that can reach DA within cutoff
+            candidates = []
+            for s, dist in lengths.items():
+                if s == tid:
+                    continue
+                st = str((G.nodes.get(s) or {}).get("type") or "").lower()
+                if st not in ("user", "azure user"):
+                    continue
+                if _is_noisy_start(s):
+                    continue
+                candidates.append(s)
+            # Nearest non-admin users first (cheap hop-shortest often enough)
+            candidates.sort(key=lambda s: (lengths.get(s, 999), s))
+            # Keep golden-path snappy: evaluate a bounded set of footholds
+            candidates = candidates[:80]
+
+        mode = "abuse" if prefer_abuse else "short"
+        for source in candidates:
+            # Fast path first (hop-shortest), then abuse discoverer only if useful
+            paths = []
+            try:
+                paths.append(nx.shortest_path(G, source, tid))
+            except (nx.NetworkXNoPath, nx.NodeNotFound):
+                continue
+            if prefer_abuse:
+                try:
+                    for p in discover_paths_between(
+                        G,
+                        source,
+                        tid,
+                        mode=mode,
+                        cutoff=min(cutoff, 10),
+                        max_paths=2,
+                        pool_cap=6,
+                    ):
+                        if p not in paths:
+                            paths.append(p)
+                except Exception:
+                    pass
+            for path in paths:
+                if not path or path[-1] != tid:
+                    continue
+                abuse = path_abuse_score(G, path)
+                has_ab = 1 if path_has_abuse_edge(G, path) else 0
+                length = len(path) - 1
+                noisy = 1 if _is_noisy_start(source) else 0
+                # Best = abuse content, not noisy start, shorter among equals
+                rank = (-has_ab, -abuse, noisy, length)
+                if best is None or rank < best[0]:
+                    best = (rank, path, tid, tname, source)
+            # Early exit: already found an abuse multi-hop chain
+            if best and best[0][0] == -1 and best[0][1] <= -4 and best[0][3] >= 2:
+                break
+
+    if not best:
+        return None
+    _rank, path, tid, tname, source = best
+    return {
+        "path": path,
+        "target_id": tid,
+        "target": tname,
+        "source_id": source,
+        "source": (G.nodes.get(source) or {}).get("name") or str(source),
+        "length": len(path) - 1,
+        "path_plain": format_path_plain(G, path),
+        "abuse_score": path_abuse_score(G, path),
+    }
+
+
+def _format_path_jackpot(G, path) -> str:
+    """
+    Rich multi-line golden path.
+
+    Foreground colors only — no reverse/highlight backgrounds. Windows Terminal
+    themes often make ``black on white`` chips unreadable (light-on-light).
+    """
+    if not path:
+        return ""
+    lines = []
+    for i, node in enumerate(path):
+        name = (G.nodes.get(node) or {}).get("name") or str(node)
+        ntype = str((G.nodes.get(node) or {}).get("type") or "")
+        # Fixed-width bracket labels (no bg), then bright name
+        if i == 0:
+            tag = "[bold bright_yellow][FOOTHOLD][/]"
+        elif i == len(path) - 1:
+            tag = "[bold bright_yellow][JACKPOT ][/]"
+        else:
+            tag = "[bold bright_cyan][  hop   ][/]"
+        lines.append(
+            f"  {tag}  [bold bright_white]{name}[/] "
+            f"[bright_cyan]({ntype})[/]"
+        )
+        if i < len(path) - 1:
+            lab = _edge_label(G, path[i], path[i + 1])
+            lines.append(f"             [bright_yellow]|[/]")
+            lines.append(
+                f"             [bright_yellow]v[/]  [bold bright_white]{lab}[/]"
+            )
+            lines.append(f"             [bright_yellow]|[/]")
+    return "\n".join(lines)
+
+
+def _golden_path_should_animate(force: Optional[bool] = None) -> bool:
+    """Animate only on interactive TTY unless forced off/on."""
+    if force is False:
+        return False
+    if force is True:
+        return True
+    if os.environ.get("BLOODBASH_NO_ANIMATE", "").strip().lower() in (
+        "1", "true", "yes", "on",
+    ):
+        return False
+    if os.environ.get("CI", "").strip():
+        return False
+    try:
+        return bool(sys.stdout.isatty() and console.is_terminal)
+    except Exception:
+        return False
+
+
+def _slot_reel_names(G, path, pool_size: int = 24) -> List[str]:
+    """Names that flash on the reels (includes real path endpoints)."""
+    names = []
+    for n, d in G.nodes(data=True):
+        nm = d.get("name")
+        if not nm:
+            continue
+        t = str(d.get("type") or "").lower()
+        if t in ("user", "group", "computer", "azure user", "azure group"):
+            names.append(str(nm))
+        if len(names) >= 80:
+            break
+    for n in path:
+        nm = (G.nodes.get(n) or {}).get("name")
+        if nm:
+            names.append(str(nm))
+    # Vegas filler symbols
+    names.extend(
+        [
+            "777",
+            "BAR",
+            "CHERRY",
+            "SEVEN",
+            "$$ DOMAIN $$",
+            "KRBTGT?",
+            "HELP DESK",
+            "svc_sql",
+            "DA?",
+        ]
+    )
+    # de-dupe preserve order
+    seen = set()
+    out = []
+    for x in names:
+        if x.upper() in seen:
+            continue
+        seen.add(x.upper())
+        out.append(x)
+    if not out:
+        out = ["777", "BAR", "CHERRY"]
+    return out
+
+
+def _slot_fit_name(text: str, width: int = 18) -> str:
+    """Truncate a reel label (no pad — Rich Table centers the cell)."""
+    t = (text or "?").replace("\n", " ").strip()
+    if len(t) > width:
+        # ASCII ellipsis for Windows console safety
+        t = t[: max(1, width - 3)] + "..."
+    return t
+
+
+def _render_slot_machine(
+    reel_values: Sequence[str],
+    *,
+    locked: Sequence[bool],
+    status: str,
+    spin_frame: int = 0,
+) -> Panel:
+    """
+    Three-reel Vegas machine frame.
+
+    Uses Rich Table for column alignment (hand-drawn boxes + markup widths break
+    on Windows terminals and long UPNs).
+    """
+    from rich import box as rich_box
+    from rich.table import Table as RichTable
+    from rich.text import Text
+    from rich.align import Align
+    from rich.console import Group
+
+    reel_w = 18
+
+    def _reel_text(text: str, locked_flag: bool) -> Text:
+        """
+        Reel labels: foreground-only styles (no bg highlights).
+
+        Reverse-video chips are often unreadable in Windows Terminal themes.
+        """
+        label = _slot_fit_name(text, reel_w)
+        if locked_flag:
+            # Locked = bright green text + * marker (no background)
+            mark = "* " + _slot_fit_name(text, reel_w - 2)
+            style = "bold bright_green"
+            body = mark
+        else:
+            # Spinning = bright white (blinks via alternate yellow frame)
+            style = "bold bright_yellow" if (spin_frame % 2) else "bold bright_white"
+            body = label
+        return Text(body, style=style, justify="center")
+
+    vals = [
+        reel_values[0] if len(reel_values) > 0 else "?",
+        reel_values[1] if len(reel_values) > 1 else "?",
+        reel_values[2] if len(reel_values) > 2 else "?",
+    ]
+    locks = [
+        bool(locked[0]) if locked else False,
+        bool(locked[1]) if len(locked) > 1 else False,
+        bool(locked[2]) if len(locked) > 2 else False,
+    ]
+
+    header = Text.assemble(
+        ("BLOODBASH CASINO", "bold bright_yellow"),
+        (" · ", "bright_white"),
+        ("DOMAIN ADMIN SLOTS", "bold bright_white"),
+    )
+
+    n_lights = 6 + (spin_frame % 4)
+    lights = Text("* " * n_lights, style="bold bright_yellow")
+
+    reels = RichTable(
+        show_header=True,
+        show_edge=True,
+        show_lines=True,
+        box=rich_box.HEAVY,
+        padding=(0, 1),
+        expand=False,
+        border_style="bright_yellow",
+        header_style="bold bright_yellow",
+    )
+    reels.add_column("REEL 1", justify="center", min_width=reel_w, no_wrap=True)
+    reels.add_column("REEL 2", justify="center", min_width=reel_w, no_wrap=True)
+    reels.add_column("REEL 3", justify="center", min_width=reel_w, no_wrap=True)
+    reels.add_row(
+        _reel_text(vals[0], locks[0]),
+        _reel_text(vals[1], locks[1]),
+        _reel_text(vals[2], locks[2]),
+    )
+
+    def _lock_label(i: int) -> Text:
+        if locks[i]:
+            return Text("LOCKED", style="bold bright_green", justify="center")
+        return Text("SPIN..", style="bold bright_yellow", justify="center")
+
+    reels.add_row(_lock_label(0), _lock_label(1), _lock_label(2))
+
+    st = (status or "")[:56]
+    status_line = Text(st, style="bold bright_white")
+    payline = Text(
+        "PAYLINE -> Domain Admins   |  LEVER  |  7 . 7 . 7",
+        style="bold bright_cyan",
+    )
+
+    body = Group(
+        Align.center(header),
+        Text(""),
+        Align.center(lights),
+        Text(""),
+        Align.center(reels),
+        Text(""),
+        Align.center(status_line),
+        Align.center(payline),
+    )
+    return Panel(
+        body,
+        border_style="bright_yellow",
+        title="[bold bright_yellow]SPIN TO WIN[/bold bright_yellow]",
+        subtitle="[bright_white]BloodBash golden path[/]",
+        padding=(1, 2),
+    )
+
+
+def _animate_golden_slot_machine(G, path, *, tick: float = 0.045) -> None:
+    """
+    Vegas-style reel spin that lands on the golden path endpoints.
+
+    Uses Rich Live when available; no-ops safely if Live fails.
+    """
+    import random
+    try:
+        from rich.live import Live
+    except ImportError:
+        return
+
+    pool = _slot_reel_names(G, path)
+    start_name = (G.nodes.get(path[0]) or {}).get("name") or str(path[0])
+    end_name = (G.nodes.get(path[-1]) or {}).get("name") or str(path[-1])
+    # Middle reel: a mid-path hop or random "BAR"
+    mid_name = "BAR"
+    if len(path) >= 3:
+        mid = path[len(path) // 2]
+        mid_name = (G.nodes.get(mid) or {}).get("name") or mid_name
+    targets = [str(start_name), str(mid_name), str(end_name)]
+
+    locked = [False, False, False]
+    reels = [random.choice(pool), random.choice(pool), random.choice(pool)]
+    status = "Pulling the lever..."
+
+    def _frame(frame_i: int) -> Panel:
+        return _render_slot_machine(reels, locked=locked, status=status, spin_frame=frame_i)
+
+    try:
+        with Live(_frame(0), console=console, refresh_per_second=24, transient=True) as live:
+            # Phase 1: all reels spinning fast
+            for i in range(28):
+                for r in range(3):
+                    if not locked[r]:
+                        reels[r] = random.choice(pool)
+                status = random.choice(
+                    [
+                        "Reels spinning...",
+                        "Come on Domain Admins...",
+                        "No cherry — go big...",
+                        "Feeling lucky?",
+                        "Almost...",
+                    ]
+                )
+                live.update(_frame(i))
+                time.sleep(tick)
+
+            # Phase 2: lock reels left → right (slow down)
+            for reel_i in range(3):
+                for i in range(10 + reel_i * 4):
+                    for r in range(3):
+                        if not locked[r]:
+                            # bias toward final symbol near the end
+                            if i > 6 and random.random() < 0.35:
+                                reels[r] = targets[r]
+                            else:
+                                reels[r] = random.choice(pool)
+                    status = f"Locking reel {reel_i + 1}/3..."
+                    live.update(_frame(20 + reel_i * 10 + i))
+                    time.sleep(tick * (1.2 + reel_i * 0.35 + i * 0.02))
+                reels[reel_i] = targets[reel_i]
+                locked[reel_i] = True
+                status = (
+                    "FOOTHOLD locked!"
+                    if reel_i == 0
+                    else ("MID-CHAIN locked!" if reel_i == 1 else "DOMAIN ADMINS!!!")
+                )
+                live.update(_frame(100 + reel_i))
+                time.sleep(0.28)
+
+            # Phase 3: jackpot flash
+            for i in range(8):
+                status = "★ ★ ★  JACKPOT  ★ ★ ★" if i % 2 == 0 else "$$$ DOMAIN ADMINS $$$"
+                live.update(_frame(200 + i))
+                time.sleep(0.12)
+    except Exception:
+        # Animation is cosmetic — never break golden-path on Live/TTY quirks
+        return
+
+    # Brief pause so the final locked reels register before the path reveal
+    time.sleep(0.35)
+
+
+def _print_golden_path_jackpot_reveal(
+    G,
+    result: dict,
+    *,
+    animate: bool = True,
+) -> None:
+    """Shared jackpot UI (optional slot animation first)."""
+    path = result["path"]
+    hops = result["length"]
+    abuse = result.get("abuse_score") or 0
+    source = result.get("source") or "?"
+    target = result.get("target") or "Domain Admins"
+    plain = result.get("path_plain") or format_path_plain(G, path)
+
+    if animate and _golden_path_should_animate():
+        console.print()
+        console.print(
+            "[bold bright_yellow]🎰[/] [bright_white]Inserting SharpHound coin… "
+            "pulling lever for Domain Admins…[/]"
+        )
+        console.print()
+        _animate_golden_slot_machine(G, path)
+        console.print()
+
+    jackpot_body = _format_path_jackpot(G, path)
+    confetti = "🎰  " * 8
+    banner = f"""
+[bold bright_yellow]{confetti}[/bold bright_yellow]
+[bold bright_yellow]     ██████╗  ██████╗ ██╗     ██████╗ ███████╗███╗   ██╗[/bold bright_yellow]
+[bold bright_yellow]    ██╔════╝ ██╔═══██╗██║     ██╔══██╗██╔════╝████╗  ██║[/bold bright_yellow]
+[bold bright_yellow]    ██║  ███╗██║   ██║██║     ██║  ██║█████╗  ██╔██╗ ██║[/bold bright_yellow]
+[bold bright_yellow]    ██║   ██║██║   ██║██║     ██║  ██║██╔══╝  ██║╚██╗██║[/bold bright_yellow]
+[bold bright_yellow]    ╚██████╔╝╚██████╔╝███████╗██████╔╝███████╗██║ ╚████║[/bold bright_yellow]
+[bold bright_yellow]     ╚═════╝  ╚═════╝ ╚══════╝╚═════╝ ╚══════╝╚═╝  ╚═══╝[/bold bright_yellow]
+[bold bright_yellow]{confetti}[/bold bright_yellow]
+
+[bold bright_yellow]***  JACKPOT - PATH TO DOMAIN ADMINS  ***[/bold bright_yellow]
+
+[bold bright_green]$$$ YOU HIT THE DOMAIN ADMINS $$$[/bold bright_green]
+[bright_white]BloodBash golden path · {__org__} · authorized testing only[/bright_white]
+"""
+    console.print()
+    console.print(Panel(banner.strip(), border_style="bright_yellow", padding=(0, 1)))
+    console.print()
+    console.print(
+        Panel(
+            jackpot_body,
+            title="[bold bright_yellow]GOLDEN PATH[/bold bright_yellow]",
+            subtitle=(
+                f"[bright_white]{hops} hop(s) · interest {abuse} · "
+                f"[bright_cyan]{source}[/] [bright_white]->[/] "
+                f"[bold bright_yellow]{target}[/]"
+            ),
+            border_style="bright_yellow",
+            padding=(1, 2),
+        )
+    )
+    console.print()
+    console.print(
+        Panel(
+            f"[bold bright_white]{plain}[/bold bright_white]",
+            title="[bold bright_yellow]copy-paste[/bold bright_yellow]",
+            border_style="bright_yellow",
+            padding=(0, 1),
+        )
+    )
+    console.print()
+    console.print(
+        f"[bold bright_yellow]*[/] [bold bright_green]WINNER[/bold bright_green] "
+        f"[bold bright_yellow]*[/]  "
+        f"[bright_white]Domain compromise path unlocked · cash out responsibly[/bright_white]"
+    )
+    console.print()
+
+
+def run_golden_path(
+    G,
+    domain_filter=None,
+    *,
+    from_principals: Optional[str] = None,
+    path_depth: int = 16,
+    animate: Optional[bool] = None,
+) -> int:
+    """
+    Print a jackpot-style Domain Admins path (and nothing else from the analyzer).
+    Return process exit code.
+
+    On an interactive TTY, plays a short Vegas slot-machine animation first
+    (disable with --no-animate or BLOODBASH_NO_ANIMATE=1).
+    """
+    result = find_golden_path(
+        G,
+        domain_filter=domain_filter,
+        from_principals=from_principals,
+        path_depth=path_depth,
+        prefer_abuse=True,
+    )
+    if not result:
+        console.print()
+        console.print(
+            Panel(
+                "[bold bright_red]NO PATH TO DOMAIN ADMINS[/bold bright_red]\n\n"
+                "[bright_white]The reels came up empty — no attack path to Domain Admins "
+                "in this collection (within hop budget).[/bright_white]\n"
+                "[bright_cyan]Try a seed: --from-user / --path-from, or check collection coverage.[/bright_cyan]",
+                title="[bold bright_red]HOUSE WINS[/bold bright_red]",
+                border_style="bright_red",
+                padding=(1, 2),
+            )
+        )
+        console.print()
+        return 1
+
+    do_anim = _golden_path_should_animate(animate)
+    _print_golden_path_jackpot_reveal(G, result, animate=do_anim)
+    return 0
+
+
+
 def print_arbitrary_paths(G, path_from=None, path_to=None, domain_filter=None, max_paths=10):
     if not path_from or not path_to:
         return
@@ -6377,6 +7428,9 @@ def cli_has_explicit_analysis_intent(args) -> bool:
     return any(
         [
             getattr(args, "shortest_paths", False),
+            getattr(args, "deep_paths", False),
+            getattr(args, "golden_path", False),
+            getattr(args, "path_mode", None),
             getattr(args, "dangerous_permissions", False),
             getattr(args, "adcs", False),
             getattr(args, "gpo_abuse", False),
@@ -6693,8 +7747,13 @@ def collect_paths_to_high_value(
     max_sources: int = 200,
     cutoff: int = 10,
     now: Optional[float] = None,
+    path_mode: Optional[str] = None,
 ) -> List[dict]:
-    """Collect attack paths from users to priority high-value targets."""
+    """Collect attack paths from users to priority high-value targets.
+
+    ``mode`` is the legacy busiest-path mode: short|all.
+    ``path_mode`` (short|abuse|deep) controls alternate/weighted discovery when set.
+    """
     del now  # reserved for future time-aware scoring
     users = [
         n for n, d in G.nodes(data=True)
@@ -6703,6 +7762,10 @@ def collect_paths_to_high_value(
     targets = _priority_high_value_targets(G, domain_filter, limit=max_targets)
     results = []
     mode = (mode or "short").lower()
+    # Map busiest "all" to deep-ish discovery; allow explicit path_mode override
+    discover_mode = (path_mode or ("deep" if mode == "all" else "short")).lower()
+    if discover_mode not in ("short", "abuse", "deep"):
+        discover_mode = "short"
     for tid, tname, ttype in targets:
         try:
             lengths = nx.single_source_shortest_path_length(G.reverse(copy=False), tid, cutoff=cutoff)
@@ -6714,12 +7777,22 @@ def collect_paths_to_high_value(
         )[:max_sources]
         for _, source in candidates:
             try:
-                if mode == "all":
-                    paths_iter = list(nx.all_simple_paths(G, source, tid, cutoff=min(cutoff, 8)))
-                    # Cap explosion
-                    paths_iter = paths_iter[:5]
-                else:
-                    paths_iter = [nx.shortest_path(G, source, tid)]
+                # Always use bounded discoverer (all_simple_paths explodes on MemberOf)
+                per = 4 if discover_mode == "deep" or mode == "all" else (
+                    2 if discover_mode == "abuse" else 1
+                )
+                dm = discover_mode if mode != "all" else (
+                    discover_mode if discover_mode != "short" else "deep"
+                )
+                paths_iter = discover_paths_between(
+                    G,
+                    source,
+                    tid,
+                    mode=dm,
+                    cutoff=min(cutoff, 10 if dm == "deep" else 8),
+                    max_paths=per,
+                    pool_cap=20 if dm == "deep" else 10,
+                )
             except (nx.NetworkXNoPath, nx.NodeNotFound):
                 continue
             for path in paths_iter:
@@ -6731,6 +7804,7 @@ def collect_paths_to_high_value(
                     "target_type": ttype,
                     "length": len(path) - 1,
                     "path": path,
+                    "abuse_score": path_abuse_score(G, path),
                     "path_str": " -> ".join(
                         f"{G.nodes[n]['name']}" + (
                             f" -[{_edge_label(G, path[i], path[i+1])}]>" if i < len(path) - 1 else ""
@@ -6747,6 +7821,7 @@ def collect_busiest_paths(
     top: int = 5,
     domain_filter=None,
     fast: bool = False,
+    path_mode: Optional[str] = None,
 ) -> List[dict]:
     """
     Rank intermediate principals by how many shortest (or all) paths to high-value
@@ -6758,13 +7833,16 @@ def collect_busiest_paths(
         mode = mode.lower()
     max_sources = 80 if fast else 200
     max_targets = 2 if fast else 3
+    # Prefer abuse-aware discovery for busiest intermediate ranking
+    pm = path_mode or ("abuse" if mode == "short" else None)
     paths = collect_paths_to_high_value(
         G,
         domain_filter=domain_filter,
         mode=mode,
         max_targets=max_targets,
         max_sources=max_sources,
-        cutoff=8 if fast else 10,
+        cutoff=8 if fast else 12,
+        path_mode=pm,
     )
     node_counts = Counter()
     node_targets = defaultdict(set)
@@ -6853,7 +7931,8 @@ def collect_path_breaks(
         mode="short",
         max_targets=2 if fast else 3,
         max_sources=60 if fast else 150,
-        cutoff=8 if fast else 10,
+        cutoff=8 if fast else 12,
+        path_mode="abuse",
     )
     edge_paths = defaultdict(set)  # edge_key -> set of path instance ids
     edge_examples = {}
@@ -6907,9 +7986,11 @@ def collect_path_breaks(
     return ranked
 
 
-def print_busiest_paths(G, mode="short", top=5, domain_filter=None, fast=False):
+def print_busiest_paths(G, mode="short", top=5, domain_filter=None, fast=False, path_mode=None):
     console.rule("[bold magenta]Busiest Paths to High-Value Targets[/bold magenta]")
-    ranked = collect_busiest_paths(G, mode=mode, top=top, domain_filter=domain_filter, fast=fast)
+    ranked = collect_busiest_paths(
+        G, mode=mode, top=top, domain_filter=domain_filter, fast=fast, path_mode=path_mode
+    )
     if not ranked:
         console.print("[yellow]No busiest paths found (no user paths to high-value targets)[/yellow]")
         return ranked
@@ -8861,7 +9942,15 @@ HELP_TABLE_SECTIONS = [
     (
         "Paths & remediation",
         [
-            ("--shortest-paths", "Shortest paths to high-value targets", ""),
+            ("--shortest-paths", "Paths to high-value targets", "see --path-mode"),
+            ("--path-mode short|abuse|deep", "Path discovery strategy", "abuse/deep = multi-hop lateral"),
+            ("--path-depth N", "Max hop depth for path search", "default 12–16 by mode"),
+            ("--path-sources N", "Max user sources per HV target", ""),
+            ("--max-paths N", "Max paths printed per HV target", "default 10–15"),
+            ("--deep-paths", "Multi-hop pack: deep mode + stones + path-break", "high discoverability"),
+            ("--golden-path", "Jackpot path to Domain Admins (+ slot animation)", "TTY animates"),
+            ("--no-animate", "Skip golden-path slot animation", "static jackpot UI"),
+            ("--no-stepping-stones", "Hide intermediate choke-point ranking", ""),
             ("--busiest-paths [short|all]", "Rank principals on the most paths to HV", "default mode: short"),
             ("--busiest-paths-top N", "How many busiest principals to show", "default: 5"),
             ("--path-break", "Edges to remove to break the most paths", "remediation hints"),
@@ -8977,6 +10066,12 @@ HELP_EXAMPLE_SECTIONS = [
         "Examples — attack paths & remediation",
         [
             ("Shortest paths to high-value", "{prog} ./sharpout --shortest-paths"),
+            ("Abuse-weighted multi-hop paths", "{prog} ./sharpout --shortest-paths --path-mode abuse"),
+            ("Deep multi-hop + stepping stones", "{prog} ./sharpout --deep-paths"),
+            ("Deep paths with hop budget", "{prog} ./sharpout --path-mode deep --path-depth 16 --max-paths 20"),
+            ("Golden path: jackpot + slot machine", "{prog} ./sharpout --golden-path"),
+            ("Golden path (no animation)", "{prog} ./sharpout --golden-path --no-animate"),
+            ("Golden path from foothold", "{prog} ./sharpout --golden-path --from-user alice"),
             ("Busiest paths (short)", "{prog} ./sharpout --busiest-paths short --busiest-paths-top 10"),
             ("Busiest paths (all lengths)", "{prog} ./sharpout --busiest-paths all --busiest-paths-top 5"),
             ("Path-break remediation", "{prog} ./sharpout --path-break --path-break-top 20"),
@@ -8987,6 +10082,7 @@ HELP_EXAMPLE_SECTIONS = [
             ("Inspect one node", "{prog} ./sharpout --inspect alice@corp.local"),
         ],
     ),
+
     (
         "Examples — selective AD checks",
         [
@@ -9219,7 +10315,64 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Domain trust / SID-filtering abuse checks",
     )
-    parser.add_argument("--shortest-paths", action="store_true", help="Shortest paths to high-value targets")
+    parser.add_argument("--shortest-paths", action="store_true", help="Paths to high-value targets (see --path-mode)")
+    parser.add_argument(
+        "--golden-path",
+        action="store_true",
+        help=(
+            "Find one path to Domain Admins and show a jackpot reveal "
+            "(Vegas slot animation on interactive TTYs). "
+            "Optional seed via --from-user / --path-from"
+        ),
+    )
+    parser.add_argument(
+        "--no-animate",
+        action="store_true",
+        help="Disable golden-path slot-machine animation (static jackpot only)",
+    )
+    parser.add_argument(
+        "--path-mode",
+        choices=["short", "abuse", "deep"],
+        default=None,
+        help=(
+            "Path discovery: short (hop-shortest), abuse (prefer FCP/AdminTo/session/ACL), "
+            "deep (multi-hop alternates + stepping stones). Default: short; deep-paths → deep"
+        ),
+    )
+    parser.add_argument(
+        "--path-depth",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Max path hop depth (default: 12 short / 14 abuse / 16 deep; lower under --fast)",
+    )
+    parser.add_argument(
+        "--path-sources",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Max user sources to evaluate per high-value target (default scales by mode)",
+    )
+    parser.add_argument(
+        "--max-paths",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Max paths to print per high-value target (default 10; deep uses 15)",
+    )
+    parser.add_argument(
+        "--deep-paths",
+        action="store_true",
+        help=(
+            "Multi-hop discoverability pack: enables path analysis in abuse/deep mode "
+            "(path-mode=deep), higher hop budget, stepping stones, busiest + path-break"
+        ),
+    )
+    parser.add_argument(
+        "--no-stepping-stones",
+        action="store_true",
+        help="Disable stepping-stone intermediate ranking after path analysis",
+    )
     parser.add_argument("--dangerous-permissions", action="store_true", help="Dangerous ACLs on high-value objects")
     parser.add_argument("--adcs", action="store_true", help="ADCS ESC template vulnerabilities")
     parser.add_argument("--gpo-abuse", action="store_true", help="Weak / abusable GPO permissions")
@@ -9443,6 +10596,76 @@ def main():
     # Resolve --owned-file / --from-user-file into comma lists before mode selection
     apply_principal_list_files_to_args(args)
 
+    # --golden-path: quiet load, one path to DA, exit (no other analysis/output)
+    if getattr(args, "golden_path", False):
+        # Silence all load progress so stdout is ONLY the path line
+        os.environ["TQDM_DISABLE"] = "1"
+        import io
+        from contextlib import redirect_stdout, redirect_stderr
+        from unittest.mock import patch
+
+        _devnull = io.StringIO()
+        _real_print = console.print
+        _real_rule = getattr(console, "rule", None)
+        console.print = lambda *_a, **_k: None  # type: ignore[method-assign]
+        if _real_rule is not None:
+            console.rule = lambda *_a, **_k: None  # type: ignore[method-assign]
+        try:
+            paths = [args.directory]
+            if getattr(args, "merge", None):
+                paths.extend(args.merge)
+            with redirect_stdout(_devnull), redirect_stderr(_devnull):
+                with patch("sys.stdout", _devnull), patch("sys.stderr", _devnull):
+                    G, _name_to_oid, _info = load_or_build_graph(
+                        paths,
+                        db_path=args.db if getattr(args, "db", None) else None,
+                        cache_dir=getattr(args, "cache_dir", None),
+                        no_cache=bool(getattr(args, "no_cache", False)),
+                        rebuild_cache=bool(getattr(args, "rebuild_cache", False)),
+                        debug=False,
+                    )
+        finally:
+            console.print = _real_print  # type: ignore[method-assign]
+            if _real_rule is not None:
+                console.rule = _real_rule  # type: ignore[method-assign]
+
+        seeds = []
+        if getattr(args, "from_user", None):
+            seeds.append(args.from_user)
+        if getattr(args, "path_from", None):
+            seeds.append(args.path_from)
+        if getattr(args, "owned", None):
+            seeds.append(args.owned)
+        from_csv = ",".join(seeds) if seeds else None
+        depth = getattr(args, "path_depth", None) or 16
+        code = run_golden_path(
+            G,
+            domain_filter=args.domain,
+            from_principals=from_csv,
+            path_depth=int(depth),
+            animate=not bool(getattr(args, "no_animate", False)),
+        )
+        sys.exit(code)
+
+    # --deep-paths: multi-hop discoverability pack (abuse/deep pathfinding + remediation)
+    if getattr(args, "deep_paths", False):
+        args.shortest_paths = True
+        if not getattr(args, "path_mode", None):
+            args.path_mode = "deep"
+        if getattr(args, "max_paths", None) is None:
+            args.max_paths = 15
+        if getattr(args, "path_depth", None) is None:
+            args.path_depth = 16
+        # Surface choke points / remediation when user asked for deep discovery
+        if not getattr(args, "busiest_paths", None):
+            args.busiest_paths = "short"
+        if not getattr(args, "path_break", False):
+            args.path_break = True
+        console.print(
+            "[green]Deep paths mode:[/green] multi-hop abuse discovery "
+            f"(path-mode={args.path_mode}, depth≤{args.path_depth})"
+        )
+
     if getattr(args, "wizard", False):
         run_setup_wizard(args)
 
@@ -9549,6 +10772,8 @@ def main():
         args.inventory, args.report_pack, args.csv_pack, args.export_zip, args.from_user,
         getattr(args, "from_user_export", None) is not None,
         getattr(args, "trust", False),
+        getattr(args, "deep_paths", False),
+        getattr(args, "path_mode", None),
     ])
     run_all = args.all or not selected_checks
     # Pure compromise-dossier run should not pull in default "run everything"
@@ -9605,8 +10830,28 @@ def main():
     print_intro_banner(mode_str)
     if args.verbose or run_all:
         print_verbose_summary(G, args.domain)
-    if args.shortest_paths or run_all:
-        print_shortest_paths(G, fast=args.fast, domain_filter=args.domain, indirect=args.indirect)
+    if args.shortest_paths or run_all or getattr(args, "deep_paths", False):
+        pmode = getattr(args, "path_mode", None)
+        if not pmode:
+            # Full --all (non-fast): prefer abuse-weighted chains over pure MemberOf
+            if run_all and not args.fast:
+                pmode = "abuse"
+            else:
+                pmode = "short"
+        max_p = getattr(args, "max_paths", None)
+        if max_p is None:
+            max_p = 15 if pmode == "deep" else (12 if pmode == "abuse" else 10)
+        print_shortest_paths(
+            G,
+            fast=args.fast,
+            max_paths=int(max_p),
+            domain_filter=args.domain,
+            indirect=args.indirect,
+            path_mode=pmode,
+            path_depth=getattr(args, "path_depth", None),
+            path_sources=getattr(args, "path_sources", None),
+            show_stepping_stones=not bool(getattr(args, "no_stepping_stones", False)),
+        )
     if args.dangerous_permissions or run_all:
         print_dangerous_permissions(
             G, args.domain, args.indirect, fast=bool(args.fast or large_graph)
@@ -9748,6 +10993,7 @@ def main():
             top=args.busiest_paths_top,
             domain_filter=args.domain,
             fast=args.fast,
+            path_mode=getattr(args, "path_mode", None),
         )
     if args.path_break or run_all:
         print_path_breaks(
