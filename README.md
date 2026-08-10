@@ -25,12 +25,12 @@
 |--|--|
 | **Organization** | [SquidSec](https://squidoffense.com/) |
 | **Website** | [https://squidoffense.com/](https://squidoffense.com/) |
-| **App version** | **v1.4.1** |
+| **App version** | **v1.4.2** |
 | **Latest binary** | [![GitHub release](https://img.shields.io/github/v/release/DotNetRussell/BloodBash)](https://github.com/DotNetRussell/BloodBash/releases/latest) |
 | **License** | [MIT](LICENSE) |
 | **Runtime (source)** | Python 3.9+ |
 
-Merges to `main` automatically build **Linux** and **Windows** binaries and publish a GitHub Release (tag `v1.4.1-build.N`).
+Merges to `main` automatically build **Linux** and **Windows** binaries and publish a GitHub Release (tag `v1.4.2-build.N`).
 
 ---
 
@@ -331,7 +331,13 @@ bloodbash ./sharpout --all --export=csv
 bloodbash ./sharpout --all --export=json --export-bh --dot graph.dot
 bloodbash ./sharpout --all --export=yaml
 
-# SQLite graph cache
+# Graph cache (automatic by default — re-run different checks without re-ingest)
+bloodbash ./sharpout --dcsync              # builds + caches graph
+bloodbash ./sharpout --kerberoastable      # cache hit; only runs kerberoast check
+bloodbash ./sharpout --all --rebuild-cache # force re-ingest
+bloodbash ./sharpout --all --no-cache      # disable cache
+bloodbash ./sharpout --cache-dir /tmp/bb-cache --all
+# Explicit SQLite path (still fingerprint-validated against sources)
 bloodbash ./sharpout --all --db bloodbash.db
 bloodbash . --db bloodbash.db --from-user alice --from-user-export
 ```
@@ -435,7 +441,10 @@ bloodbash ./sharpout --profile adcs-heavy --path-break --busiest-paths short \
 | `--export {md,json,html,csv,yaml}` | Write a report (high-value targets + prioritized findings) |
 | `--export-bh` | BloodHound-style graph JSON |
 | `--dot [FILE]` | Graphviz DOT export |
-| `--db FILE` | Load/save graph in SQLite |
+| `--db FILE` | Graph SQLite path (default: auto-cache by collection fingerprint under `~/.cache/bloodbash/`) |
+| `--cache-dir DIR` | Override auto graph-cache directory |
+| `--no-cache` | Always re-ingest; do not read/write graph cache |
+| `--rebuild-cache` | Force re-ingest and refresh the graph cache |
 | `--debug` | Verbose parse/build logging |
 
 Also included under `--all` / selective flags: collection health banner; interesting non-HV ACL abuse; privilege-context tags on roast findings; unexpected DCSync split; unconstrained DC vs non-DC; LAPS readers; can-configure RBCD; stats dashboard percentages; quiet empty sections under broad runs.
@@ -452,7 +461,7 @@ Ingest understands modern collector output: group `Members`, `AllowedToAct` (RBC
 
 Wraps the SquidSec BloodBash CLI (v1.4+) and reports findings into the Metasploit DB.
 Options track the CLI: AD/Azure checks, inventory, busiest-paths / path-break,
-`--from-user` compromise dossiers, profiles, report packs, exports, and `--db`.
+`--from-user` compromise dossiers, profiles, report packs, exports, and graph cache (`--db` / auto-cache).
 
 ```bash
 cp modules/auxiliary/analyzer/bloodbash_analyzer.rb \

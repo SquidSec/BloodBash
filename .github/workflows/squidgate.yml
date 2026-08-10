@@ -18,13 +18,13 @@ jobs:
     env:
       LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
       - name: SquidGate
         if: env.LLM_API_KEY != ''
-        uses: SquidSec/SquidGate@v1.0.0-build.4
+        uses: SquidSec/SquidGate@5424e7343abbd7663bcc31920969f5a778ec8487 # v1.0.0-build.4
         with:
           llm-api-key: ${{ env.LLM_API_KEY }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -36,4 +36,3 @@ jobs:
         if: env.LLM_API_KEY == ''
         run: |
           echo "::notice title=SquidGate::Add repository secret LLM_API_KEY to enable the PR security gate (SquidSec/SquidGate@v1.0.0-build.4)."
-
