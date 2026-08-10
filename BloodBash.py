@@ -27,7 +27,7 @@ import hashlib
 import tempfile
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-__version__ = "1.4.1"
+__version__ = "1.4.2"
 logger = logging.getLogger("bloodbash")
 __org__ = "SquidSec"
 __org_tagline__ = "Open source security tooling by SquidSec"
@@ -1782,11 +1782,222 @@ def build_graph(nodes, db_path=None, debug=False):
         save_graph_to_db(G, db_path)
     return G, name_to_oid
 
-def save_graph_to_db(G, db_path):
+# Bump when build_graph edge/node semantics change so auto-cache invalidates.
+GRAPH_CACHE_SCHEMA_VERSION = 1
+
+
+def default_graph_cache_dir() -> Path:
+    """User cache dir for automatic graph SQLite snapshots."""
+    env = os.environ.get("BLOODBASH_CACHE_DIR") or os.environ.get("XDG_CACHE_HOME")
+    if env:
+        base = Path(env).expanduser()
+        # BLOODBASH_CACHE_DIR is the bloodbash root; XDG_CACHE_HOME needs a subdir
+        if os.environ.get("BLOODBASH_CACHE_DIR"):
+            return base
+        return base / "bloodbash"
+    return Path.home() / ".cache" / "bloodbash"
+
+
+def _normalize_source_paths(paths: Sequence[str]) -> List[str]:
+    out: List[str] = []
+    for p in paths:
+        if not p:
+            continue
+        try:
+            out.append(str(Path(p).expanduser().resolve()))
+        except OSError:
+            out.append(str(Path(p).expanduser()))
+    return out
+
+
+def collect_collection_file_records(paths: Sequence[str]) -> List[Tuple[str, int, int]]:
+    """
+    Stable (path, size, mtime_ns) records for fingerprinting.
+
+    Matches ingest: zip as a whole; directories contribute top-level ``*.json`` only
+    (same as load_json_dir). Missing paths are recorded so fingerprint changes.
+    """
+    records: List[Tuple[str, int, int]] = []
+    for raw in _normalize_source_paths(paths):
+        p = Path(raw)
+        if p.is_file() and p.suffix.lower() == ".zip":
+            try:
+                st = p.stat()
+                records.append((str(p), int(st.st_size), int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1e9)))))
+            except OSError:
+                records.append((str(p), -1, -1))
+            continue
+        if p.is_dir():
+            try:
+                names = sorted(
+                    f for f in os.listdir(p) if f.lower().endswith(".json")
+                )
+            except OSError:
+                records.append((str(p) + os.sep, -1, -1))
+                continue
+            if not names:
+                records.append((str(p) + os.sep, 0, 0))
+            for name in names:
+                fp = p / name
+                try:
+                    st = fp.stat()
+                    records.append(
+                        (
+                            str(fp),
+                            int(st.st_size),
+                            int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1e9))),
+                        )
+                    )
+                except OSError:
+                    records.append((str(fp), -1, -1))
+            continue
+        records.append((str(p), -1, -1))
+    records.sort(key=lambda r: r[0])
+    return records
+
+
+def compute_collection_fingerprint(
+    paths: Sequence[str],
+    *,
+    schema_version: int = GRAPH_CACHE_SCHEMA_VERSION,
+    app_version: Optional[str] = None,
+) -> str:
+    """
+    SHA-256 fingerprint of collection inputs + graph schema version.
+
+    Includes app version so releases that change ingest still invalidate caches
+    even if schema constant was not bumped.
+    """
+    app_v = app_version if app_version is not None else __version__
+    payload = {
+        "schema": int(schema_version),
+        "app": str(app_v),
+        "files": [
+            {"path": path, "size": size, "mtime_ns": mtime}
+            for path, size, mtime in collect_collection_file_records(paths)
+        ],
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def auto_graph_cache_path(
+    fingerprint: str,
+    cache_dir: Optional[os.PathLike] = None,
+) -> Path:
+    """Deterministic SQLite path under the cache directory for a fingerprint."""
+    base = Path(cache_dir) if cache_dir is not None else default_graph_cache_dir()
+    short = (fingerprint or "unknown")[:16]
+    return base / f"graph-{short}.db"
+
+
+def _ensure_graph_cache_meta_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS meta (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+        """
+    )
+
+
+def write_graph_cache_meta(db_path: str, meta: Dict[str, Any]) -> None:
+    """Upsert key/value metadata into a graph SQLite DB."""
+    conn = sqlite3.connect(db_path)
+    try:
+        _ensure_graph_cache_meta_table(conn)
+        for key, value in meta.items():
+            if value is None:
+                continue
+            if isinstance(value, (dict, list)):
+                stored = json.dumps(value, sort_keys=True, separators=(",", ":"))
+            else:
+                stored = str(value)
+            conn.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+                (str(key), stored),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def read_graph_cache_meta(db_path: str) -> Dict[str, str]:
+    """Return meta key→value strings; empty if table missing or unreadable."""
+    if not db_path or not os.path.isfile(db_path):
+        return {}
+    try:
+        conn = sqlite3.connect(db_path)
+        try:
+            _ensure_graph_cache_meta_table(conn)
+            rows = conn.execute("SELECT key, value FROM meta").fetchall()
+            return {str(k): ("" if v is None else str(v)) for k, v in rows}
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return {}
+
+
+def graph_cache_is_valid(
+    db_path: str,
+    expected_fingerprint: Optional[str],
+    *,
+    require_fingerprint: bool = True,
+) -> bool:
+    """
+    True when DB exists and matches expected fingerprint / schema.
+
+    Legacy DBs (no meta table / no fingerprint) are invalid when
+    require_fingerprint is True so stale explicit --db files are rebuilt
+    against current inputs. When require_fingerprint is False (db-only reopen
+    with no usable sources), any readable graph DB is accepted.
+    """
+    if not db_path or not os.path.isfile(db_path):
+        return False
+    try:
+        conn = sqlite3.connect(db_path)
+        try:
+            n = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='nodes'"
+            ).fetchone()
+            if not n:
+                return False
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return False
+    meta = read_graph_cache_meta(db_path)
+    if not require_fingerprint:
+        return True
+    if not expected_fingerprint:
+        return False
+    if meta.get("fingerprint") != expected_fingerprint:
+        return False
+    try:
+        schema = int(meta.get("schema_version") or -1)
+    except (TypeError, ValueError):
+        schema = -1
+    if schema != GRAPH_CACHE_SCHEMA_VERSION:
+        return False
+    return True
+
+
+def save_graph_to_db(G, db_path, meta: Optional[Dict[str, Any]] = None):
+    """
+    Persist graph snapshot to SQLite.
+
+    Optional ``meta`` is stored in a ``meta`` table (fingerprint, sources, …)
+    so automatic caches can validate reuse.
+    """
+    parent = os.path.dirname(os.path.abspath(db_path)) or "."
+    if parent:
+        os.makedirs(parent, exist_ok=True)
     conn = sqlite3.connect(db_path)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS nodes (oid TEXT PRIMARY KEY, name TEXT, type TEXT, props TEXT, is_azure INTEGER)''')
     c.execute('''CREATE TABLE IF NOT EXISTS edges (start_oid TEXT, end_oid TEXT, label TEXT, attrs TEXT)''')
+    _ensure_graph_cache_meta_table(conn)
     # Replace full snapshot: nodes upsert, edges must be cleared or they accumulate
     # on every re-save (no unique constraint on edges).
     # Migrate older DBs that only had (start, end, label)
@@ -1816,7 +2027,11 @@ def save_graph_to_db(G, db_path):
         )
     conn.commit()
     conn.close()
+    if meta:
+        write_graph_cache_meta(db_path, meta)
     console.print(f"[green]Graph saved to DB: {db_path}[/green]")
+
+
 def load_graph_from_db(db_path):
     G = nx.MultiDiGraph()
     name_to_oid = {}
@@ -1847,6 +2062,168 @@ def load_graph_from_db(db_path):
     conn.close()
     console.print(f"[green]Graph loaded from DB: {db_path}[/green]")
     return G, name_to_oid
+
+
+def sources_have_collection_data(paths: Sequence[str]) -> bool:
+    """True if any path is a zip or a directory with at least one top-level JSON."""
+    for raw in paths:
+        if not raw:
+            continue
+        p = Path(raw).expanduser()
+        try:
+            if p.is_file() and p.suffix.lower() == ".zip":
+                return True
+            if p.is_dir():
+                for name in os.listdir(p):
+                    if name.lower().endswith(".json"):
+                        return True
+        except OSError:
+            continue
+    return False
+
+
+def load_or_build_graph(
+    paths: Sequence[str],
+    *,
+    db_path: Optional[str] = None,
+    cache_dir: Optional[str] = None,
+    no_cache: bool = False,
+    rebuild_cache: bool = False,
+    debug: bool = False,
+) -> Tuple[Any, Any, Dict[str, Any]]:
+    """
+    Load graph from SQLite cache when fingerprint matches, otherwise ingest + build.
+
+    Returns ``(G, name_to_oid, info)`` where info includes cache_hit, cache_path,
+    fingerprint, and source_paths.
+    """
+    path_list = [p for p in paths if p]
+    if not path_list:
+        path_list = ["."]
+    has_data = sources_have_collection_data(path_list)
+    fingerprint = compute_collection_fingerprint(path_list) if has_data else None
+
+    # Explicit --db path, else auto path under cache dir (when caching enabled)
+    if db_path:
+        cache_path = str(Path(db_path).expanduser())
+    elif no_cache:
+        cache_path = None
+    else:
+        if fingerprint:
+            cdir = Path(cache_dir).expanduser() if cache_dir else default_graph_cache_dir()
+            cache_path = str(auto_graph_cache_path(fingerprint, cdir))
+        else:
+            cache_path = None
+
+    info: Dict[str, Any] = {
+        "cache_hit": False,
+        "cache_path": cache_path,
+        "fingerprint": fingerprint,
+        "source_paths": list(path_list),
+        "rebuilt": False,
+    }
+
+    env_no_cache = os.environ.get("BLOODBASH_NO_CACHE", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+    use_cache = not no_cache and not env_no_cache
+
+    # Attempt cache load
+    if use_cache and cache_path and os.path.isfile(cache_path) and not rebuild_cache:
+        require_fp = bool(fingerprint)
+        if graph_cache_is_valid(cache_path, fingerprint, require_fingerprint=require_fp):
+            G, name_to_oid = load_graph_from_db(cache_path)
+            info["cache_hit"] = True
+            if fingerprint:
+                console.print(
+                    f"[dim]Graph cache hit[/dim] (fingerprint {fingerprint[:12]}…) "
+                    f"— skip re-ingest. [dim]--rebuild-cache[/dim] to force rebuild."
+                )
+            else:
+                console.print(
+                    "[dim]Graph cache hit[/dim] (db-only reopen; no collection JSON found). "
+                    "Point at a SharpHound dir/zip to refresh."
+                )
+            return G, name_to_oid, info
+        if os.path.isfile(cache_path) and fingerprint:
+            meta = read_graph_cache_meta(cache_path)
+            reason = "fingerprint mismatch or missing meta"
+            if meta.get("fingerprint") and meta.get("fingerprint") != fingerprint:
+                reason = "collection changed"
+            elif meta.get("schema_version") and str(meta.get("schema_version")) != str(
+                GRAPH_CACHE_SCHEMA_VERSION
+            ):
+                reason = "cache schema version mismatch"
+            console.print(
+                f"[yellow]Graph cache stale ({reason}); rebuilding from sources…[/yellow]"
+            )
+
+    if not has_data:
+        # No JSON/zip to ingest
+        if cache_path and os.path.isfile(cache_path) and use_cache and not rebuild_cache:
+            # Last-resort: load explicit/auto db without fingerprint (legacy)
+            if graph_cache_is_valid(cache_path, None, require_fingerprint=False):
+                G, name_to_oid = load_graph_from_db(cache_path)
+                info["cache_hit"] = True
+                console.print(
+                    "[yellow]Loaded graph from DB without validating collection "
+                    "(no JSON/zip sources found).[/yellow]"
+                )
+                return G, name_to_oid, info
+        console.print("[red]No objects loaded. Exiting.[/red]")
+        sys.exit(1)
+
+    if len(path_list) > 1:
+        console.print(f"[dim]Merging {len(path_list)} collection path(s)…[/dim]")
+        nodes = load_json_dirs(path_list, debug=debug)
+    else:
+        nodes = load_json_dir(path_list[0], debug=debug)
+    if not nodes:
+        console.print("[red]No objects loaded. Exiting.[/red]")
+        sys.exit(1)
+
+    # build_graph saves when db_path passed; we control meta write ourselves
+    G, name_to_oid = build_graph(nodes, db_path=None, debug=debug)
+    info["rebuilt"] = True
+
+    if use_cache and cache_path and fingerprint:
+        meta = {
+            "fingerprint": fingerprint,
+            "schema_version": str(GRAPH_CACHE_SCHEMA_VERSION),
+            "app_version": __version__,
+            "sources": path_list,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "nodes": str(G.number_of_nodes()),
+            "edges": str(G.number_of_edges()),
+        }
+        try:
+            save_graph_to_db(G, cache_path, meta=meta)
+            console.print(
+                f"[dim]Graph cached for reuse[/dim] → {cache_path} "
+                f"(fingerprint {fingerprint[:12]}…)"
+            )
+        except OSError as e:
+            console.print(f"[yellow]Could not write graph cache ({e}); continuing.[/yellow]")
+    elif db_path and not use_cache:
+        # Explicit --db with --no-cache still persists when user asked for a file
+        try:
+            meta = {
+                "fingerprint": fingerprint or "",
+                "schema_version": str(GRAPH_CACHE_SCHEMA_VERSION),
+                "app_version": __version__,
+                "sources": path_list,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            save_graph_to_db(G, db_path, meta=meta if fingerprint else None)
+        except OSError as e:
+            console.print(f"[yellow]Could not write --db ({e}); continuing.[/yellow]")
+
+    return G, name_to_oid, info
+
+
 # ────────────────────────────────────────────────
 # VERBOSE SUMMARY (Extended for Azure)
 # ────────────────────────────────────────────────
@@ -8432,7 +8809,10 @@ HELP_TABLE_SECTIONS = [
         [
             ("--domain X", "Filter to one AD domain or Azure tenantId", ""),
             ("--list-domains", "List domains/tenants in collection and exit", ""),
-            ("--db FILE", "Load/save graph in SQLite", "skip re-ingest"),
+            ("--db FILE", "Graph SQLite path (default: auto-cache by fingerprint)", "skip re-ingest on hit"),
+            ("--cache-dir DIR", "Auto graph-cache directory", "default: ~/.cache/bloodbash"),
+            ("--no-cache", "Always re-ingest; do not read/write graph cache", ""),
+            ("--rebuild-cache", "Force rebuild and refresh the graph cache", ""),
             ("--inspect NODE", "Dump props + edges for node(s)", "comma-separated"),
         ],
     ),
@@ -8539,11 +8919,17 @@ HELP_EXAMPLE_SECTIONS = [
             ("CSV pack + zip deliverable", "{prog} ./sharpout --csv-pack ./ph-reports --export-zip ph-reports.zip"),
             ("Markdown / HTML / CSV export", "{prog} ./sharpout --all --export=html"),
             ("JSON export + BH graph + DOT", "{prog} ./sharpout --all --export=json --export-bh --dot graph.dot"),
-            ("SQLite cache re-use", "{prog} ./sharpout --all --db bloodbash.db"),
-            ("Re-open from SQLite (skip JSON)", "{prog} . --db bloodbash.db --from-user alice --from-user-export"),
+            ("Auto graph cache (default)", "{prog} ./sharpout --dcsync  # second run reuses cache"),
+            ("Different checks, same cache", "{prog} ./sharpout --kerberoastable"),
+            ("Force rebuild cache", "{prog} ./sharpout --all --rebuild-cache"),
+            ("Disable cache", "{prog} ./sharpout --all --no-cache"),
+            ("Explicit SQLite path", "{prog} ./sharpout --all --db bloodbash.db"),
+            ("Re-open explicit DB if sources gone", "{prog} . --db bloodbash.db --from-user alice"),
+            ("Custom cache directory", "{prog} ./sharpout --cache-dir /tmp/bb-cache --all"),
             ("Run log", "{prog} ./sharpout --all --log-file ./bloodbash.log"),
         ],
     ),
+
     (
         "Examples — Azure / Entra",
         [
@@ -8818,7 +9204,28 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="List AD domains / Azure tenants in the collection and exit",
     )
     parser.add_argument("--indirect", action="store_true", help="Include indirect paths/permissions")
-    parser.add_argument("--db", help="SQLite DB path for persistence (save/load graph)")
+    parser.add_argument(
+        "--db",
+        help=(
+            "SQLite path for the graph snapshot (default: auto-cache under "
+            "~/.cache/bloodbash/ keyed by collection fingerprint)"
+        ),
+    )
+    parser.add_argument(
+        "--cache-dir",
+        metavar="DIR",
+        help="Directory for automatic graph cache files (default: ~/.cache/bloodbash)",
+    )
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Disable graph cache load/save (always re-ingest JSON/zip)",
+    )
+    parser.add_argument(
+        "--rebuild-cache",
+        action="store_true",
+        help="Force re-ingest and overwrite the graph cache for this collection",
+    )
     parser.add_argument("--owned", help="Comma-separated owned principals (find paths *to* them)")
     parser.add_argument(
         "--from-user",
@@ -8962,21 +9369,23 @@ def main():
     start_time = time.time()
     logger.info("Starting analysis directory=%s", args.directory)
 
-    if args.db and os.path.exists(args.db):
-        G, name_to_oid = load_graph_from_db(args.db)
-    else:
-        paths = [args.directory]
-        if getattr(args, "merge", None):
-            paths.extend(args.merge)
-        if len(paths) > 1:
-            console.print(f"[dim]Merging {len(paths)} collection path(s)…[/dim]")
-            nodes = load_json_dirs(paths, debug=DEBUG)
-        else:
-            nodes = load_json_dir(args.directory, debug=DEBUG)
-        if not nodes:
-            console.print("[red]No objects loaded. Exiting.[/red]")
-            sys.exit(1)
-        G, name_to_oid = build_graph(nodes, args.db if args.db else None, debug=DEBUG)
+    paths = [args.directory]
+    if getattr(args, "merge", None):
+        paths.extend(args.merge)
+    G, name_to_oid, cache_info = load_or_build_graph(
+        paths,
+        db_path=args.db if getattr(args, "db", None) else None,
+        cache_dir=getattr(args, "cache_dir", None),
+        no_cache=bool(getattr(args, "no_cache", False)),
+        rebuild_cache=bool(getattr(args, "rebuild_cache", False)),
+        debug=DEBUG,
+    )
+    if DEBUG and cache_info:
+        console.print(
+            f"[blue]DEBUG: graph cache hit={cache_info.get('cache_hit')} "
+            f"path={cache_info.get('cache_path')} "
+            f"fp={(cache_info.get('fingerprint') or '')[:16]}[/blue]"
+        )
 
     print_collection_health(G)
 

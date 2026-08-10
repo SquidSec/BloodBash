@@ -82,6 +82,20 @@ python3 BloodBash.py AZURE_DIR --azure-privileged-roles --azure-guest-access
 python3 BloodBash.py AZURE_DIR --azure-app-secrets --azure-sp-abuse --azure-mfa-bypass
 ```
 
+## Graph cache (automatic)
+
+```bash
+# First run builds the graph and caches under ~/.cache/bloodbash/
+python3 BloodBash.py DIR --dcsync
+# Later runs with different checks reuse the same graph (no re-ingest)
+python3 BloodBash.py DIR --kerberoastable --as-rep-roastable
+python3 BloodBash.py DIR --from-user alice --from-user-export
+# Force refresh after a new SharpHound zip
+python3 BloodBash.py DIR --rebuild-cache --all --fast
+# Opt out
+python3 BloodBash.py DIR --no-cache --all
+```
+
 ## Help
 
 ```bash
