@@ -5576,6 +5576,98 @@ def print_sessions_localadmin(G, domain_filter=None, fast=False):
         f"[dim]Total computers: {len(computers)} · HasSession pairs: {len(unique_sess)}[/dim]"
     )
 
+def parse_principal_list_file(path: str) -> List[str]:
+    """
+    Load a line-delimited list of principal names from a text file.
+
+    Skips blank lines and ``#`` comments (full-line or trailing).
+    Supports UTF-8 with optional BOM. Raises FileNotFoundError / OSError
+    on I/O failure; ValueError if the file yields no names.
+    """
+    if not path:
+        raise ValueError("principal list path is empty")
+    p = Path(path).expanduser()
+    if not p.is_file():
+        raise FileNotFoundError(f"Principal list file not found: {path}")
+    names: List[str] = []
+    with open(p, "r", encoding="utf-8-sig") as f:
+        for raw in f:
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            # Strip trailing inline comments (name  # note)
+            if "#" in line:
+                line = line.split("#", 1)[0].strip()
+            if not line:
+                continue
+            names.append(line)
+    if not names:
+        raise ValueError(f"No principal names found in {path}")
+    return names
+
+
+def merge_principal_csv_and_file(
+    csv_value: Optional[str] = None,
+    file_path: Optional[str] = None,
+) -> Optional[str]:
+    """
+    Merge comma-separated CLI principals with a line-delimited file.
+
+    Returns a comma-joined unique list (first-seen order) or None if empty.
+    File names are appended after CLI names.
+    """
+    parts: List[str] = []
+    seen = set()
+
+    def _add(name: str) -> None:
+        n = (name or "").strip()
+        if not n:
+            return
+        key = n.upper()
+        if key in seen:
+            return
+        seen.add(key)
+        parts.append(n)
+
+    if csv_value:
+        for piece in str(csv_value).split(","):
+            _add(piece)
+    if file_path:
+        for piece in parse_principal_list_file(file_path):
+            _add(piece)
+    if not parts:
+        return None
+    return ",".join(parts)
+
+
+def apply_principal_list_files_to_args(args) -> None:
+    """Resolve --owned-file / --from-user-file into args.owned / args.from_user."""
+    owned_file = getattr(args, "owned_file", None)
+    from_user_file = getattr(args, "from_user_file", None)
+    if owned_file:
+        try:
+            args.owned = merge_principal_csv_and_file(
+                getattr(args, "owned", None), owned_file
+            )
+        except (OSError, ValueError) as e:
+            console.print(f"[red]--owned-file: {e}[/red]")
+            sys.exit(2)
+        n = len([x for x in (args.owned or "").split(",") if x.strip()])
+        console.print(f"[dim]Loaded {n} owned principal(s) from {owned_file}[/dim]")
+    if from_user_file:
+        try:
+            args.from_user = merge_principal_csv_and_file(
+                getattr(args, "from_user", None), from_user_file
+            )
+        except (OSError, ValueError) as e:
+            console.print(f"[red]--from-user-file: {e}[/red]")
+            sys.exit(2)
+        n = len([x for x in (args.from_user or "").split(",") if x.strip()])
+        console.print(
+            f"[dim]Loaded {n} compromise principal(s) from {from_user_file}[/dim]"
+        )
+
+
 def print_paths_to_owned(G, owned_str, domain_filter=None):
     if not owned_str:
         return
@@ -6309,6 +6401,7 @@ def cli_has_explicit_analysis_intent(args) -> bool:
             getattr(args, "azure_guest_access", False),
             getattr(args, "azure_sp_abuse", False),
             getattr(args, "owned", None),
+            getattr(args, "owned_file", None),
             getattr(args, "path_from", None),
             getattr(args, "path_to", None),
             getattr(args, "inspect", None),
@@ -6328,6 +6421,7 @@ def cli_has_explicit_analysis_intent(args) -> bool:
             getattr(args, "csv_pack", None),
             getattr(args, "export_zip", None),
             getattr(args, "from_user", None),
+            getattr(args, "from_user_file", None),
             getattr(args, "from_user_export", None) is not None,
         ]
     )
@@ -8773,7 +8867,9 @@ HELP_TABLE_SECTIONS = [
             ("--path-break", "Edges to remove to break the most paths", "remediation hints"),
             ("--path-break-top N", "How many path-break edges to show", "default: 15"),
             ("--owned a,b", "Shortest paths *to* owned principals", "inbound to foothold"),
+            ("--owned-file FILE", "Line-delimited owned principal list", "merges with --owned"),
             ("--from-user / --compromise USER", "Compromise dossier for USER (outbound)", "membership, rights, HV paths"),
+            ("--from-user-file FILE", "Line-delimited foothold list for dossiers", "merges with --from-user"),
             ("--from-user-export [DIR]", "Export dossier + adminto_hosts lists", "default: compromise-<user>/"),
             ("--path-from SRC", "Arbitrary path sources", "use with --path-to"),
             ("--path-to DST", "Arbitrary path targets", "use with --path-from"),
@@ -8788,7 +8884,7 @@ HELP_TABLE_SECTIONS = [
             ("--password-age", "Password age bucket inventory", "<1d … >20y ladders"),
             ("--stale-accounts", "Inactive / never-active account inventory", ""),
             ("--privilege-inventory", "Privileged group membership tables", ""),
-            ("--owned-inventory", "AdminTo / MemberOf for --owned principals", "requires --owned"),
+            ("--owned-inventory", "AdminTo / MemberOf for --owned principals", "requires --owned / --owned-file"),
         ],
     ),
     (
@@ -8870,9 +8966,13 @@ HELP_EXAMPLE_SECTIONS = [
             ("Dossier + domain filter", "{prog} ./sharpout --from-user alice --domain CORP.LOCAL --from-user-export"),
             ("Dossier on sample data", "{prog} SampleSharphoundADData --from-user SCOTT --from-user-export ./scott-out --fast"),
             ("Inbound paths TO owned loot (not outbound)", "{prog} ./sharpout --owned alice --owned-inventory"),
+            ("Owned list from file", "{prog} ./sharpout --owned-file ./owned.txt --owned-inventory"),
+            ("Foothold dossiers from file", "{prog} ./sharpout --from-user-file ./footholds.txt --from-user-export"),
+            ("CLI + file owned merge", "{prog} ./sharpout --owned alice --owned-file ./more-owned.txt"),
             ("Contrast: path from alice to DA", "{prog} ./sharpout --path-from alice --path-to 'domain admins'"),
         ],
     ),
+
     (
         "Examples — attack paths & remediation",
         [
@@ -9228,6 +9328,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--owned", help="Comma-separated owned principals (find paths *to* them)")
     parser.add_argument(
+        "--owned-file",
+        metavar="FILE",
+        help=(
+            "Line-delimited file of owned principals (one name per line; # comments ok). "
+            "Merged with --owned if both are set."
+        ),
+    )
+    parser.add_argument(
         "--from-user",
         "--compromise",
         dest="from_user",
@@ -9235,6 +9343,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help=(
             "Compromise dossier for USER (outbound): membership, nested groups, "
             "AdminTo/RDP/ACL counts, paths to high-value. Comma-separated for multiple."
+        ),
+    )
+    parser.add_argument(
+        "--from-user-file",
+        metavar="FILE",
+        help=(
+            "Line-delimited file of foothold principals for compromise dossiers "
+            "(one name per line; # comments ok). Merged with --from-user if both are set."
         ),
     )
     parser.add_argument(
@@ -9272,7 +9388,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--owned-inventory",
         action="store_true",
-        help="Inventory AdminTo/MemberOf for --owned principals",
+        help="Inventory AdminTo/MemberOf for --owned / --owned-file principals",
     )
     parser.add_argument(
         "--inventory",
@@ -9323,6 +9439,9 @@ def main():
     if getattr(args, "help_advanced", False):
         print_structured_help(prog=parser.prog, advanced=True)
         sys.exit(0)
+
+    # Resolve --owned-file / --from-user-file into comma lists before mode selection
+    apply_principal_list_files_to_args(args)
 
     if getattr(args, "wizard", False):
         run_setup_wizard(args)
@@ -9591,7 +9710,10 @@ def main():
             fast=args.fast,
         )
     elif args.from_user_export is not None and not args.from_user:
-        console.print("[yellow]--from-user-export requires --from-user / --compromise[/yellow]")
+        console.print(
+            "[yellow]--from-user-export requires --from-user / --compromise "
+            "or --from-user-file[/yellow]"
+        )
     if args.path_from and args.path_to:
         print_arbitrary_paths(G, args.path_from, args.path_to, args.domain)
     if args.inspect:
@@ -9612,7 +9734,9 @@ def main():
     if args.owned_inventory and args.owned:
         print_owned_inventory(G, args.owned, args.domain)
     elif args.owned_inventory and not args.owned:
-        console.print("[yellow]--owned-inventory requires --owned[/yellow]")
+        console.print(
+            "[yellow]--owned-inventory requires --owned or --owned-file[/yellow]"
+        )
 
     busiest_mode = args.busiest_paths if args.busiest_paths else ("short" if run_all else None)
     if busiest_mode is True or (isinstance(busiest_mode, str) and busiest_mode.lower() not in ("short", "all")):

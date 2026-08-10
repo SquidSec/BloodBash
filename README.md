@@ -217,7 +217,7 @@ Equivalent profile: `--profile quick-wins` (see `profiles/quick-wins.yaml`).
 |------|---------|
 | `--from-user` / `--compromise` | Build dossier (nested groups, rights, HV paths) |
 | `--from-user-export [DIR]` | Write txt/csv/json lists (default `compromise-<user>/`) |
-| `--owned` | Different: paths **to** that principal (inbound) |
+| `--owned` / `--owned-file` | Different: paths **to** that principal (inbound); file is line-delimited |
 
 ```bash
 # Console dossier only
@@ -243,6 +243,9 @@ bloodbash ./sharpout --path-from alice --path-to 'domain admins@corp.local'
 
 # Inbound (who can reach my loot) - not the dossier
 bloodbash ./sharpout --owned alice --owned-inventory --shortest-paths
+bloodbash ./sharpout --owned-file ./owned.txt --owned-inventory
+# Foothold dossiers from a line-delimited list
+bloodbash ./sharpout --from-user-file ./footholds.txt --from-user-export ./out
 ```
 
 **Export layout** (per principal):
@@ -410,7 +413,9 @@ bloodbash ./sharpout --profile adcs-heavy --path-break --busiest-paths short \
 | `--path-break` | Recommend which relationships to remove to break the most attack paths |
 | `--inventory` | Structural + password-age + stale + privilege inventories |
 | `--password-age` / `--stale-accounts` / `--privilege-inventory` | Individual inventory modules |
-| `--owned-inventory` | AdminTo / MemberOf inventory for `--owned` principals |
+| `--owned-inventory` | AdminTo / MemberOf inventory for `--owned` / `--owned-file` principals |
+| `--owned-file FILE` | Line-delimited owned principals (merges with `--owned`) |
+| `--from-user-file FILE` | Line-delimited footholds for compromise dossiers (merges with `--from-user`) |
 | `--report-pack DIR` | Multi-page HTML suite + `index.html` + per-section CSVs |
 | `--csv-pack DIR` | **PlumHound-style multi-CSV pack** (inventory + overpriv + AdminTo reports + `index.csv`) |
 | `--export-zip [FILE]` | Zip a `--report-pack` or `--csv-pack` directory into one deliverable |
@@ -432,6 +437,8 @@ bloodbash ./sharpout --profile adcs-heavy --path-break --busiest-paths short \
 | `--domain X` | Filter to one AD domain or Azure `tenantId` (case-insensitive) |
 | `--list-domains` | List AD domains / Azure tenants in the collection and exit |
 | `--owned a,b` | Paths **to** owned principals (inbound) |
+| `--owned-file FILE` | Same as `--owned`, from a line-delimited file (`#` comments ok) |
+| `--from-user-file FILE` | Same as `--from-user`, from a line-delimited file |
 | `--path-from` / `--path-to` | Arbitrary shortest paths |
 | `--inspect NODE` | Dump props + edges for a node |
 | `--indirect` | Include group-mediated paths/rights |
