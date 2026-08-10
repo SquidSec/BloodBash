@@ -35,9 +35,18 @@ Outbound: “what can this principal do?”
 python3 BloodBash.py DIR --from-user alice
 python3 BloodBash.py DIR --compromise alice@corp.local --from-user-export
 python3 BloodBash.py DIR --from-user alice,bob,svc_backup --from-user-export ./footholds
+# Line-delimited file (one principal per line; # comments ok)
+python3 BloodBash.py DIR --from-user-file ./footholds.txt --from-user-export ./out
 ```
 
-Inbound (who can reach them): `--owned alice --owned-inventory` — different question.
+Inbound (who can reach them):
+
+```bash
+python3 BloodBash.py DIR --owned alice --owned-inventory
+python3 BloodBash.py DIR --owned-file ./owned.txt --owned-inventory --shortest-paths
+# Merge CLI + file
+python3 BloodBash.py DIR --owned alice --owned-file ./more-owned.txt
+```
 
 ## Full review / client deliverable
 
