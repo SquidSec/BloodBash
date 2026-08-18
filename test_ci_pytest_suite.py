@@ -43,6 +43,18 @@ class TestCiPytestSuite(unittest.TestCase):
         for name in REQUIRED:
             self.assertIn(name, inv, msg=f"release-binaries.yml missing {name}")
 
+    def test_run_tests_covers_supported_python_versions(self):
+        text = (ROOT / ".github/workflows/run-tests.yml").read_text(encoding="utf-8")
+        self.assertIn("3.9", text)
+        self.assertIn("3.11", text)
+        self.assertRegex(text, r"python-version:\s*\$\{\{\s*matrix\.python-version")
+
+    def test_release_test_job_uses_311(self):
+        text = (ROOT / ".github/workflows/release-binaries.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('python-version: "3.11"', text)
+
 
 if __name__ == "__main__":
     unittest.main()
