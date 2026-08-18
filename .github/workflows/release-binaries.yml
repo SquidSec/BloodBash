@@ -37,7 +37,10 @@ jobs:
         run: |
           python -m pytest test_bloodbash.py test_members_ingest.py \
             test_detection_variations.py test_compromise_dossier.py \
-            test_synthetic_corpus.py -q
+            test_synthetic_corpus.py test_ludus_collections.py \
+            test_real_data_reliability.py test_graph_cache.py \
+            test_owned_file.py test_golden_path.py test_deep_paths.py \
+            test_ci_pytest_suite.py -q
 
       - name: Complex environment battery (required gate)
         run: python tools/run_scenario_battery.py --count 20 --seed 42
