@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Regression tests: SharpHound Members -> MemberOf edges."""
+import json
 import os
+import tempfile
 import unittest
+from pathlib import Path
+
 import networkx as nx
 
 bloodbash_globals = {}
@@ -53,6 +57,57 @@ class TestMembersIngest(unittest.TestCase):
             0,
             msg="SampleSharphoundADData should produce MemberOf edges from group Members",
         )
+
+
+class TestAzureDirMerge(unittest.TestCase):
+    def test_load_json_dirs_keeps_azure_pending_edges(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            users = root / "users"
+            rels = root / "rels"
+            users.mkdir()
+            rels.mkdir()
+            (users / "azusers.json").write_text(
+                json.dumps(
+                    {
+                        "meta": {"type": "azusers", "count": 1, "version": 4},
+                        "data": [
+                            {
+                                "objectId": "user-1",
+                                "displayName": "alice@contoso.com",
+                                "userPrincipalName": "alice@contoso.com",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (rels / "azgroupmembers.json").write_text(
+                json.dumps(
+                    {
+                        "meta": {"type": "azgroupmembers", "count": 1, "version": 4},
+                        "data": [
+                            {
+                                "kind": "AZGroupMember",
+                                "groupId": "group-1",
+                                "members": [{"objectId": "user-1"}],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            merged = bloodbash_globals["load_json_dirs"]([str(users), str(rels)])
+            self.assertIn("__azure_pending_edges__", merged)
+            pending = merged["__azure_pending_edges__"]["_pending_edges"]
+            self.assertIn(("user-1", "group-1", "MemberOf"), pending)
+            G, _ = bloodbash_globals["build_graph"](merged)
+            memberof = [
+                (u, v)
+                for u, v, d in G.edges(data=True)
+                if d.get("label") == "MemberOf"
+            ]
+            self.assertIn(("user-1", "group-1"), memberof)
 
 
 if __name__ == "__main__":
