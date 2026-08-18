@@ -2916,6 +2916,42 @@ class TestBloodBash(unittest.TestCase):
         dest = extract_to / "subdir" / "users.json"
         self.assertTrue(dest.is_file())
 
+    def test_load_json_zip_cleans_temp(self):
+        zip_path = os.path.join(self.temp_dir, "cleanup.zip")
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("users.json", b'{"meta":{"type":"users"},"data":[]}')
+        before = set(Path(tempfile.gettempdir()).glob("bloodbash-zip-*"))
+        bloodbash_globals["load_json_dir"](zip_path)
+        after = set(Path(tempfile.gettempdir()).glob("bloodbash-zip-*"))
+        self.assertEqual(after - before, set())
+
+    def test_zip_too_many_members_rejected(self):
+        zip_path = os.path.join(self.temp_dir, "many.zip")
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            for i in range(5):
+                zf.writestr(f"f{i}.json", b"{}")
+        saved = bloodbash_globals["ZIP_MAX_MEMBERS"]
+        bloodbash_globals["ZIP_MAX_MEMBERS"] = 2
+        try:
+            extract_to = Path(self.temp_dir) / "many_out"
+            with self.assertRaises(ValueError):
+                bloodbash_globals["_safe_extract_zip"](zip_path, extract_to)
+        finally:
+            bloodbash_globals["ZIP_MAX_MEMBERS"] = saved
+
+    def test_zip_too_large_rejected(self):
+        zip_path = os.path.join(self.temp_dir, "big.zip")
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("users.json", b"x" * 200)
+        saved = bloodbash_globals["ZIP_MAX_UNCOMPRESSED_BYTES"]
+        bloodbash_globals["ZIP_MAX_UNCOMPRESSED_BYTES"] = 50
+        try:
+            extract_to = Path(self.temp_dir) / "big_out"
+            with self.assertRaises(ValueError):
+                bloodbash_globals["_safe_extract_zip"](zip_path, extract_to)
+        finally:
+            bloodbash_globals["ZIP_MAX_UNCOMPRESSED_BYTES"] = saved
+
     def test_primarygroupsid_memberof_edge(self):
         """PrimaryGroupSID becomes member → MemberOf → primary group."""
         nodes = {
