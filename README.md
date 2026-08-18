@@ -512,7 +512,9 @@ pip install -r requirements-dev.txt
 python3 -m pytest test_bloodbash.py test_members_ingest.py \
   test_detection_variations.py test_compromise_dossier.py \
   test_synthetic_corpus.py test_ludus_collections.py \
-  test_real_data_reliability.py -q
+  test_real_data_reliability.py test_graph_cache.py \
+  test_owned_file.py test_golden_path.py test_deep_paths.py \
+  test_ci_pytest_suite.py -q
 ```
 
 ### Synthetic SharpHound corpus (high-entropy regression)
