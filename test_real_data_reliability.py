@@ -21,12 +21,15 @@ class TestRealDataReliability(unittest.TestCase):
 
         buf = StringIO()
         with patch.object(bb.console, "print", side_effect=lambda *a, **k: buf.write(str(a[0]) + "\n") if a else None):
-            try:
-                fn(*args, **kwargs)
-            except Exception:
-                # Some rich Panel objects; still capture findings
-                pass
+            fn(*args, **kwargs)
         return buf.getvalue()
+
+    def test_capture_does_not_swallow_detector_errors(self):
+        def _boom():
+            raise RuntimeError("detector crashed")
+
+        with self.assertRaises(RuntimeError):
+            self._capture(_boom)
 
     def test_01_privileged_roast_direct_da_with_spn(self):
         """EXECSQL-style: direct DA member + SPN must be privileged roast."""
