@@ -623,12 +623,21 @@ def load_json_dirs(paths, debug=False):
         part = load_json_dir(p, debug=debug)
         if not part:
             continue
-        # Preserve azure pending edges attached as special key if present
+        meta = part.get("__azure_pending_edges__")
+        if isinstance(meta, dict):
+            pending_all.extend(meta.get("_pending_edges") or [])
         for oid, node in part.items():
             if oid == "__azure_pending_edges__":
                 continue
             merged[oid] = node
-        # load_json_dir currently returns only nodes dict; pending is internal
+    if pending_all:
+        merged["__azure_pending_edges__"] = {
+            "ObjectIdentifier": "__azure_pending_edges__",
+            "ObjectType": "Meta",
+            "IsAzure": True,
+            "Properties": {},
+            "_pending_edges": pending_all,
+        }
     return merged
 
 
