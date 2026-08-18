@@ -25,6 +25,7 @@ import traceback
 import zipfile
 import hashlib
 import tempfile
+import shutil
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 __version__ = "1.4.2"
@@ -588,11 +589,21 @@ def get_object_id(item):
     digest = hashlib.sha256(canonical.encode('utf-8')).hexdigest()
     return f"synth-{digest[:32]}"
 
+ZIP_MAX_MEMBERS = 20_000
+ZIP_MAX_UNCOMPRESSED_BYTES = 512 * 1024 * 1024
+
+
 def _safe_extract_zip(zip_path, extract_to):
     """Extract zip members only if resolved paths stay under extract_to (Zip Slip safe)."""
     extract_to = Path(extract_to).resolve()
     extract_to.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        members = [i for i in zip_ref.infolist() if i.filename and not str(i.filename).replace("\\", "/").endswith("/")]
+        if len(members) > ZIP_MAX_MEMBERS:
+            raise ValueError(
+                f"Zip has too many files ({len(members)} > {ZIP_MAX_MEMBERS})"
+            )
+        total_size = 0
         for info in zip_ref.infolist():
             # Normalize separators so Windows-style ..\\ paths cannot slip on any OS
             name = (info.filename or "").replace("\\", "/")
@@ -610,8 +621,24 @@ def _safe_extract_zip(zip_path, extract_to):
             except ValueError:
                 raise ValueError(f"Zip entry escapes extract dir (Zip Slip): {name!r}")
             dest.parent.mkdir(parents=True, exist_ok=True)
+            claimed = int(getattr(info, "file_size", 0) or 0)
+            total_size += claimed
+            if total_size > ZIP_MAX_UNCOMPRESSED_BYTES:
+                raise ValueError(
+                    f"Zip uncompressed size exceeds {ZIP_MAX_UNCOMPRESSED_BYTES} bytes"
+                )
+            written = 0
             with zip_ref.open(info) as src, open(dest, 'wb') as out:
-                out.write(src.read())
+                while True:
+                    chunk = src.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    written += len(chunk)
+                    if written > ZIP_MAX_UNCOMPRESSED_BYTES:
+                        raise ValueError(
+                            f"Zip uncompressed size exceeds {ZIP_MAX_UNCOMPRESSED_BYTES} bytes"
+                        )
+                    out.write(chunk)
 
 def load_json_dirs(paths, debug=False):
     """Load and merge SharpHound/AzureHound objects from multiple dirs/zips."""
@@ -722,6 +749,7 @@ def print_collection_health(G, nodes=None) -> dict:
 def load_json_dir(directory, debug=False):
     nodes = {}
     azure_pending_edges = []  # (src, dst, label) from AzureHound relationship kinds
+    extract_to = None
     try:
         path_obj = Path(directory)
         if path_obj.suffix.lower() == '.zip':
@@ -734,10 +762,22 @@ def load_json_dir(directory, debug=False):
         files = [f for f in os.listdir(directory) if f.lower().endswith('.json')]
     except FileNotFoundError:
         console.print(f"[yellow]Warning: Directory '{directory}' not found. Skipping.[/yellow]")
+        if extract_to is not None:
+            shutil.rmtree(extract_to, ignore_errors=True)
         return nodes
     except ValueError as e:
         console.print(f"[red]Refused to extract zip (unsafe paths): {e}[/red]")
+        if extract_to is not None:
+            shutil.rmtree(extract_to, ignore_errors=True)
         return nodes
+    try:
+        return _parse_json_dir(directory, debug, nodes, azure_pending_edges, files)
+    finally:
+        if extract_to is not None:
+            shutil.rmtree(extract_to, ignore_errors=True)
+
+
+def _parse_json_dir(directory, debug, nodes, azure_pending_edges, files):
     with Progress() as progress:
         task = progress.add_task("[cyan]Loading JSON files...", total=len(files))
         for filename in files:
