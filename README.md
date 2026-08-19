@@ -139,7 +139,7 @@ More recipes: [docs/cookbook.md](docs/cookbook.md).
 | **ADCS** | ESC1-ESC7 (+ ESC8/ESC9/ESC13 when collector props exist). ESC10-12 need registry/HTTP role data often absent from SharpHound. Soft message when the zip has no cert objects |
 | **Azure / Entra** | Privileged roles, app/SP credential *control* paths, explicit MFA disable, guest users, SP abuse rights |
 | **Paths** | Shortest paths to high-value targets (limited set in `--fast`; HV includes Builtin Administrators and **domain controller computers**), owned principals (`--owned` = inbound), custom `--path-from` / `--path-to` |
-| **Compromise dossier** | `--from-user` / `--compromise`: outbound membership, AdminTo/RDP/ACL counts, nested groups, auto paths to HV, txt/csv export including **bulk AdminTo host lists** |
+| **Compromise dossier** | `--from-user` / `--compromise`: outbound membership, AdminTo/RDP/ACL counts, nested groups, auto paths to HV, txt/csv export including **bulk AdminTo host lists**. Optional `--writable-file` imports bloodyAD `get writable` JSON/TSV (token-effective write; SharpHound only maps a filtered ACE set) |
 | **Path remediation** | Busiest-path ranking (`--busiest-paths`), edge removal recommendations (`--path-break`) |
 | **Inventory** | Password-age ladders, stale/inactive accounts, privilege groups, structural (domains/DCs/trusts), owned-object inventory, **stats dashboard with %** |
 | **PlumHound-style CSV pack** | `--csv-pack DIR`: multi-CSV inventory (domains, DA, roastables, LAPS, Everyone/overpriv edges, computer AdminTo computer, dual priv+local admin, bulk AdminTo hosts) + `index.csv` |
@@ -226,6 +226,8 @@ bloodbash ./sharpout --compromise alice@corp.local
 
 # Console + export pack
 bloodbash ./sharpout --from-user alice --from-user-export
+# Import live effective write (bloodyAD get writable JSON)
+bloodbash ./sharpout --from-user alice --writable-file ./alice-writable.json
 bloodbash ./sharpout --from-user alice --from-user-export ./alice-dossier
 
 # Multiple footholds (one subdir each under ./footholds)
@@ -424,6 +426,7 @@ bloodbash ./sharpout --profile adcs-heavy --path-break --busiest-paths short \
 | `--owned-inventory` | AdminTo / MemberOf inventory for `--owned` / `--owned-file` principals |
 | `--owned-file FILE` | Line-delimited owned principals (merges with `--owned`) |
 | `--from-user-file FILE` | Line-delimited footholds for compromise dossiers (merges with `--from-user`) |
+| `--writable-file FILE` | Import bloodyAD `get writable` (or same-shape JSON/JSONL/TSV) into the dossier |
 | `--report-pack DIR` | Multi-page HTML suite + `index.html` + per-section CSVs |
 | `--csv-pack DIR` | **PlumHound-style multi-CSV pack** (inventory + overpriv + AdminTo reports + `index.csv`) |
 | `--export-zip [FILE]` | Zip a `--report-pack` or `--csv-pack` directory into one deliverable |
@@ -511,6 +514,7 @@ binary (non-`.py`) to skip the Python interpreter. Domain filtering is case-inse
 pip install -r requirements-dev.txt
 python3 -m pytest test_bloodbash.py test_members_ingest.py \
   test_detection_variations.py test_compromise_dossier.py \
+  test_writable_file.py \
   test_synthetic_corpus.py test_ludus_collections.py \
   test_real_data_reliability.py test_graph_cache.py \
   test_owned_file.py test_golden_path.py test_deep_paths.py \

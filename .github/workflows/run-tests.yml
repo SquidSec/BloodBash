@@ -38,6 +38,7 @@ jobs:
       run: |
         python -m pytest test_bloodbash.py test_members_ingest.py \
           test_detection_variations.py test_compromise_dossier.py \
+          test_writable_file.py \
           test_synthetic_corpus.py test_ludus_collections.py \
           test_real_data_reliability.py test_graph_cache.py \
           test_owned_file.py test_golden_path.py test_deep_paths.py \
@@ -49,3 +50,14 @@ jobs:
       run: |
         python tools/run_scenario_battery.py --count 20 --seed 42
       timeout-minutes: 15
+
+  # Branch protection requires a check named "test". Matrix jobs report as
+  # "test (3.9)" / "test (3.11)" and never satisfy that context.
+  test-gate:
+    name: test
+    needs: test
+    if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, Linux, X64, squidsec]
+    steps:
+      - name: Require matrix success
+        run: test "${{ needs.test.result }}" = "success"
