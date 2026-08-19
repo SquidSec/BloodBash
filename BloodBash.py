@@ -8668,12 +8668,254 @@ def collect_impact_edges_from_rights(rights: Dict[str, List[dict]]) -> List[dict
     return impact
 
 
+def _writable_rights_from_item(item: Any) -> List[str]:
+    rights: List[str] = []
+    if not isinstance(item, dict):
+        return rights
+    raw = (
+        item.get("rights")
+        or item.get("writable")
+        or item.get("permission")
+        or item.get("permissions")
+        or item.get("attributes")
+        or item.get("right")
+    )
+    if raw is None:
+        return rights
+    if isinstance(raw, str):
+        rights = [x.strip() for x in re.split(r"[,;|]", raw) if x.strip()]
+    elif isinstance(raw, (list, tuple)):
+        for x in raw:
+            if isinstance(x, dict):
+                name = (
+                    x.get("name")
+                    or x.get("right")
+                    or x.get("permission")
+                    or x.get("attribute")
+                )
+                if name:
+                    rights.append(str(name).strip())
+            elif x:
+                rights.append(str(x).strip())
+    return [r for r in rights if r]
+
+
+def _writable_target_from_item(item: Any) -> str:
+    if isinstance(item, str):
+        return item.strip()
+    if not isinstance(item, dict):
+        return ""
+    for key in (
+        "target",
+        "object",
+        "name",
+        "dn",
+        "distinguishedName",
+        "distinguishedname",
+        "samaccountname",
+        "sAMAccountName",
+        "ObjectIdentifier",
+    ):
+        val = item.get(key)
+        if val:
+            return str(val).strip()
+    return ""
+
+
+def _normalize_writable_row(item: Any, default_principal: str = "") -> Optional[dict]:
+    if isinstance(item, str) and item.strip():
+        return {
+            "principal": default_principal,
+            "target": item.strip(),
+            "rights": ["writable"],
+        }
+    if not isinstance(item, dict):
+        return None
+    target = _writable_target_from_item(item)
+    rights = _writable_rights_from_item(item)
+    if not target:
+        return None
+    if not rights:
+        rights = ["writable"]
+    principal = (
+        item.get("principal")
+        or item.get("as")
+        or item.get("user")
+        or item.get("identity")
+        or default_principal
+        or ""
+    )
+    return {
+        "principal": str(principal).strip(),
+        "target": target,
+        "rights": rights,
+    }
+
+
+def parse_writable_file(path: str) -> List[dict]:
+    """Parse bloodyAD-style get writable JSON / JSONL / TSV into row dicts."""
+    if not path or not os.path.isfile(path):
+        raise OSError(f"writable file not found: {path}")
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        text = f.read()
+    text_stripped = text.strip()
+    if not text_stripped:
+        return []
+    rows: List[dict] = []
+
+    def _ingest(payload: Any, default_principal: str = "") -> None:
+        if payload is None:
+            return
+        if isinstance(payload, list):
+            for item in payload:
+                rec = _normalize_writable_row(item, default_principal)
+                if rec:
+                    rows.append(rec)
+            return
+        if isinstance(payload, dict):
+            inner_principal = str(
+                payload.get("principal")
+                or payload.get("user")
+                or payload.get("as")
+                or default_principal
+                or ""
+            ).strip()
+            inner = (
+                payload.get("writable")
+                or payload.get("objects")
+                or payload.get("results")
+                or payload.get("entries")
+            )
+            if isinstance(inner, list):
+                for item in inner:
+                    rec = _normalize_writable_row(item, inner_principal)
+                    if rec:
+                        rows.append(rec)
+                return
+            rec = _normalize_writable_row(payload, inner_principal)
+            if rec:
+                rows.append(rec)
+
+    if text_stripped[0] in "{[":
+        try:
+            _ingest(json.loads(text_stripped))
+            return rows
+        except json.JSONDecodeError:
+            rows = []
+            for line in text.splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                try:
+                    _ingest(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+            if rows:
+                return rows
+
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        lower = line.lower()
+        if lower.startswith("target") and ("\t" in line or "," in line):
+            continue
+        if "\t" in line:
+            parts = [p.strip() for p in line.split("\t") if p.strip()]
+        elif "," in line:
+            parts = [p.strip() for p in line.split(",", 1) if p.strip()]
+        else:
+            parts = [line]
+        if not parts:
+            continue
+        target = parts[0]
+        rights = [parts[1]] if len(parts) > 1 else ["writable"]
+        rows.append({"principal": "", "target": target, "rights": rights})
+    return rows
+
+
+def filter_writable_rows(rows: Sequence[dict], principal: str) -> List[dict]:
+    """Keep rows for this foothold; unscoped rows apply to every dossier."""
+    if not rows:
+        return []
+    needle = (principal or "").strip().lower()
+    short = needle.split("@")[0]
+    out = []
+    for r in rows:
+        who = str(r.get("principal") or "").strip().lower()
+        if not who:
+            out.append(r)
+            continue
+        who_short = who.split("@")[0]
+        if who == needle or who_short == short or who in needle or short in who:
+            out.append(r)
+    return out
+
+
+def _writable_target_matches(G, target: str) -> List[str]:
+    raw = (target or "").strip()
+    if not raw:
+        return []
+    upper = raw.upper()
+    hits = []
+    cn = ""
+    if "=" in raw and "," in raw:
+        first = raw.split(",", 1)[0]
+        if first.upper().startswith("CN="):
+            cn = first[3:].strip().upper()
+    for nid, nd in G.nodes(data=True):
+        name = str(nd.get("name") or "")
+        nu = name.upper()
+        if nu == upper or nid.upper() == upper:
+            hits.append(nid)
+            continue
+        if cn and (nu.split("@")[0] == cn or nu.split(".")[0] == cn):
+            hits.append(nid)
+            continue
+        if upper in nu or nu.split("@")[0] == upper.split("@")[0]:
+            if "@" in upper or "." in upper or upper == nu.split("@")[0]:
+                hits.append(nid)
+    return hits
+
+
+def annotate_writable_vs_graph(
+    G,
+    rows: Sequence[dict],
+    principal_oid: str,
+) -> List[dict]:
+    """Mark live writable hits that SharpHound outbound edges do not show."""
+    membership = collect_nested_groups(G, principal_oid) if principal_oid in G else {
+        "effective": []
+    }
+    srcs = {principal_oid} | {g["id"] for g in membership.get("effective") or []}
+    graph_targets = set()
+    for src in srcs:
+        if src not in G:
+            continue
+        for _, tgt, _ed in G.out_edges(src, data=True):
+            nd = G.nodes.get(tgt) or {}
+            graph_targets.add(str(nd.get("name") or tgt).upper())
+            graph_targets.add(str(tgt).upper())
+    annotated = []
+    for r in rows:
+        rec = dict(r)
+        target = rec.get("target") or ""
+        match_ids = _writable_target_matches(G, target)
+        names = {str((G.nodes.get(i) or {}).get("name") or i).upper() for i in match_ids}
+        names.add(target.upper())
+        rec["not_in_collector"] = not bool(names & graph_targets)
+        rec["matched_ids"] = match_ids
+        annotated.append(rec)
+    return annotated
+
+
 def build_compromise_dossier(
     G,
     principal: str,
     domain_filter=None,
     fast: bool = False,
     max_path_targets: int = 15,
+    writable_rows: Optional[Sequence[dict]] = None,
 ) -> Optional[dict]:
     """
     Build a full compromise dossier for one principal:
@@ -8710,6 +8952,13 @@ def build_compromise_dossier(
         if lab not in counts:
             counts[lab] = len(rows)
 
+    scoped = filter_writable_rows(writable_rows or [], d.get("name") or principal)
+    effective_writable = annotate_writable_vs_graph(G, scoped, oid)
+    counts["effective_writable"] = len(effective_writable)
+    counts["effective_writable_not_in_collector"] = sum(
+        1 for r in effective_writable if r.get("not_in_collector")
+    )
+
     props = d.get("props") or {}
     return {
         "query": principal,
@@ -8723,6 +8972,7 @@ def build_compromise_dossier(
         "membership": membership,
         "rights": rights,
         "impact_edges": impact_edges,
+        "effective_writable": effective_writable,
         "paths_to_high_value": paths,
         "counts": counts,
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -8761,6 +9011,10 @@ def print_compromise_dossier(dossier: dict, detail_limit: int = 25) -> None:
     table.add_row("Effective groups (nested)", str(counts.get("effective_groups", 0)))
     table.add_row("Paths to high-value", str(counts.get("paths_to_high_value", 0)))
     table.add_row("Direct impact edges", str(counts.get("impact_edges", 0)))
+    table.add_row(
+        "Effective writable (imported)",
+        str(counts.get("effective_writable", 0)),
+    )
     for lab in COMPROMISE_SUMMARY_RIGHTS:
         n = counts.get(lab, 0)
         if n:
@@ -8772,6 +9026,8 @@ def print_compromise_dossier(dossier: dict, detail_limit: int = 25) -> None:
             "effective_groups",
             "paths_to_high_value",
             "impact_edges",
+            "effective_writable",
+            "effective_writable_not_in_collector",
         ):
             continue
         if lab in COMPROMISE_SUMMARY_RIGHTS:
@@ -8839,6 +9095,24 @@ def print_compromise_dossier(dossier: dict, detail_limit: int = 25) -> None:
     if len(impact) > detail_limit:
         console.print(f"  [dim]... and {len(impact) - detail_limit} more impact edges[/dim]")
 
+    writable = dossier.get("effective_writable") or []
+    console.print(
+        "\n[bold]Effective writable (imported; not SharpHound ACE filter)[/bold]"
+    )
+    if not writable:
+        console.print(
+            "  [dim](none imported; SharpHound only maps a set of abusable ACEs. "
+            "Pass --writable-file from bloodyAD get writable for true effective write.)[/dim]"
+        )
+    for r in writable[:detail_limit]:
+        miss = " [yellow]not in SharpHound[/yellow]" if r.get("not_in_collector") else ""
+        rights_s = ", ".join(r.get("rights") or [])
+        console.print(
+            f"  • [cyan]{r.get('target')}[/cyan]  {rights_s}{miss}"
+        )
+    if len(writable) > detail_limit:
+        console.print(f"  [dim]... and {len(writable) - detail_limit} more[/dim]")
+
     # ── Paths to HV ──
     paths = dossier.get("paths_to_high_value") or []
     console.print("\n[bold]Attack paths to high-value targets[/bold]")
@@ -8899,6 +9173,7 @@ def export_compromise_dossier(dossier: dict, export_dir: str) -> List[str]:
         f"| Direct groups | {counts.get('direct_groups', 0)} |",
         f"| Effective groups (nested) | {counts.get('effective_groups', 0)} |",
         f"| Paths to high-value | {counts.get('paths_to_high_value', 0)} |",
+        f"| Effective writable (imported) | {counts.get('effective_writable', 0)} |",
     ]
     for lab in COMPROMISE_SUMMARY_RIGHTS:
         n = counts.get(lab, 0)
@@ -8907,6 +9182,7 @@ def export_compromise_dossier(dossier: dict, export_dir: str) -> List[str]:
     for lab, n in sorted(counts.items()):
         if lab in COMPROMISE_SUMMARY_RIGHTS or lab in (
             "direct_groups", "effective_groups", "paths_to_high_value",
+            "effective_writable", "effective_writable_not_in_collector",
         ):
             continue
         if n:
@@ -8914,6 +9190,7 @@ def export_compromise_dossier(dossier: dict, export_dir: str) -> List[str]:
     lines += ["", "## Files", "", "- `membership_direct.txt`", "- `membership_effective.txt`",
               "- `rights/*.txt`", "- `adminto_hosts.txt` / `adminto_hosts.csv` (bulk AdminTo host list)",
               "- `paths_to_high_value.txt`", "- `paths_to_high_value.csv`",
+              "- `effective_writable.txt` / `effective_writable.csv`",
               "- `counts.csv`", "- `dossier.json`", ""]
     with open(summary_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
@@ -8991,6 +9268,26 @@ def export_compromise_dossier(dossier: dict, export_dir: str) -> List[str]:
     )
     written.append(hosts_csv)
 
+    wrows = dossier.get("effective_writable") or []
+    wtxt = os.path.join(export_dir, "effective_writable.txt")
+    with open(wtxt, "w", encoding="utf-8") as f:
+        f.write("# Live/imported effective write (bloodyAD get writable style)\n")
+        f.write("# SharpHound maps a filtered ACE set; this list is token effective access.\n")
+        for r in wrows:
+            miss = "not_in_collector" if r.get("not_in_collector") else "in_collector"
+            f.write(f"{r.get('target')}\t{','.join(r.get('rights') or [])}\t{miss}\n")
+    written.append(wtxt)
+    wcsv = os.path.join(export_dir, "effective_writable.csv")
+    write_csv_file(
+        wcsv,
+        ["Target", "Rights", "NotInCollector"],
+        [
+            [r.get("target"), ",".join(r.get("rights") or []), bool(r.get("not_in_collector"))]
+            for r in wrows
+        ],
+    )
+    written.append(wcsv)
+
     # paths
     paths_txt = os.path.join(export_dir, "paths_to_high_value.txt")
     with open(paths_txt, "w", encoding="utf-8") as f:
@@ -9040,6 +9337,7 @@ def run_compromise_dossiers(
     domain_filter=None,
     export_dir: Optional[str] = None,
     fast: bool = False,
+    writable_rows: Optional[Sequence[dict]] = None,
 ) -> List[dict]:
     """
     Build/print/export dossiers for one or more comma-separated principals.
@@ -9051,7 +9349,11 @@ def run_compromise_dossiers(
     dossiers = []
     for name in names:
         dossier = build_compromise_dossier(
-            G, name, domain_filter=domain_filter, fast=fast
+            G,
+            name,
+            domain_filter=domain_filter,
+            fast=fast,
+            writable_rows=writable_rows,
         )
         if not dossier:
             console.print(f"[red]Principal not found:[/red] {name}")
@@ -10009,6 +10311,7 @@ HELP_TABLE_SECTIONS = [
             ("--from-user / --compromise USER", "Compromise dossier for USER (outbound)", "membership, rights, HV paths"),
             ("--from-user-file FILE", "Line-delimited foothold list for dossiers", "merges with --from-user"),
             ("--from-user-export [DIR]", "Export dossier + adminto_hosts lists", "default: compromise-<user>/"),
+            ("--writable-file FILE", "Import bloodyAD get writable JSON/TSV", "merge into --from-user"),
             ("--path-from SRC", "Arbitrary path sources", "use with --path-to"),
             ("--path-to DST", "Arbitrary path targets", "use with --path-from"),
             ("--indirect", "Include group-mediated paths/rights", ""),
@@ -10106,6 +10409,7 @@ HELP_EXAMPLE_SECTIONS = [
             ("Inbound paths TO owned loot (not outbound)", "{prog} ./sharpout --owned alice --owned-inventory"),
             ("Owned list from file", "{prog} ./sharpout --owned-file ./owned.txt --owned-inventory"),
             ("Foothold dossiers from file", "{prog} ./sharpout --from-user-file ./footholds.txt --from-user-export"),
+            ("Import bloodyAD get writable", "{prog} ./sharpout --from-user alice --writable-file ./writable.json"),
             ("CLI + file owned merge", "{prog} ./sharpout --owned alice --owned-file ./more-owned.txt"),
             ("Contrast: path from alice to DA", "{prog} ./sharpout --path-from alice --path-to 'domain admins'"),
         ],
@@ -10565,6 +10869,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "If DIR omitted, writes compromise-<user>/ under the cwd."
         ),
     )
+    parser.add_argument(
+        "--writable-file",
+        metavar="FILE",
+        help=(
+            "Import effective write results (bloodyAD get writable JSON/JSONL/TSV) "
+            "into --from-user. SharpHound only maps a filtered ACE set; this file "
+            "is token-effective access from whoever you authenticated as."
+        ),
+    )
     parser.add_argument("--path-from", help="Comma-separated source principals for arbitrary paths")
     parser.add_argument("--path-to", help="Comma-separated target principals for arbitrary paths")
     parser.add_argument("--inspect", help="Comma-separated nodes to inspect (full props + edges)")
@@ -10996,16 +11309,33 @@ def main():
                 export_root = os.path.join(os.getcwd(), f"compromise-{safe}")
             else:
                 export_root = args.from_user_export
+        writable_rows = None
+        wpath = getattr(args, "writable_file", None)
+        if wpath:
+            try:
+                writable_rows = parse_writable_file(wpath)
+                console.print(
+                    f"[dim]Loaded {len(writable_rows)} effective-writable "
+                    f"row(s) from {wpath}[/dim]"
+                )
+            except OSError as e:
+                console.print(f"[red]--writable-file: {e}[/red]")
         run_compromise_dossiers(
             G,
             args.from_user,
             domain_filter=args.domain,
             export_dir=export_root,
             fast=args.fast,
+            writable_rows=writable_rows,
         )
     elif args.from_user_export is not None and not args.from_user:
         console.print(
             "[yellow]--from-user-export requires --from-user / --compromise "
+            "or --from-user-file[/yellow]"
+        )
+    elif getattr(args, "writable_file", None) and not args.from_user:
+        console.print(
+            "[yellow]--writable-file requires --from-user / --compromise "
             "or --from-user-file[/yellow]"
         )
     if args.path_from and args.path_to:

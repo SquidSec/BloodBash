@@ -37,6 +37,7 @@ jobs:
         run: |
           python -m pytest test_bloodbash.py test_members_ingest.py \
             test_detection_variations.py test_compromise_dossier.py \
+            test_writable_file.py \
             test_synthetic_corpus.py test_ludus_collections.py \
             test_real_data_reliability.py test_graph_cache.py \
             test_owned_file.py test_golden_path.py test_deep_paths.py \
