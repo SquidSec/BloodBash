@@ -2920,10 +2920,37 @@ class TestBloodBash(unittest.TestCase):
         zip_path = os.path.join(self.temp_dir, "cleanup.zip")
         with zipfile.ZipFile(zip_path, "w") as zf:
             zf.writestr("users.json", b'{"meta":{"type":"users"},"data":[]}')
-        before = set(Path(tempfile.gettempdir()).glob("bloodbash-zip-*"))
-        bloodbash_globals["load_json_dir"](zip_path)
-        after = set(Path(tempfile.gettempdir()).glob("bloodbash-zip-*"))
-        self.assertEqual(after - before, set())
+        isolated = Path(self.temp_dir) / "zip-tmp"
+        isolated.mkdir()
+        saved_tempdir = tempfile.tempdir
+        try:
+            tempfile.tempdir = str(isolated)
+            before = set(isolated.glob("bloodbash-zip-*"))
+            bloodbash_globals["load_json_dir"](zip_path)
+            after = set(isolated.glob("bloodbash-zip-*"))
+            self.assertEqual(after - before, set())
+        finally:
+            tempfile.tempdir = saved_tempdir
+
+    def test_load_json_zip_cleanup_ignores_other_extracts(self):
+        zip_path = os.path.join(self.temp_dir, "cleanup2.zip")
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("users.json", b'{"meta":{"type":"users"},"data":[]}')
+        isolated = Path(self.temp_dir) / "zip-tmp2"
+        isolated.mkdir()
+        leftover = isolated / "bloodbash-zip-otherjob"
+        leftover.mkdir()
+        saved_tempdir = tempfile.tempdir
+        try:
+            tempfile.tempdir = str(isolated)
+            bloodbash_globals["load_json_dir"](zip_path)
+            self.assertTrue(leftover.is_dir())
+            created = [
+                p for p in isolated.glob("bloodbash-zip-*") if p != leftover
+            ]
+            self.assertEqual(created, [])
+        finally:
+            tempfile.tempdir = saved_tempdir
 
     def test_zip_too_many_members_rejected(self):
         zip_path = os.path.join(self.temp_dir, "many.zip")
