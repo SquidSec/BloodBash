@@ -758,32 +758,33 @@ def print_collection_health(G, nodes=None) -> dict:
 def load_json_dir(directory, debug=False):
     nodes = {}
     azure_pending_edges = []  # (src, dst, label) from AzureHound relationship kinds
-    extract_to = None
+    extract_cm = None
     try:
         path_obj = Path(directory)
         if path_obj.suffix.lower() == '.zip':
             if debug:
                 print(f"Extracting {path_obj.name}...")
             # Fresh temp dir avoids merging stale JSON from a previous extract of the same stem
-            extract_to = Path(tempfile.mkdtemp(prefix="bloodbash-zip-"))
+            extract_cm = tempfile.TemporaryDirectory(prefix="bloodbash-zip-")
+            extract_to = Path(extract_cm.name)
             _safe_extract_zip(path_obj, extract_to)
             directory = str(extract_to)
         files = [f for f in os.listdir(directory) if f.lower().endswith('.json')]
     except FileNotFoundError:
         console.print(f"[yellow]Warning: Directory '{directory}' not found. Skipping.[/yellow]")
-        if extract_to is not None:
-            shutil.rmtree(extract_to, ignore_errors=True)
+        if extract_cm is not None:
+            extract_cm.cleanup()
         return nodes
     except ValueError as e:
         console.print(f"[red]Refused to extract zip (unsafe paths): {e}[/red]")
-        if extract_to is not None:
-            shutil.rmtree(extract_to, ignore_errors=True)
+        if extract_cm is not None:
+            extract_cm.cleanup()
         return nodes
     try:
         return _parse_json_dir(directory, debug, nodes, azure_pending_edges, files)
     finally:
-        if extract_to is not None:
-            shutil.rmtree(extract_to, ignore_errors=True)
+        if extract_cm is not None:
+            extract_cm.cleanup()
 
 
 def _parse_json_dir(directory, debug, nodes, azure_pending_edges, files):
