@@ -427,6 +427,7 @@ bloodbash ./sharpout --profile adcs-heavy --path-break --busiest-paths short \
 | `--owned-file FILE` | Line-delimited owned principals (merges with `--owned`) |
 | `--from-user-file FILE` | Line-delimited footholds for compromise dossiers (merges with `--from-user`) |
 | `--writable-file FILE` | Import bloodyAD `get writable` (or same-shape JSON/JSONL/TSV) into the dossier |
+| `--writable-all` | Show imported writes that already exist as SharpHound edges (default: new only) |
 | `--report-pack DIR` | Multi-page HTML suite + `index.html` + per-section CSVs |
 | `--csv-pack DIR` | **PlumHound-style multi-CSV pack** (inventory + overpriv + AdminTo reports + `index.csv`) |
 | `--export-zip [FILE]` | Zip a `--report-pack` or `--csv-pack` directory into one deliverable |
