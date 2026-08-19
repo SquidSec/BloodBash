@@ -8835,16 +8835,22 @@ def parse_writable_file(path: str) -> List[dict]:
 
 
 def filter_writable_rows(rows: Sequence[dict], principal: str) -> List[dict]:
-    """Keep rows for this foothold; unscoped rows apply to every dossier."""
+    """Keep rows for this foothold.
+
+    If any row names a principal, unscoped rows are dropped (do not apply
+    to every --from-user). A file with no principals applies to the foothold.
+    """
     if not rows:
         return []
     needle = (principal or "").strip().lower()
     short = needle.split("@")[0]
+    any_scoped = any(str(r.get("principal") or "").strip() for r in rows)
     out = []
     for r in rows:
         who = str(r.get("principal") or "").strip().lower()
         if not who:
-            out.append(r)
+            if not any_scoped:
+                out.append(r)
             continue
         who_short = who.split("@")[0]
         if who == needle or who_short == short or who in needle or short in who:
@@ -8852,29 +8858,84 @@ def filter_writable_rows(rows: Sequence[dict], principal: str) -> List[dict]:
     return out
 
 
-def _writable_target_matches(G, target: str) -> List[str]:
-    raw = (target or "").strip()
+def _writable_name_keys(value: str) -> set:
+    raw = (value or "").strip().upper()
     if not raw:
+        return set()
+    keys = {raw}
+    if raw.startswith("CN="):
+        cn = raw[3:].split(",", 1)[0].strip()
+        keys.add(cn)
+        raw = cn
+    noat = raw.split("@", 1)[0]
+    keys.add(noat)
+    host = noat.split(".", 1)[0]
+    keys.add(host)
+    keys.add(host.rstrip("$"))
+    keys.add(noat.rstrip("$"))
+    keys.discard("")
+    return keys
+
+
+def writable_signal_rank(right: str) -> int:
+    """Higher = more useful than a bare generic write."""
+    r = (right or "").lower().replace(" ", "")
+    attr = r.split(":", 1)[1] if r.startswith("writeproperty:") else r
+    if "keycredential" in attr:
+        return 100
+    if attr in ("unicodepwd", "userpassword", "useraccountcontrol"):
+        return 90
+    if attr in ("member", "memberof"):
+        return 80
+    if "allowedtoact" in attr or attr in ("addallowedtoact", "writeaccountrestrictions"):
+        return 75
+    if "serviceprincipalname" in attr:
+        return 70
+    if attr in ("genericall", "writedacl", "writeowner", "owns", "allextendedrights"):
+        return 60
+    if attr in ("forcechangepassword", "resetpassword", "addkeycredentiallink"):
+        return 85
+    if attr in ("genericwrite",):
+        return 40
+    if attr in ("adminto", "localadmin", "writable"):
+        return 20
+    return 30
+
+
+def _writable_right_keys(right: str) -> set:
+    r = (right or "").lower().replace(" ", "")
+    keys = {r}
+    if r.startswith("writeproperty:"):
+        attr = r.split(":", 1)[1]
+        keys.add(attr)
+        if "keycredential" in attr:
+            keys.add("addkeycredentiallink")
+        if attr in ("unicodepwd", "userpassword"):
+            keys.update({"forcechangepassword", "resetpassword"})
+        if attr in ("member", "memberof"):
+            keys.add("addmember")
+        if "allowedtoact" in attr:
+            keys.update({"addallowedtoact", "writeaccountrestrictions"})
+    return keys
+
+
+def _writable_target_matches(G, target: str) -> List[str]:
+    want = _writable_name_keys(target)
+    if not want:
         return []
-    upper = raw.upper()
     hits = []
-    cn = ""
-    if "=" in raw and "," in raw:
-        first = raw.split(",", 1)[0]
-        if first.upper().startswith("CN="):
-            cn = first[3:].strip().upper()
     for nid, nd in G.nodes(data=True):
-        name = str(nd.get("name") or "")
-        nu = name.upper()
-        if nu == upper or nid.upper() == upper:
+        props = nd.get("props") or {}
+        sam = str(
+            props.get("samaccountname")
+            or props.get("sAMAccountName")
+            or ""
+        )
+        have = _writable_name_keys(str(nd.get("name") or ""))
+        have |= _writable_name_keys(str(nid))
+        have |= _writable_name_keys(sam)
+        if want & have:
             hits.append(nid)
-            continue
-        if cn and (nu.split("@")[0] == cn or nu.split(".")[0] == cn):
-            hits.append(nid)
-            continue
-        if upper in nu or nu.split("@")[0] == upper.split("@")[0]:
-            if "@" in upper or "." in upper or upper == nu.split("@")[0]:
-                hits.append(nid)
     return hits
 
 
@@ -8888,24 +8949,39 @@ def annotate_writable_vs_graph(
         "effective": []
     }
     srcs = {principal_oid} | {g["id"] for g in membership.get("effective") or []}
-    graph_targets = set()
+    graph_rights: Dict[str, set] = defaultdict(set)
     for src in srcs:
         if src not in G:
             continue
-        for _, tgt, _ed in G.out_edges(src, data=True):
-            nd = G.nodes.get(tgt) or {}
-            graph_targets.add(str(nd.get("name") or tgt).upper())
-            graph_targets.add(str(tgt).upper())
+        for _, tgt, ed in G.out_edges(src, data=True):
+            lab = str((ed or {}).get("label") or "").lower().replace(" ", "")
+            if lab:
+                graph_rights[tgt].add(lab)
     annotated = []
     for r in rows:
         rec = dict(r)
         target = rec.get("target") or ""
         match_ids = _writable_target_matches(G, target)
-        names = {str((G.nodes.get(i) or {}).get("name") or i).upper() for i in match_ids}
-        names.add(target.upper())
-        rec["not_in_collector"] = not bool(names & graph_targets)
+        imported = set()
+        for right in rec.get("rights") or []:
+            imported |= _writable_right_keys(str(right))
+        have = set()
+        for mid in match_ids:
+            have |= graph_rights.get(mid) or set()
+        rec["not_in_collector"] = not bool(imported & have) if imported else not bool(have)
         rec["matched_ids"] = match_ids
+        rec["signal"] = max(
+            (writable_signal_rank(x) for x in (rec.get("rights") or ["writable"])),
+            default=0,
+        )
         annotated.append(rec)
+    annotated.sort(
+        key=lambda x: (
+            0 if x.get("not_in_collector") else 1,
+            -int(x.get("signal") or 0),
+            str(x.get("target") or "").lower(),
+        )
+    )
     return annotated
 
 
@@ -8982,7 +9058,11 @@ def build_compromise_dossier(
     }
 
 
-def print_compromise_dossier(dossier: dict, detail_limit: int = 25) -> None:
+def print_compromise_dossier(
+    dossier: dict,
+    detail_limit: int = 25,
+    writable_show_all: bool = False,
+) -> None:
     """Structured console report for a compromise dossier."""
     if not dossier:
         console.print("[yellow]No compromise dossier to print[/yellow]")
@@ -9096,22 +9176,31 @@ def print_compromise_dossier(dossier: dict, detail_limit: int = 25) -> None:
         console.print(f"  [dim]... and {len(impact) - detail_limit} more impact edges[/dim]")
 
     writable = dossier.get("effective_writable") or []
+    n_imp = len(writable)
+    n_new = sum(1 for r in writable if r.get("not_in_collector"))
     console.print(
         "\n[bold]Effective writable (imported; not SharpHound ACE filter)[/bold]"
     )
+    if n_imp:
+        console.print(
+            f"  [dim]{n_imp} imported, {n_new} new vs SharpHound"
+            + ("" if writable_show_all else " (showing new only; --writable-all for matches)")
+            + "[/dim]"
+        )
     if not writable:
         console.print(
             "  [dim](none imported; SharpHound only maps a set of abusable ACEs. "
             "Pass --writable-file from bloodyAD get writable for true effective write.)[/dim]"
         )
-    for r in writable[:detail_limit]:
+    shown = writable if writable_show_all else [r for r in writable if r.get("not_in_collector")]
+    for r in shown[:detail_limit]:
         miss = " [yellow]not in SharpHound[/yellow]" if r.get("not_in_collector") else ""
         rights_s = ", ".join(r.get("rights") or [])
         console.print(
             f"  • [cyan]{r.get('target')}[/cyan]  {rights_s}{miss}"
         )
-    if len(writable) > detail_limit:
-        console.print(f"  [dim]... and {len(writable) - detail_limit} more[/dim]")
+    if len(shown) > detail_limit:
+        console.print(f"  [dim]... and {len(shown) - detail_limit} more[/dim]")
 
     # ── Paths to HV ──
     paths = dossier.get("paths_to_high_value") or []
@@ -9338,6 +9427,7 @@ def run_compromise_dossiers(
     export_dir: Optional[str] = None,
     fast: bool = False,
     writable_rows: Optional[Sequence[dict]] = None,
+    writable_show_all: bool = False,
 ) -> List[dict]:
     """
     Build/print/export dossiers for one or more comma-separated principals.
@@ -9358,7 +9448,7 @@ def run_compromise_dossiers(
         if not dossier:
             console.print(f"[red]Principal not found:[/red] {name}")
             continue
-        print_compromise_dossier(dossier)
+        print_compromise_dossier(dossier, writable_show_all=writable_show_all)
         if export_dir is not None:
             # Per-principal subdir when multiple names or explicit export root
             safe = re.sub(r"[^A-Za-z0-9._@-]+", "_", dossier.get("name") or name).strip("._")
@@ -10312,6 +10402,7 @@ HELP_TABLE_SECTIONS = [
             ("--from-user-file FILE", "Line-delimited foothold list for dossiers", "merges with --from-user"),
             ("--from-user-export [DIR]", "Export dossier + adminto_hosts lists", "default: compromise-<user>/"),
             ("--writable-file FILE", "Import bloodyAD get writable JSON/TSV", "merge into --from-user"),
+            ("--writable-all", "Show imported writes already in SharpHound", "default: new only"),
             ("--path-from SRC", "Arbitrary path sources", "use with --path-to"),
             ("--path-to DST", "Arbitrary path targets", "use with --path-from"),
             ("--indirect", "Include group-mediated paths/rights", ""),
@@ -10878,6 +10969,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "is token-effective access from whoever you authenticated as."
         ),
     )
+    parser.add_argument(
+        "--writable-all",
+        action="store_true",
+        help=(
+            "With --writable-file, also list imported writes that already exist "
+            "as SharpHound edges (default: collector-miss only)."
+        ),
+    )
     parser.add_argument("--path-from", help="Comma-separated source principals for arbitrary paths")
     parser.add_argument("--path-to", help="Comma-separated target principals for arbitrary paths")
     parser.add_argument("--inspect", help="Comma-separated nodes to inspect (full props + edges)")
@@ -11327,6 +11426,7 @@ def main():
             export_dir=export_root,
             fast=args.fast,
             writable_rows=writable_rows,
+            writable_show_all=bool(getattr(args, "writable_all", False)),
         )
     elif args.from_user_export is not None and not args.from_user:
         console.print(

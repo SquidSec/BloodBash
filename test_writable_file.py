@@ -125,7 +125,14 @@ class TestWritableFile(unittest.TestCase):
         ]
         filt = bloodbash_globals["filter_writable_rows"](rows, "ALICE@LAB.LOCAL")
         targets = {r["target"] for r in filt}
-        self.assertEqual(targets, {"A", "C"})
+        self.assertEqual(targets, {"A"})
+
+    def test_filter_unscoped_only_file_applies_to_foothold(self):
+        rows = [
+            {"principal": "", "target": "C", "rights": ["WriteDacl"]},
+        ]
+        filt = bloodbash_globals["filter_writable_rows"](rows, "ALICE@LAB.LOCAL")
+        self.assertEqual([r["target"] for r in filt], ["C"])
 
     def test_annotate_not_in_sharphound(self):
         G = self._graph()
@@ -141,6 +148,56 @@ class TestWritableFile(unittest.TestCase):
         ws = [r for r in annotated if "WS01" in r["target"]][0]
         self.assertTrue(bob["not_in_collector"])
         self.assertFalse(ws["not_in_collector"])
+
+    def test_short_hostname_matches_fqdn(self):
+        G = self._graph()
+        rows = [{"target": "WS01", "rights": ["AdminTo"]}]
+        annotated = bloodbash_globals["annotate_writable_vs_graph"](G, rows, "U")
+        self.assertFalse(annotated[0]["not_in_collector"])
+        self.assertIn("PC", annotated[0]["matched_ids"])
+
+    def test_computer_sam_dollar_matches_fqdn(self):
+        G = self._graph()
+        rows = [{"target": "WS01$", "rights": ["AdminTo"]}]
+        annotated = bloodbash_globals["annotate_writable_vs_graph"](G, rows, "U")
+        self.assertFalse(annotated[0]["not_in_collector"])
+
+    def test_right_mismatch_is_collector_miss(self):
+        G = self._graph()
+        rows = [{"target": "WS01.LAB.LOCAL", "rights": ["GenericWrite"]}]
+        annotated = bloodbash_globals["annotate_writable_vs_graph"](G, rows, "U")
+        self.assertTrue(annotated[0]["not_in_collector"])
+
+    def test_print_new_only_hides_collector_hits(self):
+        G = self._graph()
+        rows = [
+            {"target": "WS01.LAB.LOCAL", "rights": ["AdminTo"]},
+            {"target": "BOB@LAB.LOCAL", "rights": ["writeProperty:msDS-KeyCredentialLink"]},
+        ]
+        dossier = bloodbash_globals["build_compromise_dossier"](
+            G, "alice", writable_rows=rows
+        )
+        self.assertEqual(dossier["counts"]["effective_writable"], 2)
+        self.assertEqual(dossier["counts"]["effective_writable_not_in_collector"], 1)
+        out, _ = self._capture(bloodbash_globals["print_compromise_dossier"], dossier)
+        text = self._strip(out).lower()
+        self.assertIn("1 new vs sharphound", text)
+        self.assertIn("bob@lab.local", text)
+        self.assertNotIn("ws01.lab.local  adminto", text)
+        out_all, _ = self._capture(
+            bloodbash_globals["print_compromise_dossier"],
+            dossier,
+            writable_show_all=True,
+        )
+        self.assertIn("ws01.lab.local", self._strip(out_all).lower())
+
+    def test_signal_rank_prefers_key_credential(self):
+        rank = bloodbash_globals["writable_signal_rank"]
+        self.assertGreater(
+            rank("writeProperty:msDS-KeyCredentialLink"),
+            rank("GenericWrite"),
+        )
+        self.assertGreater(rank("unicodePwd"), rank("writable"))
 
     def test_dossier_merges_writable(self):
         G = self._graph()
