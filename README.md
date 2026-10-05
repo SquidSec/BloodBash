@@ -219,6 +219,22 @@ Equivalent profile: `--profile quick-wins` (see `profiles/quick-wins.yaml`).
 | `--from-user-export [DIR]` | Write txt/csv/json lists (default `compromise-<user>/`) |
 | `--owned` / `--owned-file` | Different: paths **to** that principal (inbound); file is line-delimited |
 
+The same name rules apply to `--from-user`, `--owned`, `--path-from`, `--path-to`, `--inspect`, and `--golden-path` seeds.
+
+| You pass | What it matches |
+|----------|-----------------|
+| `alice` | That SAM in one domain. With `--domain`, only that domain. If the SAM exists in more than one domain, BloodBash lists the hits and stops. It does not pick the first name sort. |
+| `alice@corp.local` or `CORP\alice` | That domain only (DNS name or netbios prefix). Also matches `userPrincipalName` and the domain in the distinguished name when those differ from the BloodHound `SAM@dns` name. |
+| object id | That node, exact. |
+
+```bash
+# Same SAM in two domains: qualify it
+bloodbash ./forest --from-user 'udt@ttig.internal'
+bloodbash ./forest --from-user 'TTIG\udt'
+# or narrow the whole run
+bloodbash ./forest --from-user udt --domain TTIG.INTERNAL
+```
+
 ```bash
 # Console dossier only
 bloodbash ./sharpout --from-user alice
@@ -446,13 +462,13 @@ bloodbash ./sharpout --profile adcs-heavy --path-break --busiest-paths short \
 | `--wizard` | Interactive mode picker (quick-wins / full / dossier / profile) |
 | `--help-advanced` | Full flag tables + all examples (short `--help` is start-here only) |
 | `--fast` | Limit pathfinding to top DA/EA-style targets (not a full skip). Auto-on for large graphs with `--all` |
-| `--domain X` | Filter to one AD domain or Azure `tenantId` (case-insensitive) |
+| `--domain X` | Filter to one AD domain or Azure `tenantId` (case-insensitive). Also disambiguates a bare SAM (`alice` vs `alice@corp.local`) |
 | `--list-domains` | List AD domains / Azure tenants in the collection and exit |
-| `--owned a,b` | Paths **to** owned principals (inbound) |
+| `--owned a,b` | Paths **to** owned principals (inbound). Same multi-domain name rules as `--from-user` |
 | `--owned-file FILE` | Same as `--owned`, from a line-delimited file (`#` comments ok) |
 | `--from-user-file FILE` | Same as `--from-user`, from a line-delimited file |
-| `--path-from` / `--path-to` | Arbitrary shortest paths |
-| `--inspect NODE` | Dump props + edges for a node |
+| `--path-from` / `--path-to` | Arbitrary shortest paths. Qualify `user@domain` when the SAM exists in more than one domain |
+| `--inspect NODE` | Dump props + edges for a node. Same name rules as `--from-user` |
 | `--indirect` | Include group-mediated paths/rights |
 | `--deep-analysis` | Slow group nesting + cycle detection |
 | `--privileged-roast` | Kerberoast/AS-REP users nested into DA/EA/other priv groups (or AdminCount) |
