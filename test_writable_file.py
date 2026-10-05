@@ -127,6 +127,15 @@ class TestWritableFile(unittest.TestCase):
         targets = {r["target"] for r in filt}
         self.assertEqual(targets, {"A"})
 
+    def test_filter_does_not_cross_domains(self):
+        rows = [
+            {"principal": "udt@hci01.local", "target": "HCI", "rights": ["GenericAll"]},
+            {"principal": "udt@ttig.internal", "target": "TTIG", "rights": ["GenericWrite"]},
+            {"principal": "udt", "target": "BARE", "rights": ["WriteDacl"]},
+        ]
+        filt = bloodbash_globals["filter_writable_rows"](rows, "udt@ttig.internal")
+        self.assertEqual({r["target"] for r in filt}, {"TTIG", "BARE"})
+
     def test_filter_unscoped_only_file_applies_to_foothold(self):
         rows = [
             {"principal": "", "target": "C", "rights": ["WriteDacl"]},

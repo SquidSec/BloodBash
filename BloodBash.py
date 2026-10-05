@@ -6193,14 +6193,12 @@ def print_paths_to_owned(G, owned_str, domain_filter=None):
     owned_list = [o.strip() for o in owned_str.split(',') if o.strip()]
     owned_oids = []
     for o in owned_list:
-        found = False
-        for oid, d in G.nodes(data=True):
-            if d['name'].upper().split('@')[0] == o.upper() and _domain_matches(d, domain_filter):
-                owned_oids.append((oid, d['name'], d['type']))
-                found = True
-                break
-        if not found:
-            console.print(f"[yellow]Owned principal not found: {o}[/yellow]")
+        oid, err = lookup_principal(G, o, domain_filter=domain_filter)
+        if err:
+            console.print(f"[yellow]{err}[/yellow]")
+            continue
+        d = G.nodes[oid]
+        owned_oids.append((oid, d['name'], d['type']))
     if not owned_oids:
         return
     for tid, tname, ttype in owned_oids:
@@ -6271,9 +6269,11 @@ def _resolve_named_sources(G, names_csv: Optional[str], domain_filter=None) -> L
         ident = raw.strip()
         if not ident:
             continue
-        oid = resolve_principal_oid(G, ident, domain_filter=domain_filter)
-        if oid is not None:
-            out.append(oid)
+        oid, err = lookup_principal(G, ident, domain_filter=domain_filter)
+        if err:
+            console.print(f"[yellow]{err}[/yellow]")
+            continue
+        out.append(oid)
     return out
 
 
@@ -6812,22 +6812,14 @@ def print_arbitrary_paths(G, path_from=None, path_to=None, domain_filter=None, m
     sources = [s.strip() for s in path_from.split(',')]
     targets = [t.strip() for t in path_to.split(',')]
     for sname in sources:
-        s_oid = None
-        for oid, d in G.nodes(data=True):
-            if d['name'].upper().split('@')[0] == sname.upper() and _domain_matches(d, domain_filter):
-                s_oid = oid
-                break
-        if not s_oid:
-            console.print(f"[yellow]Source not found: {sname}[/yellow]")
+        s_oid, s_err = lookup_principal(G, sname, domain_filter=domain_filter)
+        if s_err:
+            console.print(f"[yellow]Source: {s_err}[/yellow]")
             continue
         for tname in targets:
-            t_oid = None
-            for oid, d in G.nodes(data=True):
-                if d['name'].upper().split('@')[0] == tname.upper() and _domain_matches(d, domain_filter):
-                    t_oid = oid
-                    break
-            if not t_oid:
-                console.print(f"[yellow]Target not found: {tname}[/yellow]")
+            t_oid, t_err = lookup_principal(G, tname, domain_filter=domain_filter)
+            if t_err:
+                console.print(f"[yellow]Target: {t_err}[/yellow]")
                 continue
             try:
                 path = nx.shortest_path(G, s_oid, t_oid)
@@ -6925,30 +6917,27 @@ def print_trust_abuse(G, domain_filter=None):
 
 def inspect_node(G, identifier, domain_filter=None):
     console.rule(f"[bold magenta]Detailed Inspection: {identifier}[/bold magenta]")
-    found = False
-    for oid, d in G.nodes(data=True):
-        name_norm = d['name'].upper().split('@')[0]
-        if (oid == identifier or name_norm == identifier.upper()) and _domain_matches(d, domain_filter):
-            found = True
-            console.print(f"[cyan]OID:[/cyan] {oid}")
-            console.print(f"[cyan]Name:[/cyan] {d['name']}")
-            console.print(f"[cyan]Type:[/cyan] {d['type']}")
-            console.print(f"[cyan]Is Azure:[/cyan] {d.get('is_azure', False)}")
-            console.print("[dim]Properties:[/dim]")
-            for k, v in sorted(d.get('props', {}).items()):
-                if k.lower() == 'useraccountcontrol':
-                    console.print(f"  {k}: {decode_uac(v)}")
-                else:
-                    console.print(f"  {k}: {v}")
-            console.print("[dim]Outgoing edges:[/dim]")
-            for _, tgt, edata in G.out_edges(oid, data=True):
-                console.print(f"  → [green]{G.nodes[tgt]['name']}[/green] [{edata.get('label')}]")
-            console.print("[dim]Incoming edges:[/dim]")
-            for src, _, edata in G.in_edges(oid, data=True):
-                console.print(f"  ← [green]{G.nodes[src]['name']}[/green] [{edata.get('label')}]")
-            break
-    if not found:
-        console.print(f"[yellow]Node '{identifier}' not found (or filtered)[/yellow]")
+    oid, err = lookup_principal(G, identifier, domain_filter=domain_filter)
+    if err:
+        console.print(f"[yellow]{err}[/yellow]")
+        return
+    d = G.nodes[oid]
+    console.print(f"[cyan]OID:[/cyan] {oid}")
+    console.print(f"[cyan]Name:[/cyan] {d['name']}")
+    console.print(f"[cyan]Type:[/cyan] {d['type']}")
+    console.print(f"[cyan]Is Azure:[/cyan] {d.get('is_azure', False)}")
+    console.print("[dim]Properties:[/dim]")
+    for k, v in sorted(d.get('props', {}).items()):
+        if k.lower() == 'useraccountcontrol':
+            console.print(f"  {k}: {decode_uac(v)}")
+        else:
+            console.print(f"  {k}: {v}")
+    console.print("[dim]Outgoing edges:[/dim]")
+    for _, tgt, edata in G.out_edges(oid, data=True):
+        console.print(f"  → [green]{G.nodes[tgt]['name']}[/green] [{edata.get('label')}]")
+    console.print("[dim]Incoming edges:[/dim]")
+    for src, _, edata in G.in_edges(oid, data=True):
+        console.print(f"  ← [green]{G.nodes[src]['name']}[/green] [{edata.get('label')}]")
 
 def print_group_analysis(G, domain_filter=None, deep_analysis=False):
     console.rule("[bold magenta]Group Nesting Depth & Cycle Analysis (AD + Azure)[/bold magenta]")
@@ -8192,12 +8181,9 @@ def collect_owned_inventory(G, owned_str: str, domain_filter=None) -> List[dict]
     owned_list = [o.strip() for o in owned_str.split(",") if o.strip()]
     owned_oids = []
     for o in owned_list:
-        for oid, d in G.nodes(data=True):
-            uname = d.get("name", "")
-            if uname.upper().split("@")[0] == o.upper() or uname.upper() == o.upper():
-                if _domain_matches(d, domain_filter):
-                    owned_oids.append(oid)
-                    break
+        oid = resolve_principal_oid(G, o, domain_filter=domain_filter)
+        if oid:
+            owned_oids.append(oid)
     rows = []
     for oid in owned_oids:
         d = G.nodes[oid]
@@ -8334,6 +8320,10 @@ def print_privilege_inventory(G, domain_filter=None):
 
 def print_owned_inventory(G, owned_str, domain_filter=None):
     console.rule("[bold magenta]Owned Principal Inventory[/bold magenta]")
+    for o in [x.strip() for x in (owned_str or "").split(",") if x.strip()]:
+        _, err = lookup_principal(G, o, domain_filter=domain_filter)
+        if err:
+            console.print(f"[yellow]{err}[/yellow]")
     rows = collect_owned_inventory(G, owned_str, domain_filter=domain_filter)
     if not rows:
         console.print("[yellow]No owned principals resolved for inventory[/yellow]")
@@ -8386,44 +8376,203 @@ COMPROMISE_SUMMARY_RIGHTS = (
 )
 
 
-def resolve_principal_oid(G, identifier: str, domain_filter=None) -> Optional[str]:
-    """Resolve a user/computer/group name or object id to a graph node id."""
+def _principal_ident_parts(ident: str):
+    """Split user@domain or DOMAIN\\user into (sam, domain_hint)."""
+    raw = (ident or "").strip()
+    if "\\" in raw and "@" not in raw:
+        dom, sam = raw.split("\\", 1)
+        return sam.strip(), dom.strip()
+    if "@" in raw:
+        sam, dom = raw.split("@", 1)
+        return sam.strip(), dom.strip()
+    return raw, ""
+
+
+def _prop_str_ci(props: dict, *keys: str) -> str:
+    if not isinstance(props, dict):
+        return ""
+    folded = {str(k).lower(): v for k, v in props.items()}
+    for key in keys:
+        val = folded.get(key.lower())
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    return ""
+
+
+def _dn_domain(dn: str) -> str:
+    parts = []
+    for chunk in (dn or "").split(","):
+        chunk = chunk.strip()
+        if chunk.upper().startswith("DC="):
+            parts.append(chunk.split("=", 1)[1].strip())
+    return ".".join(parts).upper()
+
+
+def _node_domain_labels(d: dict) -> set:
+    """FQDN / netbios / UPN / DN labels a node can be addressed by."""
+    labels = set()
+    props = d.get("props") or {}
+    dom = _prop_str_ci(props, "domain")
+    if dom:
+        labels.add(dom.upper())
+    name = d.get("name") or ""
+    if "@" in name:
+        labels.add(name.split("@", 1)[1].upper())
+    upn = _prop_str_ci(props, "userprincipalname")
+    if "@" in upn:
+        labels.add(upn.split("@", 1)[1].upper())
+    dn_dom = _dn_domain(_prop_str_ci(props, "distinguishedname"))
+    if dn_dom:
+        labels.add(dn_dom)
+    return {x for x in labels if x}
+
+
+def _primary_domain(d: dict) -> str:
+    props = d.get("props") or {}
+    dom = _prop_str_ci(props, "domain")
+    if dom:
+        return dom.upper()
+    name = d.get("name") or ""
+    if "@" in name:
+        return name.split("@", 1)[1].upper()
+    return _dn_domain(_prop_str_ci(props, "distinguishedname"))
+
+
+def _domain_hint_matches(d: dict, hint: str) -> bool:
+    """True when hint is the node's domain, or its netbios / leftmost label."""
+    hint_u = (hint or "").strip().upper().rstrip(".")
+    if not hint_u:
+        return True
+    labels = _node_domain_labels(d)
+    if hint_u in labels:
+        return True
+    for lab in labels:
+        if lab.startswith(hint_u + ".") or hint_u.startswith(lab + "."):
+            return True
+    return False
+
+
+def _passes_principal_domain_filter(d: dict, domain_filter) -> bool:
+    if not domain_filter:
+        return True
+    if _domain_matches(d, domain_filter):
+        return True
+    return _domain_hint_matches(d, domain_filter)
+
+
+_PRINCIPAL_TYPE_RANK = {
+    "user": 0,
+    "azure user": 0,
+    "computer": 1,
+    "group": 2,
+    "azure group": 2,
+}
+
+
+def _principal_ambiguous(G, oids: Sequence[str]) -> bool:
+    """Same SAM in more than one domain, or more than one user, is a tie."""
+    if len(oids) <= 1:
+        return False
+    domains = {_primary_domain(G.nodes[o]) for o in oids}
+    if len(domains) > 1:
+        return True
+    users = [
+        o for o in oids
+        if (G.nodes[o].get("type") or "").lower() in ("user", "azure user")
+    ]
+    if len(users) > 1:
+        return True
+    if not users and len(oids) > 1:
+        return True
+    return False
+
+
+def resolve_principal_matches(G, identifier: str, domain_filter=None) -> List[str]:
+    """Ranked node ids for a name, SAM, UPN, DOMAIN\\user, or object id.
+
+    A qualified name never crosses domains. A bare SAM is not collapsed here.
+    """
     if not identifier:
-        return None
+        return []
     ident = identifier.strip()
-    ident_u = ident.upper()
-    ident_short = ident_u.split("@")[0]
-    # Exact OID
     if ident in G:
-        return ident
-    candidates = []
+        return [ident]
+    ident_u = ident.upper()
+    sam, hint = _principal_ident_parts(ident)
+    sam_u = sam.upper()
+    hits = []
     for oid, d in G.nodes(data=True):
-        if not _domain_matches(d, domain_filter):
+        if not _passes_principal_domain_filter(d, domain_filter):
             continue
-        name = d.get("name") or ""
-        name_u = name.upper()
+        props = d.get("props") or {}
+        name_u = (d.get("name") or "").upper()
+        upn = _prop_str_ci(props, "userprincipalname").upper()
+        sam_prop = _prop_str_ci(props, "samaccountname").upper()
         short = name_u.split("@")[0]
-        if name_u == ident_u or short == ident_short or oid.upper() == ident_u:
-            candidates.append(oid)
-    if not candidates:
-        # Fuzzy: substring match (prefer User type)
-        for oid, d in G.nodes(data=True):
-            if not _domain_matches(d, domain_filter):
-                continue
-            name_u = (d.get("name") or "").upper()
-            if ident_short and ident_short in name_u.split("@")[0]:
-                candidates.append(oid)
-    if not candidates:
-        return None
-    # Prefer User > Computer > Group
-    type_rank = {"user": 0, "azure user": 0, "computer": 1, "group": 2, "azure group": 2}
+        exact = (
+            name_u == ident_u
+            or str(oid).upper() == ident_u
+            or (upn and upn == ident_u)
+        )
+        sam_hit = bool(sam_u) and sam_u in (short, sam_prop, upn.split("@")[0] if upn else "")
+        if hint:
+            domain_ok = _domain_hint_matches(d, hint) or (
+                upn.endswith("@" + hint.upper()) if upn else False
+            )
+            if exact or (sam_hit and domain_ok):
+                hits.append(oid)
+        elif exact or sam_hit:
+            hits.append(oid)
+    if not hits:
+        return []
 
     def rank(oid):
-        t = (G.nodes[oid].get("type") or "").lower()
-        return (type_rank.get(t, 9), G.nodes[oid].get("name") or "")
+        nd = G.nodes[oid]
+        t = (nd.get("type") or "").lower()
+        name_u = (nd.get("name") or "").upper()
+        upn = _prop_str_ci(nd.get("props") or {}, "userprincipalname").upper()
+        exact_name = 0 if ident_u in (name_u, upn, str(oid).upper()) else 1
+        return (exact_name, _PRINCIPAL_TYPE_RANK.get(t, 9), nd.get("name") or "")
 
-    candidates.sort(key=rank)
-    return candidates[0]
+    hits = list(dict.fromkeys(hits))
+    hits.sort(key=rank)
+    return hits
+
+
+def principal_resolve_error(G, identifier: str, domain_filter=None) -> Optional[str]:
+    """Human message when a bare name hits more than one domain. None if unique or missing."""
+    matches = resolve_principal_matches(G, identifier, domain_filter=domain_filter)
+    if not _principal_ambiguous(G, matches):
+        return None
+    lines = [
+        f"'{identifier}' matches {len(matches)} principals. Use user@domain or DOMAIN\\user:"
+    ]
+    for oid in matches:
+        nd = G.nodes[oid]
+        dom = _primary_domain(nd) or "?"
+        lines.append(f"  {nd.get('name') or oid} ({nd.get('type') or '?'}) domain={dom}")
+    return "\n".join(lines)
+
+
+def resolve_principal_oid(G, identifier: str, domain_filter=None) -> Optional[str]:
+    """Resolve one principal. Returns None if missing or ambiguous across domains."""
+    matches = resolve_principal_matches(G, identifier, domain_filter=domain_filter)
+    if not matches or _principal_ambiguous(G, matches):
+        return None
+    return matches[0]
+
+
+def lookup_principal(G, identifier: str, domain_filter=None):
+    """Return (oid, error). error is set for a miss or an ambiguous bare SAM."""
+    if not identifier or not str(identifier).strip():
+        return None, "No principal provided"
+    err = principal_resolve_error(G, identifier, domain_filter=domain_filter)
+    if err:
+        return None, err
+    oid = resolve_principal_oid(G, identifier, domain_filter=domain_filter)
+    if not oid:
+        return None, f"Principal not found: {identifier}"
+    return oid, None
 
 
 _MEMBERSHIP_EDGE_LABELS = frozenset({
@@ -8843,20 +8992,34 @@ def filter_writable_rows(rows: Sequence[dict], principal: str) -> List[dict]:
     """
     if not rows:
         return []
-    needle = (principal or "").strip().lower()
-    short = needle.split("@")[0]
+    needle = (principal or "").strip()
     any_scoped = any(str(r.get("principal") or "").strip() for r in rows)
     out = []
     for r in rows:
-        who = str(r.get("principal") or "").strip().lower()
+        who = str(r.get("principal") or "").strip()
         if not who:
             if not any_scoped:
                 out.append(r)
             continue
-        who_short = who.split("@")[0]
-        if who == needle or who_short == short or who in needle or short in who:
+        if _writable_principal_matches(who, needle):
             out.append(r)
     return out
+
+
+def _writable_principal_matches(who: str, needle: str) -> bool:
+    """SAM match. If either side names a domain, the domains must agree."""
+    who_sam, who_dom = _principal_ident_parts(who)
+    nd_sam, nd_dom = _principal_ident_parts(needle)
+    if who.strip().upper() == needle.strip().upper():
+        return True
+    if who_sam.upper() != nd_sam.upper():
+        return False
+    if who_dom and nd_dom:
+        return _domain_hint_matches(
+            {"name": f"{who_sam}@{who_dom}", "props": {"domain": who_dom}},
+            nd_dom,
+        )
+    return True
 
 
 def _writable_name_keys(value: str) -> set:
@@ -9439,6 +9602,10 @@ def run_compromise_dossiers(
         return []
     dossiers = []
     for name in names:
+        _, err = lookup_principal(G, name, domain_filter=domain_filter)
+        if err:
+            console.print(f"[red]{err}[/red]")
+            continue
         dossier = build_compromise_dossier(
             G,
             name,
@@ -9447,7 +9614,7 @@ def run_compromise_dossiers(
             writable_rows=writable_rows,
         )
         if not dossier:
-            console.print(f"[red]Principal not found:[/red] {name}")
+            console.print(f"[red]Principal not found: {name}[/red]")
             continue
         print_compromise_dossier(dossier, writable_show_all=writable_show_all)
         if export_dir is not None:

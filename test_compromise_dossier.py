@@ -71,6 +71,170 @@ class TestCompromiseDossier(unittest.TestCase):
         self.assertEqual(oid2, "U")
         self.assertIsNone(bloodbash_globals["resolve_principal_oid"](G, "nosuchuser"))
 
+    def test_resolve_principal_same_sam_two_domains(self):
+        """user@domain must not pick the other domain's same SAM (alpha name sort)."""
+        G = nx.MultiDiGraph()
+        G.add_node(
+            "HCI",
+            name="UDT@HCI01.LOCAL",
+            type="User",
+            props={"domain": "HCI01.LOCAL", "samaccountname": "udt"},
+            is_azure=False,
+        )
+        G.add_node(
+            "TTIG",
+            name="UDT@TTIG.INTERNAL",
+            type="User",
+            props={"domain": "TTIG.INTERNAL", "samaccountname": "udt"},
+            is_azure=False,
+        )
+        self.assertEqual(
+            bloodbash_globals["resolve_principal_oid"](G, "udt@ttig.internal"),
+            "TTIG",
+        )
+        self.assertEqual(
+            bloodbash_globals["resolve_principal_oid"](G, "UDT@HCI01.LOCAL"),
+            "HCI",
+        )
+        self.assertEqual(
+            bloodbash_globals["resolve_principal_oid"](G, "TTIG\\udt"),
+            "TTIG",
+        )
+        # Bare SAM across domains is a tie. Do not guess.
+        self.assertIsNone(bloodbash_globals["resolve_principal_oid"](G, "udt"))
+        err = bloodbash_globals["principal_resolve_error"](G, "udt")
+        self.assertIn("UDT@TTIG.INTERNAL", err)
+        self.assertIn("UDT@HCI01.LOCAL", err)
+        # --domain (or a netbios prefix) picks one.
+        self.assertEqual(
+            bloodbash_globals["resolve_principal_oid"](G, "udt", domain_filter="TTIG"),
+            "TTIG",
+        )
+
+    def test_resolve_same_domain_user_beats_computer(self):
+        G = nx.MultiDiGraph()
+        G.add_node(
+            "PC",
+            name="UDT$@TTIG.INTERNAL",
+            type="Computer",
+            props={"domain": "TTIG.INTERNAL", "samaccountname": "UDT$"},
+            is_azure=False,
+        )
+        G.add_node(
+            "U",
+            name="UDT@TTIG.INTERNAL",
+            type="User",
+            props={"domain": "TTIG.INTERNAL", "samaccountname": "udt"},
+            is_azure=False,
+        )
+        self.assertEqual(bloodbash_globals["resolve_principal_oid"](G, "udt"), "U")
+        self.assertIsNone(bloodbash_globals["principal_resolve_error"](G, "udt"))
+
+    def test_resolve_two_users_same_domain_is_ambiguous(self):
+        G = nx.MultiDiGraph()
+        G.add_node("A", name="UDT@TTIG.INTERNAL", type="User", props={"domain": "TTIG.INTERNAL"}, is_azure=False)
+        G.add_node("B", name="UDT-ADMIN@TTIG.INTERNAL", type="User", props={"domain": "TTIG.INTERNAL", "samaccountname": "udt"}, is_azure=False)
+        self.assertIsNone(bloodbash_globals["resolve_principal_oid"](G, "udt"))
+
+    def test_resolve_dn_domain_and_object_id(self):
+        G = nx.MultiDiGraph()
+        G.add_node(
+            "S-1-5-21-1-2-3-1105",
+            name="UDT",
+            type="User",
+            props={"distinguishedname": "CN=UDT,OU=Users,DC=ttig,DC=internal", "samaccountname": "udt"},
+            is_azure=False,
+        )
+        G.add_node(
+            "OTHER",
+            name="UDT@HCI01.LOCAL",
+            type="User",
+            props={"domain": "HCI01.LOCAL", "samaccountname": "udt"},
+            is_azure=False,
+        )
+        self.assertEqual(
+            bloodbash_globals["resolve_principal_oid"](G, "udt@ttig.internal"),
+            "S-1-5-21-1-2-3-1105",
+        )
+        self.assertEqual(
+            bloodbash_globals["resolve_principal_oid"](G, "S-1-5-21-1-2-3-1105"),
+            "S-1-5-21-1-2-3-1105",
+        )
+
+    def test_flags_do_not_guess_across_domains(self):
+        G = nx.MultiDiGraph()
+        G.add_node("HCI", name="UDT@HCI01.LOCAL", type="User", props={"domain": "HCI01.LOCAL", "samaccountname": "udt"}, is_azure=False)
+        G.add_node("TTIG", name="UDT@TTIG.INTERNAL", type="User", props={"domain": "TTIG.INTERNAL", "samaccountname": "udt"}, is_azure=False)
+        G.add_node("DA", name="DOMAIN ADMINS@TTIG.INTERNAL", type="Group", props={"domain": "TTIG.INTERNAL"}, is_azure=False)
+        G.add_edge("TTIG", "DA", label="MemberOf")
+
+        owned = bloodbash_globals["collect_owned_inventory"](G, "udt")
+        self.assertEqual(owned, [])
+        owned_dom = bloodbash_globals["collect_owned_inventory"](G, "udt", domain_filter="ttig.internal")
+        self.assertEqual([r["name"] for r in owned_dom], ["UDT@TTIG.INTERNAL"])
+
+        out, _ = self._capture(bloodbash_globals["print_paths_to_owned"], G, "udt")
+        text = self._strip(out)
+        self.assertIn("UDT@HCI01.LOCAL", text)
+        self.assertIn("UDT@TTIG.INTERNAL", text)
+        self.assertNotIn("Owned target", text)
+
+        out, _ = self._capture(
+            bloodbash_globals["print_arbitrary_paths"], G, path_from="udt", path_to="DOMAIN ADMINS"
+        )
+        text = self._strip(out)
+        self.assertIn("matches 2 principals", text)
+        self.assertNotIn("MemberOf", text)
+
+        out, _ = self._capture(
+            bloodbash_globals["print_arbitrary_paths"],
+            G,
+            path_from="udt@ttig.internal",
+            path_to="DOMAIN ADMINS@TTIG.INTERNAL",
+        )
+        text = self._strip(out)
+        self.assertIn("UDT@TTIG.INTERNAL", text)
+        self.assertIn("MemberOf", text)
+        self.assertNotIn("UDT@HCI01.LOCAL", text)
+
+        out, _ = self._capture(bloodbash_globals["inspect_node"], G, "udt")
+        text = self._strip(out)
+        self.assertIn("matches 2 principals", text)
+        self.assertNotIn("OID:", text)
+
+        out, _ = self._capture(bloodbash_globals["inspect_node"], G, "TTIG\\udt")
+        text = self._strip(out)
+        self.assertIn("UDT@TTIG.INTERNAL", text)
+        self.assertNotIn("UDT@HCI01.LOCAL", text)
+
+        out, dossiers = self._capture(
+            bloodbash_globals["run_compromise_dossiers"], G, "udt@ttig.internal"
+        )
+        self.assertEqual(len(dossiers), 1)
+        self.assertEqual(dossiers[0]["name"], "UDT@TTIG.INTERNAL")
+        out, dossiers = self._capture(bloodbash_globals["run_compromise_dossiers"], G, "udt")
+        self.assertEqual(dossiers, [])
+        self.assertIn("matches 2 principals", self._strip(out))
+
+    def test_resolve_upn_when_name_domain_differs(self):
+        G = nx.MultiDiGraph()
+        G.add_node(
+            "HCI",
+            name="UDT@HCI01.LOCAL",
+            type="User",
+            props={
+                "domain": "HCI01.LOCAL",
+                "samaccountname": "udt",
+                "userprincipalname": "udt@ttig.internal",
+                "distinguishedname": "CN=udt,DC=hci01,DC=local",
+            },
+            is_azure=False,
+        )
+        self.assertEqual(
+            bloodbash_globals["resolve_principal_oid"](G, "udt@ttig.internal"),
+            "HCI",
+        )
+
     def test_nested_groups(self):
         G = self._foothold_graph()
         mem = bloodbash_globals["collect_nested_groups"](G, "U")
