@@ -12,6 +12,29 @@ import BloodBash as bb  # noqa: E402
 
 
 class TestRealDataReliability(unittest.TestCase):
+    def test_link_sid_only_memberof_onto_named_user(self):
+        sid = "S-1-5-21-9-9-9-1105"
+        G = nx.MultiDiGraph()
+        G.add_node(
+            sid,
+            name="UDT@PARENT.LOCAL",
+            type="User",
+            props={"domain": "PARENT.LOCAL", "samaccountname": "udt"},
+            is_azure=False,
+        )
+        G.add_node(sid + "-fsp", name=sid, type="Unknown", props={}, is_azure=False)
+        G.add_node(
+            "DA",
+            name="DOMAIN ADMINS@CHILD.LOCAL",
+            type="Group",
+            props={"domain": "CHILD.LOCAL"},
+            is_azure=False,
+        )
+        G.add_edge(sid + "-fsp", "DA", label="MemberOf")
+        n = bb.link_sid_only_principals(G)
+        self.assertEqual(n, 1)
+        self.assertTrue(G.has_edge(sid, "DA"))
+        self.assertEqual(G.nodes[sid + "-fsp"]["name"], "UDT@PARENT.LOCAL")
     def setUp(self):
         bb.global_findings.clear()
 

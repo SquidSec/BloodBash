@@ -640,6 +640,69 @@ def _safe_extract_zip(zip_path, extract_to):
                         )
                     out.write(chunk)
 
+_MERGE_LIST_KEYS = (
+    "Aces", "aces", "MemberOf", "memberof", "Members", "members",
+    "Sessions", "sessions", "LocalGroups", "localgroups",
+    "AllowedToAct", "allowedtoact", "HasSIDHistory", "sidhistory",
+    "Trusts", "trusts",
+)
+
+
+def _collector_node_is_sid_only(node) -> bool:
+    if not isinstance(node, dict):
+        return True
+    props = node.get("Properties") or node.get("properties") or {}
+    if not isinstance(props, dict):
+        props = {}
+    name = props.get("name") or props.get("Name") or node.get("name") or ""
+    sam = props.get("samaccountname") or props.get("sAMAccountName") or ""
+    if sam and not _looks_like_sid(str(sam)):
+        return False
+    if name and not _looks_like_sid(str(name)):
+        return False
+    return True
+
+
+def _union_collector_lists(base: dict, extra: dict) -> None:
+    """Keep relationship lists from a SID-only record when the named object wins."""
+    if not isinstance(base, dict) or not isinstance(extra, dict):
+        return
+    for key in _MERGE_LIST_KEYS:
+        incoming = extra.get(key)
+        if not incoming:
+            continue
+        current = base.get(key)
+        if not current:
+            base[key] = incoming
+            continue
+        if isinstance(current, list) and isinstance(incoming, list):
+            seen = {json.dumps(x, sort_keys=True, default=str) for x in current}
+            for item in incoming:
+                token = json.dumps(item, sort_keys=True, default=str)
+                if token not in seen:
+                    current.append(item)
+                    seen.add(token)
+
+
+def merge_collector_nodes(existing, incoming):
+    """Prefer a named principal over a SID-only object with the same id."""
+    if not isinstance(existing, dict):
+        return incoming
+    if not isinstance(incoming, dict):
+        return existing
+    existing_sid = _collector_node_is_sid_only(existing)
+    incoming_sid = _collector_node_is_sid_only(incoming)
+    if existing_sid and not incoming_sid:
+        base, extra = incoming, existing
+    elif incoming_sid and not existing_sid:
+        base, extra = existing, incoming
+    else:
+        base, extra = incoming, existing
+    base = dict(base)
+    _union_collector_lists(base, extra)
+    return base
+
+
 def load_json_dirs(paths, debug=False):
     """Load and merge SharpHound/AzureHound objects from multiple dirs/zips."""
     merged = {}
@@ -656,7 +719,10 @@ def load_json_dirs(paths, debug=False):
         for oid, node in part.items():
             if oid == "__azure_pending_edges__":
                 continue
-            merged[oid] = node
+            if oid in merged:
+                merged[oid] = merge_collector_nodes(merged[oid], node)
+            else:
+                merged[oid] = node
     if pending_all:
         merged["__azure_pending_edges__"] = {
             "ObjectIdentifier": "__azure_pending_edges__",
@@ -1139,6 +1205,80 @@ def _edge_label_exists(G, u, v, label) -> bool:
         if (data.get('label') or '').lower() == want:
             return True
     return False
+
+
+def _copy_principal_edges(G, src, dst) -> None:
+    """Copy edges from a SID placeholder onto the named principal."""
+    for _, v, ed in list(G.out_edges(src, data=True)):
+        if v == dst:
+            continue
+        label = (ed or {}).get("label")
+        if label:
+            _add_unique_edge(G, dst, v, label)
+    for u, _, ed in list(G.in_edges(src, data=True)):
+        if u == dst:
+            continue
+        label = (ed or {}).get("label")
+        if label:
+            _add_unique_edge(G, u, dst, label)
+
+
+def link_sid_only_principals(G) -> int:
+    """Attach SID-only / foreign-principal nodes to the named object with the same SID.
+
+    Cross-domain collections often keep the foreign SID as its own node while the
+    real user lives under that SID in the other domain. MemberOf on the SID node
+    is copied onto the named principal so the path is not dropped.
+    """
+    named = {}
+    for oid, d in G.nodes(data=True):
+        name = d.get("name") or ""
+        sam = _prop_str_ci(d.get("props") or {}, "samaccountname")
+        if (not name or _looks_like_sid(name)) and (not sam or _looks_like_sid(sam)):
+            continue
+        keys = []
+        if _looks_like_sid(str(oid)):
+            keys.append(str(oid).upper())
+        for key in ("objectid", "objectidentifier"):
+            val = _prop_str_ci(d.get("props") or {}, key)
+            if val and _looks_like_sid(val):
+                keys.append(val.upper())
+        for key in keys:
+            named.setdefault(key, oid)
+    linked = 0
+    for oid, d in list(G.nodes(data=True)):
+        if oid not in G:
+            continue
+        name = d.get("name") or ""
+        sam = _prop_str_ci(d.get("props") or {}, "samaccountname")
+        if name and not _looks_like_sid(name):
+            continue
+        if sam and not _looks_like_sid(sam):
+            continue
+        keys = []
+        if _looks_like_sid(str(oid)):
+            keys.append(str(oid).upper())
+        if _looks_like_sid(name):
+            keys.append(name.upper())
+        real = None
+        for key in keys:
+            cand = named.get(key)
+            if cand and cand != oid and cand in G:
+                real = cand
+                break
+        if not real:
+            continue
+        _copy_principal_edges(G, oid, real)
+        G.nodes[oid]["name"] = G.nodes[real].get("name") or name
+        G.nodes[oid]["type"] = G.nodes[real].get("type") or d.get("type")
+        props = dict(d.get("props") or {})
+        props["resolvedfrom"] = keys[0]
+        G.nodes[oid]["props"] = props
+        G.nodes[oid]["resolved_oid"] = real
+        linked += 1
+    if linked and hasattr(G, "graph"):
+        G.graph.pop("_bb_domain_sids", None)
+    return linked
 
 
 def _add_unique_edge(G, u, v, label, **attrs):
@@ -1826,6 +1966,9 @@ def build_graph(nodes, db_path=None, debug=False):
     wk = add_well_known_group_memberships(G)
     if wk:
         console.print(f"[green]Added {wk} well-known group MemberOf edges (Auth Users / Everyone / …)[/green]")
+    linked = link_sid_only_principals(G)
+    if linked:
+        console.print(f"[green]Linked {linked} SID-only principal(s) to named objects[/green]")
     console.print(f"[green]✓ Graph built: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges[/green]")
     if debug:
         console.print(f"[blue]DEBUG: Final graph stats - Nodes: {G.number_of_nodes()} | Edges: {G.number_of_edges()}[/blue]")
@@ -1834,7 +1977,7 @@ def build_graph(nodes, db_path=None, debug=False):
     return G, name_to_oid
 
 # Bump when build_graph edge/node semantics change so auto-cache invalidates.
-GRAPH_CACHE_SCHEMA_VERSION = 1
+GRAPH_CACHE_SCHEMA_VERSION = 2
 
 
 def default_graph_cache_dir() -> Path:
