@@ -63,6 +63,34 @@ class TestCompromiseDossier(unittest.TestCase):
         G.add_edge("HD", "PC2", label="ForceChangePassword")
         return G
 
+    def test_dossier_stamps_merged_collections(self):
+        low = os.path.join(self.temp_dir, "lowpriv")
+        da = os.path.join(self.temp_dir, "da-collection")
+        os.makedirs(low)
+        os.makedirs(da)
+        user = {
+            "data": [{
+                "ObjectIdentifier": "S-1-5-21-1-2-3-1105",
+                "ObjectType": "User",
+                "Properties": {"name": "UDT@TTIG.INTERNAL", "domain": "TTIG.INTERNAL"},
+            }],
+        }
+        import json
+        for folder in (low, da):
+            with open(os.path.join(folder, "users.json"), "w", encoding="utf-8") as f:
+                json.dump(user, f)
+        nodes = bloodbash_globals["load_json_dirs"]([low, da])
+        self.assertEqual(
+            nodes["S-1-5-21-1-2-3-1105"]["_collections"],
+            ["lowpriv", "da-collection"],
+        )
+        G, _ = bloodbash_globals["build_graph"](nodes)
+        dossier = bloodbash_globals["build_compromise_dossier"](G, "udt@ttig.internal")
+        self.assertEqual(dossier["collections"], ["lowpriv", "da-collection"])
+        out, _ = self._capture(bloodbash_globals["print_compromise_dossier"], dossier)
+        self.assertIn("lowpriv", self._strip(out))
+        self.assertIn("da-collection", self._strip(out))
+
     def test_resolve_principal(self):
         G = self._foothold_graph()
         oid = bloodbash_globals["resolve_principal_oid"](G, "alice")

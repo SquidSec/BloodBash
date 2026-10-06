@@ -716,11 +716,24 @@ def load_json_dirs(paths, debug=False):
         meta = part.get("__azure_pending_edges__")
         if isinstance(meta, dict):
             pending_all.extend(meta.get("_pending_edges") or [])
+        label = Path(p).name
         for oid, node in part.items():
             if oid == "__azure_pending_edges__":
                 continue
+            if isinstance(node, dict):
+                node = dict(node)
+                sources = list(node.get("_collections") or [])
+                if label not in sources:
+                    sources.append(label)
+                if oid in merged and isinstance(merged[oid], dict):
+                    for prev in merged[oid].get("_collections") or []:
+                        if prev not in sources:
+                            sources.insert(0, prev)
+                node["_collections"] = sources
             if oid in merged:
                 merged[oid] = merge_collector_nodes(merged[oid], node)
+                if isinstance(merged[oid], dict) and isinstance(node, dict):
+                    merged[oid]["_collections"] = list(node.get("_collections") or [])
             else:
                 merged[oid] = node
     if pending_all:
@@ -1452,6 +1465,10 @@ def build_graph(nodes, db_path=None, debug=False):
                 or 'Unknown'
             )
             if not oid.startswith('rel_'):
+                collections = node.get("_collections") or []
+                if collections and isinstance(props, dict):
+                    props = dict(props)
+                    props["_collections"] = list(collections)
                 G.add_node(oid, name=name, type=obj_type, props=props, is_azure=is_azure)
                 _register_name_map(name_to_oid, name, oid)
             # Check for standalone relationships (various formats)
@@ -9365,6 +9382,7 @@ def build_compromise_dossier(
         "name": d.get("name"),
         "type": d.get("type"),
         "domain": props.get("domain") or props.get("tenantId"),
+        "collections": list(props.get("_collections") or []),
         "is_azure": bool(d.get("is_azure")),
         "enabled": props.get("enabled", props.get("Enabled")),
         "highvalue": get_bool_prop_ci(props, ["highvalue", "HighValue"]),
@@ -9396,6 +9414,9 @@ def print_compromise_dossier(
         f"[bold cyan]{name}[/bold cyan]  ({dossier.get('type')})  "
         f"[dim]id={dossier.get('resolved_id')} domain={dossier.get('domain')}[/dim]"
     )
+    collections = [c for c in (dossier.get("collections") or []) if c]
+    if collections:
+        console.print(f"[dim]collections: {', '.join(collections)}[/dim]")
     if dossier.get("enabled") is False:
         console.print("[yellow]Account appears disabled[/yellow]")
     if dossier.get("highvalue"):
