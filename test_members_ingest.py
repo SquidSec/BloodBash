@@ -14,6 +14,29 @@ with open("BloodBash.py", "r") as f:
 
 
 class TestMembersIngest(unittest.TestCase):
+    def test_merge_prefers_named_principal_over_sid_only(self):
+        sid = "S-1-5-21-9-9-9-1105"
+        sid_only = {
+            "ObjectIdentifier": sid,
+            "ObjectType": "User",
+            "Properties": {"name": sid, "domain": "CHILD.LOCAL"},
+            "MemberOf": [{"ObjectIdentifier": "S-1-5-21-1-1-1-512", "ObjectType": "Group"}],
+        }
+        named = {
+            "ObjectIdentifier": sid,
+            "ObjectType": "User",
+            "Properties": {
+                "name": "UDT@PARENT.LOCAL",
+                "samaccountname": "udt",
+                "domain": "PARENT.LOCAL",
+            },
+        }
+        merged = bloodbash_globals["merge_collector_nodes"](sid_only, named)
+        self.assertEqual(merged["Properties"]["name"], "UDT@PARENT.LOCAL")
+        self.assertEqual(len(merged["MemberOf"]), 1)
+        merged_rev = bloodbash_globals["merge_collector_nodes"](named, sid_only)
+        self.assertEqual(merged_rev["Properties"]["name"], "UDT@PARENT.LOCAL")
+        self.assertEqual(len(merged_rev["MemberOf"]), 1)
     def test_sharphound_members_become_memberof_edges(self):
         test_dir = os.path.join("testData", "members-tests")
         if not os.path.isdir(test_dir):
