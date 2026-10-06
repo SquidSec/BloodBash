@@ -2843,6 +2843,24 @@ class TestBloodBash(unittest.TestCase):
         self.assertFalse(bloodbash_globals["_domain_matches"](d, "other.local"))
         self.assertTrue(bloodbash_globals["_domain_matches"](d, None))
 
+    def test_domain_matches_netbios_and_dn(self):
+        d = {
+            "name": "UDT@TTIG.INTERNAL",
+            "props": {
+                "domain": "TTIG.INTERNAL",
+                "distinguishedname": "CN=UDT,DC=ttig,DC=internal",
+            },
+        }
+        self.assertTrue(bloodbash_globals["_domain_matches"](d, "TTIG"))
+        self.assertTrue(bloodbash_globals["_domain_matches"](d, "ttig.internal"))
+        self.assertFalse(bloodbash_globals["_domain_matches"](d, "HCI01"))
+        dn_only = {
+            "name": "UDT",
+            "props": {"distinguishedname": "CN=UDT,DC=hci01,DC=local"},
+        }
+        self.assertTrue(bloodbash_globals["_domain_matches"](dn_only, "HCI01.LOCAL"))
+        self.assertFalse(bloodbash_globals["_domain_matches"](dn_only, "TTIG"))
+
     def test_extract_props_lowercase_and_type_from_filename(self):
         item = {
             "ObjectIdentifier": "S-1-5-21-9-9-9-1",

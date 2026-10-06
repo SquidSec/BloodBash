@@ -462,7 +462,7 @@ bloodbash ./sharpout --profile adcs-heavy --path-break --busiest-paths short \
 | `--wizard` | Interactive mode picker (quick-wins / full / dossier / profile) |
 | `--help-advanced` | Full flag tables + all examples (short `--help` is start-here only) |
 | `--fast` | Limit pathfinding to top DA/EA-style targets (not a full skip). Auto-on for large graphs with `--all` |
-| `--domain X` | Filter to one AD domain or Azure `tenantId` (case-insensitive). Also disambiguates a bare SAM (`alice` vs `alice@corp.local`) |
+| `--domain X` | Filter to one AD domain or Azure `tenantId` (case-insensitive). DNS name, netbios prefix (`TTIG` matches `TTIG.INTERNAL`), or the domain in the distinguished name. Also disambiguates a bare SAM |
 | `--list-domains` | List AD domains / Azure tenants in the collection and exit |
 | `--owned a,b` | Paths **to** owned principals (inbound). Same multi-domain name rules as `--from-user` |
 | `--owned-file FILE` | Same as `--owned`, from a line-delimited file (`#` comments ok) |

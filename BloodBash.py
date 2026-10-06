@@ -7737,7 +7737,8 @@ def _domain_matches(d: dict, domain_filter: Optional[str]) -> bool:
     if isinstance(name, str) and "@" in name:
         if name.rsplit("@", 1)[-1].strip().lower() == df:
             return True
-    return False
+    # Netbios prefix and DN domain: --domain TTIG covers TTIG.INTERNAL.
+    return _domain_hint_matches(d, domain_filter)
 
 
 def _priority_high_value_targets(G, domain_filter=None, limit=5):
