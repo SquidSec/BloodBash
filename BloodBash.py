@@ -9084,22 +9084,37 @@ def _writable_right_keys(right: str) -> set:
 
 
 def _writable_target_matches(G, target: str) -> List[str]:
+    """Match a bloodyAD target without crossing domains.
+
+    user@domain and DOMAIN\\user stay in that domain. A bare SAM that exists
+    in more than one domain matches nothing (same rule as principal lookup).
+    Short hostnames still match a single computer FQDN.
+    """
+    sam, hint = _principal_ident_parts(target or "")
+    resolved = resolve_principal_matches(G, target) if target else []
+    if resolved and not _principal_ambiguous(G, resolved):
+        if hint or len(resolved) == 1:
+            return resolved
     want = _writable_name_keys(target)
     if not want:
         return []
     hits = []
     for nid, nd in G.nodes(data=True):
+        if hint and not _domain_hint_matches(nd, hint):
+            continue
         props = nd.get("props") or {}
-        sam = str(
+        sam_prop = str(
             props.get("samaccountname")
             or props.get("sAMAccountName")
             or ""
         )
         have = _writable_name_keys(str(nd.get("name") or ""))
         have |= _writable_name_keys(str(nid))
-        have |= _writable_name_keys(sam)
+        have |= _writable_name_keys(sam_prop)
         if want & have:
             hits.append(nid)
+    if not hint and len({_primary_domain(G.nodes[h]) for h in hits}) > 1:
+        return []
     return hits
 
 

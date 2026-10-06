@@ -158,6 +158,27 @@ class TestWritableFile(unittest.TestCase):
         self.assertTrue(bob["not_in_collector"])
         self.assertFalse(ws["not_in_collector"])
 
+    def test_writable_target_does_not_cross_domains(self):
+        G = nx.MultiDiGraph()
+        G.add_node(
+            "HCI",
+            name="UDT@HCI01.LOCAL",
+            type="User",
+            props={"domain": "HCI01.LOCAL", "samaccountname": "udt"},
+            is_azure=False,
+        )
+        G.add_node(
+            "TTIG",
+            name="UDT@TTIG.INTERNAL",
+            type="User",
+            props={"domain": "TTIG.INTERNAL", "samaccountname": "udt"},
+            is_azure=False,
+        )
+        qualified = bloodbash_globals["_writable_target_matches"](G, "udt@ttig.internal")
+        self.assertEqual(qualified, ["TTIG"])
+        bare = bloodbash_globals["_writable_target_matches"](G, "udt")
+        self.assertEqual(bare, [])
+
     def test_short_hostname_matches_fqdn(self):
         G = self._graph()
         rows = [{"target": "WS01", "rights": ["AdminTo"]}]
