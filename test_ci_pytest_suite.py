@@ -61,6 +61,29 @@ class TestCiPytestSuite(unittest.TestCase):
         )
         self.assertIn('python-version: "3.11"', text)
 
+    def test_release_can_be_rerun_without_a_push(self):
+        # A failed release on main used to require an empty commit to retry.
+        text = (ROOT / ".github/workflows/release-binaries.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("workflow_dispatch:", text)
+
+    def test_release_uploads_both_assets_with_retries(self):
+        text = (ROOT / ".github/workflows/release-binaries.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("release-final/bloodbash-linux-x64", text)
+        self.assertIn("release-final/bloodbash-windows-x64.exe", text)
+        # The artifact service and Releases API both failed transiently in Oct 2026.
+        self.assertIn("Create GitHub Release (retry)", text)
+
+    def test_release_retries_artifact_upload_and_download(self):
+        text = (ROOT / ".github/workflows/release-binaries.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("Upload build artifact (retry)", text)
+        self.assertIn("Download Windows binary (retry)", text)
+
 
 if __name__ == "__main__":
     unittest.main()

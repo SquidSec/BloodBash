@@ -6,6 +6,8 @@ on:
   push:
     branches:
       - main
+  # Re-cut a release for the current main without an empty push.
+  workflow_dispatch:
 
 # Allow this workflow to create tags and release assets
 permissions:
@@ -119,11 +121,24 @@ jobs:
           & "dist/${{ matrix.artifact_name }}" --help | Select-Object -First 5
 
       - name: Upload build artifact
+        id: upload
+        # The artifact service has timed out for minutes at a time; a failed
+        # upload must not lose a finished binary.
+        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ matrix.artifact_name }}
           path: dist/${{ matrix.artifact_name }}
           if-no-files-found: error
+
+      - name: Upload build artifact (retry)
+        if: steps.upload.outcome == 'failure'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: dist/${{ matrix.artifact_name }}
+          if-no-files-found: error
+          overwrite: true
 
   release:
     needs: build
@@ -139,6 +154,16 @@ jobs:
           path: release-assets
 
       - name: Download Windows binary
+        id: download_windows
+        # Actions Results timed out and failed a whole release on 2026-10-23.
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: bloodbash-windows-x64.exe
+          path: release-assets
+
+      - name: Download Windows binary (retry)
+        if: steps.download_windows.outcome == 'failure'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: bloodbash-windows-x64.exe
@@ -181,8 +206,45 @@ jobs:
           cp -f "$WIN" release-final/bloodbash-windows-x64.exe
           chmod +x release-final/bloodbash-linux-x64
           ls -la release-final/
+          REPO="${{ github.repository }}"
+          printf '%s\n' \
+            "## SquidSec BloodBash ${BASE_VERSION} - build ${RUN}" \
+            "" \
+            "**BloodBash** is an open source project created and managed by **[SquidSec](https://squidoffense.com/)**." \
+            "" \
+            "Standalone binaries (no Python install required)." \
+            "" \
+            "| Platform | File |" \
+            "|----------|------|" \
+            "| Linux x64 | \`bloodbash-linux-x64\` |" \
+            "| Windows x64 | \`bloodbash-windows-x64.exe\` |" \
+            "" \
+            "**Commit:** \`${SHORT_SHA}\`" \
+            "**Latest downloads (always current):**" \
+            "- Linux: https://github.com/${REPO}/releases/latest/download/bloodbash-linux-x64" \
+            "- Windows: https://github.com/${REPO}/releases/latest/download/bloodbash-windows-x64.exe" \
+            "" \
+            '```bash' \
+            "# Linux" \
+            "chmod +x bloodbash-linux-x64" \
+            "./bloodbash-linux-x64 /path/to/sharphound --all" \
+            '```' \
+            "" \
+            '```powershell' \
+            "# Windows" \
+            ".\bloodbash-windows-x64.exe C:\path\to\sharphound --all" \
+            '```' \
+            "" \
+            "---" \
+            "[SquidSec](https://squidoffense.com/) · [BloodBash on GitHub](https://github.com/${REPO})" \
+            > release-final/release-notes.md
 
       - name: Create GitHub Release
+        id: release
+        # Releases API returned 403 "Resource not accessible by integration"
+        # on 2026-10-23 and dropped that build. Retry once so a transient API
+        # error does not skip a release on main.
+        continue-on-error: true
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
@@ -190,36 +252,23 @@ jobs:
           target_commitish: ${{ github.sha }}
           generate_release_notes: true
           make_latest: true
-          body: |
-            ## SquidSec BloodBash ${{ steps.meta.outputs.base_version }} - build ${{ github.run_number }}
+          body_path: release-final/release-notes.md
+          files: |
+            release-final/bloodbash-linux-x64
+            release-final/bloodbash-windows-x64.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-            **BloodBash** is an open source project created and managed by **[SquidSec](https://squidoffense.com/)**.
-
-            Standalone binaries (no Python install required).
-
-            | Platform | File |
-            |----------|------|
-            | Linux x64 | `bloodbash-linux-x64` |
-            | Windows x64 | `bloodbash-windows-x64.exe` |
-
-            **Commit:** `${{ steps.meta.outputs.short_sha }}`
-            **Latest downloads (always current):**
-            - Linux: https://github.com/${{ github.repository }}/releases/latest/download/bloodbash-linux-x64
-            - Windows: https://github.com/${{ github.repository }}/releases/latest/download/bloodbash-windows-x64.exe
-
-            ```bash
-            # Linux
-            chmod +x bloodbash-linux-x64
-            ./bloodbash-linux-x64 /path/to/sharphound --all
-            ```
-
-            ```powershell
-            # Windows
-            .\bloodbash-windows-x64.exe C:\path\to\sharphound --all
-            ```
-
-            ---
-            [SquidSec](https://squidoffense.com/) · [BloodBash on GitHub](https://github.com/${{ github.repository }})
+      - name: Create GitHub Release (retry)
+        if: steps.release.outcome == 'failure'
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.release_name }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          make_latest: true
+          body_path: release-final/release-notes.md
           files: |
             release-final/bloodbash-linux-x64
             release-final/bloodbash-windows-x64.exe
