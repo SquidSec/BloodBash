@@ -143,7 +143,7 @@ More recipes: [docs/cookbook.md](docs/cookbook.md).
 | **Path remediation** | Busiest-path ranking (`--busiest-paths`), edge removal recommendations (`--path-break`) |
 | **Inventory** | Password-age ladders, stale/inactive accounts, privilege groups, structural (domains/DCs/trusts), owned-object inventory, **stats dashboard with %** |
 | **PlumHound-style CSV pack** | `--csv-pack DIR`: multi-CSV inventory (domains, DA, roastables, LAPS, Everyone/overpriv edges, computer AdminTo computer, dual priv+local admin, bulk AdminTo hosts) + `index.csv` |
-| **Task-list projection** | Read-only Neo4j-shaped view of the graph: BloodHound labels (`User`, `Computer`, `Domain`, …), `AZ*` Entra labels, `objectid`/`highvalue`/`owned`/`hasspn` properties. Foundation for PlumHound `.tasks` support; the analysis graph is never mutated |
+| **Task-list projection** | Read-only Neo4j-shaped view of the graph: BloodHound labels (`User`, `Computer`, `Domain`, …), `AZ*` Entra labels, `objectid`/`highvalue`/`owned`/`hasspn` properties, and synthesized relationships (`DCSync`, `AdminTo`, `TrustedBy`, `AllowedToDelegate`, `AZOwns`). Foundation for PlumHound `.tasks` support; the analysis graph is never mutated |
 | **Multi-input** | `--merge PATH…` unions additional dirs/zips into one graph (multi-domain / dual low-priv+DA collections) |
 | **Other** | **Collection health** banner (object counts, session/AdminTo/RDP coverage, ADCS presence), LAPS coverage (`haslaps`) + **LAPS password readers** (`ReadLAPSPassword`), GPO XML (`--gpo-content-dir`), domain `Trusts[]` edges, group nesting, `--list-domains` |
 
