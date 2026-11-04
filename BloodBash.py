@@ -3876,13 +3876,18 @@ class _NodeRef:
 
 
 class _RelRef:
-    __slots__ = ("rel_type",)
+    __slots__ = ("rel_type", "attrs")
 
-    def __init__(self, rel_type: str):
+    def __init__(self, rel_type: str, attrs: Optional[dict] = None):
         self.rel_type = rel_type
+        self.attrs = attrs or {}
 
     def __eq__(self, other):
-        return isinstance(other, _RelRef) and other.rel_type == self.rel_type
+        return (
+            isinstance(other, _RelRef)
+            and other.rel_type == self.rel_type
+            and other.attrs == self.attrs
+        )
 
     def __hash__(self):
         return hash(("rel", self.rel_type))
@@ -4477,6 +4482,10 @@ def parse_cypher(text: str) -> ParsedQuery:
 
 # ── evaluation ───────────────────────────────────────────────────
 def _prop_value(P, ref, prop: str):
+    if isinstance(ref, _RelRef):
+        if prop in ref.attrs:
+            return ref.attrs[prop]
+        return ref.attrs.get(prop.lower())
     if not isinstance(ref, _NodeRef):
         return None
     props = (P.nodes.get(ref.oid) or {}).get("props") or {}
@@ -4776,7 +4785,7 @@ def _edge_candidates(P, cur: _NodeRef, rel: _RelPat):
         rel_type = str((data or {}).get("rel_type") or (data or {}).get("label") or "")
         if rel.types and rel_type not in rel.types and rel_type.upper() not in {t.upper() for t in rel.types}:
             continue
-        yield _NodeRef(other), _RelRef(rel_type)
+        yield _NodeRef(other), _RelRef(rel_type, data or {})
 
 
 def _expand(P, start: _NodeRef, rel: _RelPat):
@@ -4785,7 +4794,7 @@ def _expand(P, start: _NodeRef, rel: _RelPat):
     min_hops = max(0, rel.min_hops)
     max_hops = max(min_hops, rel.max_hops)
     if min_hops == 0:
-        yield start, _RelRef(rel.types[0] if rel.types else "")
+        yield start, _RelRef(rel.types[0] if rel.types else "", {})
     if max_hops == 0:
         return
     frontier = [(start, None)]
@@ -5199,6 +5208,112 @@ def execute_task_query(query: str, projection) -> TaskResult:
             part_rows = [r for r in part_rows if tuple(repr(c) for c in r) not in seen]
         all_rows.extend(part_rows)
     return TaskResult(title="", columns=columns, rows=all_rows, query=text)
+
+
+def list_bundled_task_lists() -> List[Dict[str, str]]:
+    """Example task lists shipped under ``tasks/`` (MIT, authored for BloodBash)."""
+    directory = _builtin_tasks_dir()
+    rows: List[Dict[str, str]] = []
+    if not directory.is_dir():
+        return rows
+    for path in sorted(directory.glob("*.tasks")):
+        rows.append({
+            "name": path.name,
+            "path": str(path),
+            "tasks": str(len(parse_task_file(str(path)))),
+        })
+    return rows
+
+
+def print_bundled_task_lists() -> None:
+    rows = list_bundled_task_lists()
+    if not rows:
+        console.print("[yellow]No example task lists found under tasks/[/yellow]")
+        return
+    table = Table(title="Example task lists", show_header=True, header_style="bold cyan")
+    table.add_column("File")
+    table.add_column("Tasks", justify="right")
+    table.add_column("Path")
+    for row in rows:
+        table.add_row(row["name"], row["tasks"], row["path"])
+    console.print(table)
+    console.print(
+        "[dim]Run one with: bloodbash DIR --tasks "
+        f"{rows[0]['path']} --tasks-out ./task-reports[/dim]"
+    )
+
+
+def _recording_executor(execute, failures: List[str]):
+    """Wrap an executor so failed task titles can drive ``--tasks-strict``."""
+    def _run(query, projection=None):
+        try:
+            return execute(query, projection)
+        except Exception as exc:
+            failures.append(str(exc))
+            raise
+    return _run
+
+
+def _builtin_tasks_dir() -> Path:
+    try:
+        base = Path(__file__).resolve().parent
+    except NameError:
+        base = Path.cwd()
+    return base / "tasks"
+
+
+def run_tasks_for_cli(
+    paths: Sequence[str],
+    G,
+    export_dir: str,
+    strict: bool = False,
+    fmt_override: Optional[str] = None,
+    owned=None,
+    domain_filter=None,
+) -> List[str]:
+    """Parse and run every list into one output directory.
+
+    ``strict`` turns a parse or query failure into an exception so the CLI can
+    exit non-zero; the default matches PlumHound and keeps going.
+    """
+    specs: List[TaskSpec] = []
+    parse_errors: List[str] = []
+    for path in paths:
+        file_specs = parse_task_file(path)
+        for spec in file_specs:
+            if not spec.ok:
+                parse_errors.append(f"{path}:{spec.line_no}: {spec.error}")
+            if fmt_override and spec.ok:
+                spec.fmt = fmt_override
+        specs.extend(file_specs)
+    if parse_errors:
+        for line in parse_errors:
+            console.print(f"[yellow]{rich_escape(line)}[/yellow]")
+        if strict:
+            raise TaskListError(f"{len(parse_errors)} task line(s) could not be parsed")
+    if not specs:
+        console.print("[yellow]No tasks found in the supplied list(s)[/yellow]")
+        return []
+    execute = default_task_executor(G, owned=owned, domain_filter=domain_filter)
+    failures: List[str] = []
+    wrapped = _recording_executor(execute, failures)
+    written = run_task_specs(
+        specs,
+        G,
+        export_dir,
+        execute=wrapped,
+        owned=owned,
+        domain_filter=domain_filter,
+    )
+    if strict and failures:
+        raise TaskQueryError(
+            f"{len(failures)} task(s) failed: " + "; ".join(failures[:5])
+        )
+    console.print(
+        f"[green]Task reports written:[/green] {os.path.abspath(export_dir)} "
+        f"({len(written)} file(s))"
+    )
+    return written
 
 
 def format_path(G, path):
@@ -10229,6 +10344,10 @@ def cli_has_explicit_analysis_intent(args) -> bool:
         return True
     if getattr(args, "profile", None):
         return True
+    if getattr(args, "tasks", None):
+        return True
+    if getattr(args, "tasks_list", False):
+        return True
     if getattr(args, "list_domains", False):
         return True
     if getattr(args, "wizard", False):
@@ -13949,6 +14068,7 @@ HELP_TABLE_SECTIONS = [
             ("--verbose", "Print verbose graph summary", ""),
             ("--debug", "Verbose parse/build logging", "troubleshooting"),
             ("--all-findings", "End with a full findings table (every row)", "always prints, even if empty"),
+            ("--tasks FILE…", "Run PlumHound-style .tasks list(s)", "query subset, no Neo4j"),
             ("-h, --help", "Short help: start here + cheat sheet", ""),
             ("--help-advanced", "Full flag tables + all examples", ""),
         ],
@@ -14053,6 +14173,12 @@ HELP_TABLE_SECTIONS = [
             ("--dot [FILE]", "Graphviz DOT export", "default: bloodbash.dot"),
             ("--report-pack DIR", "Multi-page HTML suite + CSVs + index.html", ""),
             ("--csv-pack DIR", "PlumHound-style multi-CSV inventory pack", "index.csv + overpriv + AdminTo"),
+            ("--tasks FILE…", "Run PlumHound-style .tasks list(s)", "--tasks-out, --tasks-format"),
+            ("--tasks-out DIR", "Output directory for --tasks reports", "default: task-reports/"),
+            ("--tasks-format FMT", "Override every task's output format", "CSV|HTML|HTMLCSV|STDOUT|ZIP"),
+            ("--tasks-strict", "Exit 2 when any task fails", "default: report and continue"),
+            ("--tasks-validate FILE…", "Parse and list tasks without running", "0 clean, 2 on errors"),
+            ("--tasks-list", "List example lists shipped in tasks/", "MIT-licensed samples"),
             ("--export-zip [FILE]", "Zip --report-pack or --csv-pack", "default: bloodbash-reports.zip"),
             ("--all-findings", "Print complete findings table at end of run", "not limited to top 20"),
             ("--log-file [FILE]", "Write a run audit log", "default: bloodbash.log"),
@@ -14182,6 +14308,13 @@ HELP_EXAMPLE_SECTIONS = [
             ("Custom profile file", "{prog} ./sharpout --profile ./my-engagement.yaml"),
             ("HTML report pack + zip", "{prog} ./sharpout --inventory --busiest-paths short --path-break --report-pack ./reports --export-zip bloodbash-reports.zip"),
             ("PlumHound-style multi-CSV pack", "{prog} ./sharpout --csv-pack ./ph-reports"),
+            ("PlumHound task list", "{prog} ./sharpout --tasks ./my-list.tasks"),
+            ("Task list + output dir", "{prog} ./sharpout --tasks ./my-list.tasks --tasks-out ./task-reports"),
+            ("Task list + zip", "{prog} ./sharpout --tasks ./my-list.tasks --tasks-out ./task-reports --export-zip tasks.zip"),
+            ("Validate a task list", "{prog} --tasks-validate ./my-list.tasks"),
+            ("Example task lists", "{prog} --tasks-list"),
+            ("Sample: shipped core list", "{prog} ./sharpout --tasks tasks/core.tasks --tasks-out ./task-reports"),
+            ("Tasks alongside full analysis", "{prog} ./sharpout --all --fast --tasks ./my-list.tasks"),
             ("CSV pack + zip deliverable", "{prog} ./sharpout --csv-pack ./ph-reports --export-zip ph-reports.zip"),
             ("Markdown / HTML / CSV export", "{prog} ./sharpout --all --export=html"),
             ("JSON export + BH graph + DOT", "{prog} ./sharpout --all --export=json --export-bh --dot graph.dot"),
@@ -14747,6 +14880,37 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Write a run log file (default bloodbash.log)",
     )
     parser.add_argument(
+        "--tasks",
+        nargs="+",
+        action="append",
+        metavar="FILE",
+        help=(
+            "Run PlumHound-style .tasks list(s). Repeatable; lists run in order "
+            "into one output directory"
+        ),
+    )
+    parser.add_argument(
+        "--tasks-out",
+        metavar="DIR",
+        help="Output directory for --tasks reports (default task-reports/)",
+    )
+    parser.add_argument(
+        "--tasks-format",
+        choices=sorted(TASK_FORMATS),
+        metavar="FMT",
+        help="Override the output format of every task in the list",
+    )
+    parser.add_argument(
+        "--tasks-strict",
+        action="store_true",
+        help="Exit 2 when any task fails to parse or run (default: report and continue)",
+    )
+    parser.add_argument(
+        "--tasks-list",
+        action="store_true",
+        help="List the example task lists shipped in tasks/ and exit",
+    )
+    parser.add_argument(
         "--tasks-validate",
         nargs="+",
         metavar="FILE",
@@ -14770,6 +14934,16 @@ def main():
 
     if getattr(args, "tasks_validate", None):
         sys.exit(validate_task_list_cli(args.tasks_validate, prog=parser.prog))
+
+    if getattr(args, "tasks_list", False):
+        print_bundled_task_lists()
+        sys.exit(0)
+
+    # --tasks: run the lists and exit. --all/--quick-wins alongside it run the
+    # normal analysis first, then the tasks, in one invocation.
+    run_tasks_only = bool(getattr(args, "tasks", None)) and not (
+        args.all or getattr(args, "quick_wins", False) or getattr(args, "profile", None)
+    )
 
     # --watch: re-run the same invocation when collector files change
     if getattr(args, "watch", None) is not None:
@@ -14937,6 +15111,24 @@ def main():
     if warn_if_domain_filter_empty(G, args.domain):
         sys.exit(3)
 
+    # --tasks without a normal analysis mode: run the lists and stop here.
+    if run_tasks_only:
+        export_dir = args.tasks_out or os.path.join(os.getcwd(), "task-reports")
+        try:
+            run_tasks_for_cli(
+                [path for group in args.tasks for path in group],
+                G,
+                export_dir,
+                strict=bool(getattr(args, "tasks_strict", False)),
+                fmt_override=getattr(args, "tasks_format", None),
+                owned=getattr(args, "owned", None),
+                domain_filter=args.domain,
+            )
+        except (TaskListError, TaskQueryError, OSError) as exc:
+            console.print(f"[red]--tasks failed: {exc}[/red]")
+            sys.exit(2)
+        return
+
     run_inventory = bool(args.inventory)
     if run_inventory:
         args.password_age = True
@@ -14976,6 +15168,7 @@ def main():
         getattr(args, "trust", False),
         getattr(args, "deep_paths", False),
         getattr(args, "path_mode", None),
+        getattr(args, "tasks", None),
     ])
     run_all = args.all or not selected_checks
     # Pure compromise-dossier run should not pull in default "run everything"
@@ -15269,6 +15462,21 @@ def main():
         export_to_dot(G, args.dot, args.domain)
     if getattr(args, "graphml", None):
         export_graphml(G, args.graphml, args.domain)
+    if getattr(args, "tasks", None):
+        export_dir = args.tasks_out or os.path.join(os.getcwd(), "task-reports")
+        try:
+            run_tasks_for_cli(
+                [path for group in args.tasks for path in group],
+                G,
+                export_dir,
+                strict=bool(getattr(args, "tasks_strict", False)),
+                fmt_override=getattr(args, "tasks_format", None),
+                owned=getattr(args, "owned", None),
+                domain_filter=args.domain,
+            )
+        except (TaskListError, TaskQueryError, OSError) as exc:
+            console.print(f"[red]--tasks failed: {exc}[/red]")
+            sys.exit(2)
 
     # Suppressions, baseline diff, SARIF, tickets, snapshots, plugin detectors
     suppressions = SuppressionSet()
