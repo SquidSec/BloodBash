@@ -28,6 +28,7 @@ REQUIRED = (
     "test_task_query_evaluator.py",
     "test_task_path_functions.py",
     "test_task_cli.py",
+    "test_task_parity.py",
     "test_version_consistency.py",
     "test_ci_pytest_suite.py",
 )
