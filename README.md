@@ -393,6 +393,40 @@ bloodbash . --db bloodbash.db --from-user alice --from-user-export
 | `bulk_adminto_hosts.csv` | Principals ranked by AdminTo host count |
 | `index.csv` | Report index (file → row count) |
 
+### PlumHound task lists
+
+BloodBash can read PlumHound `.tasks` files: one task per line, as a four-element
+Python list literal.
+
+```text
+["Domains", "HTMLCSV", "Domains", "MATCH (n:Domain) RETURN n.name AS Domain"]
+["Index", "HTML", "index", "REPORT-INDEX"]
+```
+
+| Field | Meaning |
+|-------|---------|
+| 1 | Report title |
+| 2 | Output format: `CSV`, `HTML`, `HTMLCSV`, `STDOUT`, `ZIP` |
+| 3 | Output filename (an extension is added from the format when missing) |
+| 4 | Query, or the `REPORT-INDEX` / `ZIP-TASKS` sentinel |
+
+Blank lines and lines starting with `#` or `//` are ignored. The `HTLMCSV` typo
+that appears in some task lists is accepted.
+
+```bash
+# Parse and list every task without running anything
+bloodbash --tasks-validate ./my-list.tasks
+bloodbash --tasks-validate tasks/default.tasks tasks/hunt.tasks
+```
+
+The validator prints one row per task with its resolved output filename and a
+per-line status, then exits `0` when the list is clean or `2` when any line
+cannot run. A broken line is reported and skipped; the remaining tasks stay
+valid.
+
+PlumHound task lists are GPL-3.0. BloodBash reads the file you point it at and
+ships none of them.
+
 ### Azure / Entra
 
 ```bash
