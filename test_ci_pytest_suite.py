@@ -21,6 +21,7 @@ REQUIRED = (
     "test_detector_fixes.py",
     "test_reporting_features.py",
     "test_coverage_additions.py",
+    "test_task_projection.py",
     "test_version_consistency.py",
     "test_ci_pytest_suite.py",
 )
