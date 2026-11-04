@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import ast
 import json
 import os
 import sys
@@ -8,6 +9,7 @@ import logging
 import re
 import networkx as nx
 from collections import defaultdict, Counter
+from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from rich.console import Console
 from rich.markup import escape as rich_escape
@@ -3332,6 +3334,181 @@ def build_bloodhound_projection(G, owned=None, domain_filter=None):
 def clear_projection_cache() -> None:
     """Drop cached projections (tests and long-lived watch runs)."""
     _PROJECTION_CACHE.clear()
+
+
+# ────────────────────────────────────────────────
+# PlumHound-style task lists (.tasks parser)
+# ────────────────────────────────────────────────
+# A task line is a four-element Python list literal:
+#   ["Title", "FORMAT", "OutFile", "CYPHER"]
+# Parsing is deliberately permissive on layout and strict on semantics: one
+# broken line is reported and skipped so the rest of an engagement list runs.
+TASK_FORMATS = frozenset({"CSV", "HTML", "HTMLCSV", "STDOUT", "ZIP"})
+
+# PlumHound ships "HTLMCSV" in a couple of task files; accept the typo.
+TASK_FORMAT_ALIASES = {
+    "HTLMCSV": "HTMLCSV",
+    "HTML-CSV": "HTMLCSV",
+    "TXT": "CSV",
+}
+
+TASK_SENTINELS = frozenset({"REPORT-INDEX", "ZIP-TASKS"})
+
+TASK_FORMAT_EXTENSIONS = {
+    "CSV": ".csv",
+    "HTML": ".html",
+    "HTMLCSV": ".html",
+    "STDOUT": "",
+    "ZIP": ".zip",
+}
+
+
+class TaskListError(ValueError):
+    """Raised when a task list cannot be read at all (missing file, IO error)."""
+
+
+@dataclass
+class TaskSpec:
+    """One parsed task line."""
+
+    title: str
+    fmt: str
+    outfile: str
+    query: str
+    line_no: int = 0
+    error: Optional[str] = None
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None
+
+    @property
+    def is_sentinel(self) -> bool:
+        return self.query.strip().upper() in TASK_SENTINELS
+
+    def effective_outfile(self) -> str:
+        """Output filename with the format's extension when it has none."""
+        name = (self.outfile or "").strip()
+        if not name:
+            return ""
+        ext = TASK_FORMAT_EXTENSIONS.get(self.fmt, "")
+        if not ext:
+            return name
+        if os.path.splitext(name)[1]:
+            return name
+        return name + ext
+
+
+def _normalize_task_format(raw: str) -> Optional[str]:
+    key = str(raw or "").strip().upper()
+    if not key:
+        return None
+    key = TASK_FORMAT_ALIASES.get(key, key)
+    return key if key in TASK_FORMATS else None
+
+
+def parse_task_line(line: str, line_no: int = 0) -> TaskSpec:
+    """Parse one task line. Failures are returned as a ``TaskSpec`` with ``error``."""
+    text = (line or "").strip().lstrip("\ufeff")
+    try:
+        parsed = ast.literal_eval(text)
+    except (ValueError, SyntaxError) as exc:
+        return TaskSpec("", "", "", "", line_no=line_no, error=f"unparseable line: {exc}")
+    if not isinstance(parsed, (list, tuple)):
+        return TaskSpec("", "", "", "", line_no=line_no, error="task must be a list literal")
+    if len(parsed) != 4:
+        return TaskSpec(
+            "", "", "", "", line_no=line_no,
+            error=f"expected 4 fields (title, format, file, query), got {len(parsed)}",
+        )
+    title, fmt_raw, outfile, query = (str(p) if p is not None else "" for p in parsed)
+    fmt = _normalize_task_format(fmt_raw)
+    if not fmt:
+        return TaskSpec(
+            title, fmt_raw, outfile, query, line_no=line_no,
+            error=f"unsupported format {fmt_raw!r} (use {', '.join(sorted(TASK_FORMATS))})",
+        )
+    query = query.strip()
+    if not query:
+        return TaskSpec(title, fmt, outfile, query, line_no=line_no, error="empty query")
+    return TaskSpec(title, fmt, outfile, query, line_no=line_no)
+
+
+def parse_task_file(path: str) -> List[TaskSpec]:
+    """Parse a ``.tasks`` file into specs. Blank and comment lines are skipped."""
+    file_path = Path(path)
+    if not file_path.is_file():
+        raise FileNotFoundError(f"Task list not found: {path}")
+    try:
+        text = file_path.read_text(encoding="utf-8-sig")
+    except OSError as exc:
+        raise TaskListError(f"Cannot read task list {path}: {exc}") from exc
+    specs: List[TaskSpec] = []
+    for idx, raw in enumerate(text.splitlines(), start=1):
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#") or stripped.startswith("//"):
+            continue
+        specs.append(parse_task_line(stripped, line_no=idx))
+    return specs
+
+
+def summarize_task_list(specs: Sequence[TaskSpec]) -> Dict[str, Any]:
+    """Counts used by the validator and the run summary."""
+    errors = [s for s in specs if not s.ok]
+    return {
+        "tasks": len(specs),
+        "valid": len(specs) - len(errors),
+        "errors": len(errors),
+        "sentinels": sum(1 for s in specs if s.ok and s.is_sentinel),
+        "formats": dict(Counter(s.fmt for s in specs if s.ok)),
+    }
+
+
+def validate_task_list_cli(paths: Sequence[str], prog: Optional[str] = None) -> int:
+    """Print a parsed-task table. Exit 0 when every list is clean, 2 otherwise."""
+    prog = _display_prog_name(prog)
+    total_errors = 0
+    for path in paths:
+        try:
+            specs = parse_task_file(path)
+        except (OSError, TaskListError) as exc:
+            console.print(f"[red]{exc}[/red]")
+            total_errors += 1
+            continue
+        summary = summarize_task_list(specs)
+        total_errors += summary["errors"]
+        table = Table(
+            title=f"{path} — {summary['valid']}/{summary['tasks']} task(s)",
+            show_header=True,
+            header_style="bold cyan",
+            expand=True,
+        )
+        table.add_column("Line", justify="right")
+        table.add_column("Title")
+        table.add_column("Format")
+        table.add_column("Output")
+        table.add_column("Status")
+        for spec in specs:
+            status = "[green]ok[/green]" if spec.ok else f"[red]{rich_escape(spec.error or 'error')}[/red]"
+            table.add_row(
+                str(spec.line_no),
+                rich_escape(spec.title),
+                rich_escape(spec.fmt),
+                rich_escape(spec.effective_outfile()),
+                status,
+            )
+        console.print(table)
+        if summary["errors"]:
+            console.print(
+                f"[yellow]{summary['errors']} line(s) cannot run; "
+                "the remaining tasks are still valid[/yellow]"
+            )
+    if total_errors:
+        console.print(f"[red]Task list validation failed: {total_errors} error(s)[/red]")
+        return 2
+    console.print(f"[green]Task lists valid[/green] ({len(paths)} file(s))")
+    console.print(f"[dim]Run with: {prog} DIR --tasks FILE --tasks-out DIR[/dim]")
+    return 0
 
 
 def format_path(G, path):
@@ -12879,6 +13056,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         metavar="FILE",
         help="Write a run log file (default bloodbash.log)",
     )
+    parser.add_argument(
+        "--tasks-validate",
+        nargs="+",
+        metavar="FILE",
+        help="Parse .tasks list(s), print every task, and exit (0 clean, 2 on errors)",
+    )
     return parser
 
 
@@ -12894,6 +13077,9 @@ def main():
     if getattr(args, "help_advanced", False):
         print_structured_help(prog=parser.prog, advanced=True)
         sys.exit(0)
+
+    if getattr(args, "tasks_validate", None):
+        sys.exit(validate_task_list_cli(args.tasks_validate, prog=parser.prog))
 
     # --watch: re-run the same invocation when collector files change
     if getattr(args, "watch", None) is not None:
