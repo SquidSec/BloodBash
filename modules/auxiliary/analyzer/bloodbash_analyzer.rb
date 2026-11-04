@@ -108,6 +108,10 @@ class MetasploitModule < Msf::Auxiliary
       OptString.new('EXPORT', [false, 'Export format (md, json, html, csv, yaml)', nil, ['md', 'json', 'html', 'csv', 'yaml']]),
       OptString.new('DOT', [false, 'Export key subgraph to Graphviz DOT file (optional filename)', nil]),
       OptString.new('REPORT_PACK', [false, 'Write multi-page HTML report suite + CSVs + index.html to DIR', nil]),
+      OptString.new('TASKS', [false, 'PlumHound-style .tasks file(s), comma-separated', nil]),
+      OptString.new('TASKS_OUT', [false, 'Output directory for task reports (default task-reports/)', nil]),
+      OptString.new('TASKS_FORMAT', [false, 'Override every task output format', nil, ['CSV', 'HTML', 'HTMLCSV', 'STDOUT', 'ZIP']]),
+      OptBool.new('TASKS_STRICT', [false, 'Fail the run when any task fails', false]),
       OptString.new('EXPORT_ZIP', [false, 'Zip the report pack (empty string → bloodbash-reports.zip)', nil]),
       OptString.new('DB', [false, 'SQLite DB path for graph persistence (save/load)', nil]),
 
@@ -209,6 +213,18 @@ class MetasploitModule < Msf::Auxiliary
     add_string_option(cmd, '--db', datastore['DB'])
     add_string_option(cmd, '--profile', datastore['PROFILE'])
     add_string_option(cmd, '--report-pack', datastore['REPORT_PACK'])
+    add_string_option(cmd, '--tasks-out', datastore['TASKS_OUT'])
+    add_string_option(cmd, '--tasks-format', datastore['TASKS_FORMAT'])
+
+    # Task lists: one --tasks flag followed by every file, matching the CLI.
+    unless datastore['TASKS'].to_s.strip.empty?
+      files = datastore['TASKS'].to_s.split(',').map(&:strip).reject(&:empty?)
+      unless files.empty?
+        cmd << '--tasks'
+        files.each { |f| cmd << File.expand_path(f) }
+      end
+    end
+    cmd << '--tasks-strict' if datastore['TASKS_STRICT']
 
     # Optional-value flags (CLI nargs='?'): present with or without a path/mode
     add_optional_value_flag(cmd, '--from-user-export', datastore['FROM_USER_EXPORT'])
