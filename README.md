@@ -441,6 +441,24 @@ stripped, and spreadsheet formula injection is neutralized the same way the CSV
 pack already does it. A task that fails to parse or run is recorded in the index
 with its error and the rest of the list still executes.
 
+#### Supported query subset
+
+Queries run against the task projection, without Neo4j. Everything below is
+supported; anything else fails that one task with the offending clause named.
+
+| Area | Supported |
+|------|-----------|
+| Clauses | `MATCH`, `OPTIONAL MATCH`, `WHERE`, `WITH`, `RETURN`, `ORDER BY`, `LIMIT`, `UNWIND`, `UNION`, `UNION ALL` |
+| Patterns | single and multi-pattern, `,` joins, directed and undirected, relationship alternation `[:A\|B]`, variable length `*n..m`, property maps `{a: b}`, inline `WHERE` inside a node pattern, `p =` path variables |
+| Predicates | `=`, `<>`, `<`, `<=`, `>`, `>=`, `CONTAINS`, `STARTS WITH`, `ENDS WITH`, `IN`, `=~`, `IS [NOT] NULL`, `AND`, `OR`, `NOT`, `ANY`/`ALL`/`NONE`/`SINGLE`, `EXISTS(pattern)` |
+| Aggregates | `count`, `count(DISTINCT …)`, `collect`, `sum`, `avg`, `min`, `max`, implicit grouping |
+| Functions | `labels`, `type`, `head`, `last`, `size`, `length`, `keys`, `properties`, `toUpper`, `toLower`, `toInteger`, `toFloat`, `toString`, `coalesce`, `datetime({epochSeconds})`, `timestamp`, `range`, list indexing `x[0]` |
+
+`shortestPath` and `allShortestPaths` are not supported yet. Queries that use
+them report the function name and are skipped; the rest of the list still runs.
+Write clauses (`CREATE`, `MERGE`, `SET`, `DELETE`, `REMOVE`) are rejected
+because BloodBash only reads a collection.
+
 PlumHound task lists are GPL-3.0. BloodBash reads the file you point it at and
 ships none of them.
 

@@ -3686,13 +3686,14 @@ def zip_task_outputs(source_dir: str, zip_path: str) -> str:
 
 
 def default_task_executor(G, owned=None, domain_filter=None):
-    """Return ``execute(query, projection)`` for the task runner.
-
-    The query engine arrives in a later change; until then the executor raises
-    a clear error per task instead of failing the whole run.
-    """
+    """Return ``execute(query, projection)`` backed by the native evaluator."""
     def _execute(query, projection=None):
-        raise TaskQueryError("query execution is not available in this build")
+        view = projection
+        if view is None:
+            view = build_bloodhound_projection(
+                G, owned=owned, domain_filter=domain_filter
+            )
+        return execute_task_query(query, view)
     return _execute
 
 
@@ -3773,6 +3774,1338 @@ def run_task_specs(
     if not has_index_sentinel:
         written.append(write_task_index(results, export_dir))
     return written
+
+
+# ────────────────────────────────────────────────
+# Native Cypher subset evaluator (task lists)
+# ────────────────────────────────────────────────
+# Task lists are written against Neo4j. Rather than require a graph database,
+# this module evaluates the read-only subset those lists actually use against
+# the projection graph. Anything outside the subset raises TaskQueryError with
+# the offending text, so a task is reported and skipped instead of silently
+# producing an empty report.
+TASK_MAX_HOPS = 10
+
+TASK_WRITE_CLAUSES = frozenset({
+    "CREATE", "MERGE", "SET", "DELETE", "DETACH", "REMOVE", "FOREACH",
+})
+TASK_UNSUPPORTED_CLAUSES = frozenset({"CALL", "LOAD", "USE", "PROFILE", "EXPLAIN"})
+
+TASK_AGGREGATES = frozenset({"count", "collect", "sum", "avg", "min", "max"})
+
+TASK_SCALAR_FUNCTIONS = frozenset({
+    "labels", "type", "head", "last", "size", "length", "keys", "properties",
+    "toupper", "tolower", "tointeger", "tofloat", "tostring", "coalesce",
+    "datetime", "timestamp", "exists", "startnode", "endnode", "nodes",
+    "relationships", "range",
+})
+
+_TOKEN_SPEC = re.compile(
+    r"""
+      (?P<ws>\s+)
+    | (?P<str>'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*")
+    | (?P<bname>`[^`]*`)
+    | (?P<param>\$[A-Za-z_]\w*)
+    | (?P<num>\d+(?:\.\d+)?)
+    | (?P<name>[A-Za-z_]\w*)
+    | (?P<op><>|<=|>=|=~|\.\.|<>|[<>=+\-*/%])
+    | (?P<punct>[()\[\]{},:.|])
+    """,
+    re.VERBOSE,
+)
+
+
+class _Token:
+    __slots__ = ("kind", "text", "value")
+
+    def __init__(self, kind: str, text: str, value: Any = None):
+        self.kind = kind
+        self.text = text
+        self.value = value
+
+    def __repr__(self) -> str:
+        return f"_Token({self.kind},{self.text!r})"
+
+
+def _task_tokenize(text: str) -> List[_Token]:
+    tokens: List[_Token] = []
+    pos = 0
+    while pos < len(text):
+        match = _TOKEN_SPEC.match(text, pos)
+        if not match:
+            raise TaskQueryError(f"unexpected character {text[pos]!r} in: {text}")
+        pos = match.end()
+        kind = match.lastgroup
+        raw = match.group()
+        if kind == "ws":
+            continue
+        if kind == "str":
+            try:
+                value = ast.literal_eval(raw)
+            except (ValueError, SyntaxError) as exc:
+                raise TaskQueryError(f"bad string literal {raw}: {exc}") from exc
+            tokens.append(_Token("str", raw, value))
+        elif kind == "bname":
+            tokens.append(_Token("name", raw, raw[1:-1]))
+        elif kind == "num":
+            value = float(raw) if "." in raw else int(raw)
+            tokens.append(_Token("num", raw, value))
+        elif kind == "param":
+            tokens.append(_Token("param", raw, raw[1:]))
+        elif kind == "name":
+            tokens.append(_Token("name", raw, raw))
+        else:
+            tokens.append(_Token("op" if kind == "op" else "punct", raw))
+    return tokens
+
+
+class _NodeRef:
+    __slots__ = ("oid",)
+
+    def __init__(self, oid):
+        self.oid = oid
+
+    def __eq__(self, other):
+        return isinstance(other, _NodeRef) and other.oid == self.oid
+
+    def __hash__(self):
+        return hash(("node", self.oid))
+
+    def __repr__(self) -> str:
+        return f"<node {self.oid}>"
+
+
+class _RelRef:
+    __slots__ = ("rel_type",)
+
+    def __init__(self, rel_type: str):
+        self.rel_type = rel_type
+
+    def __eq__(self, other):
+        return isinstance(other, _RelRef) and other.rel_type == self.rel_type
+
+    def __hash__(self):
+        return hash(("rel", self.rel_type))
+
+
+class _DateTime:
+    """Marker so ``datetime(...)`` renders consistently through ``toString``."""
+
+    def __init__(self, epoch_seconds: Optional[float]):
+        self.epoch_seconds = epoch_seconds
+
+    def iso(self) -> str:
+        if self.epoch_seconds is None:
+            return ""
+        try:
+            return datetime.fromtimestamp(
+                float(self.epoch_seconds), tz=timezone.utc
+            ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        except (OverflowError, OSError, ValueError):
+            return ""
+
+
+class _NodePat:
+    __slots__ = ("var", "label", "props", "inline_where")
+
+    def __init__(self, var, label, props):
+        self.var = var
+        self.label = label
+        self.props = props or {}
+        self.inline_where = None
+
+
+class _RelPat:
+    __slots__ = ("var", "types", "min_hops", "max_hops", "direction")
+
+    def __init__(self, var, types, min_hops, max_hops, direction):
+        self.var = var
+        self.types = types
+        self.min_hops = min_hops
+        self.max_hops = max_hops
+        self.direction = direction
+
+
+class _Clause:
+    __slots__ = ("kind", "optional", "patterns", "expr", "items", "order", "limit",
+                 "distinct", "unwind_expr", "unwind_alias", "where", "path_var", "text")
+
+    def __init__(self, kind: str, **kwargs):
+        self.kind = kind
+        self.optional = kwargs.get("optional", False)
+        self.patterns = kwargs.get("patterns")
+        self.expr = kwargs.get("expr")
+        self.items = kwargs.get("items")
+        self.order = kwargs.get("order")
+        self.limit = kwargs.get("limit")
+        self.distinct = kwargs.get("distinct", False)
+        self.unwind_expr = kwargs.get("unwind_expr")
+        self.unwind_alias = kwargs.get("unwind_alias")
+        self.where = kwargs.get("where")
+        self.path_var = kwargs.get("path_var")
+        self.text = kwargs.get("text", "")
+
+    def __repr__(self) -> str:
+        return f"_Clause({self.kind})"
+
+
+class _ReturnItem:
+    __slots__ = ("expr", "alias", "text")
+
+    def __init__(self, expr, alias, text):
+        self.expr = expr
+        self.alias = alias
+        self.text = text
+
+    def name(self) -> str:
+        return self.alias or self.text
+
+
+class ParsedQuery(list):
+    """Clause list for the first query part, with every UNION part attached."""
+
+    def __init__(self, parts: List[List[_Clause]], union_all: Optional[List[bool]] = None):
+        super().__init__(parts[0] if parts else [])
+        self.parts = parts
+        # union_all[i] describes the separator before parts[i + 1].
+        self.union_all = list(union_all or [])
+
+
+_CLAUSE_STARTS = frozenset({
+    "MATCH", "OPTIONAL", "WHERE", "WITH", "RETURN", "ORDER", "LIMIT", "UNWIND",
+    "UNION", "SKIP",
+})
+
+
+class _QueryParser:
+    def __init__(self, text: str):
+        self.text = text.strip()
+        self.tokens = _task_tokenize(self.text)
+        self.i = 0
+
+    # ── token helpers ────────────────────────────────────────────
+    def peek(self, offset: int = 0) -> Optional[_Token]:
+        idx = self.i + offset
+        return self.tokens[idx] if idx < len(self.tokens) else None
+
+    def at_end(self) -> bool:
+        return self.i >= len(self.tokens)
+
+    def advance(self) -> _Token:
+        tok = self.peek()
+        if tok is None:
+            raise TaskQueryError(f"unexpected end of query in: {self.text}")
+        self.i += 1
+        return tok
+
+    def keyword(self, tok: Optional[_Token]) -> str:
+        if tok is None or tok.kind != "name":
+            return ""
+        return tok.text.upper()
+
+    def match_keyword(self, *names: str) -> bool:
+        if self.keyword(self.peek()) in names:
+            self.i += 1
+            return True
+        return False
+
+    def expect_keyword(self, name: str) -> None:
+        if not self.match_keyword(name):
+            tok = self.peek()
+            found = tok.text if tok else "end of query"
+            raise TaskQueryError(f"expected {name}, found {found!r} in: {self.text}")
+
+    def expect_punct(self, ch: str) -> None:
+        tok = self.peek()
+        if tok is None or tok.text != ch:
+            found = tok.text if tok else "end of query"
+            raise TaskQueryError(f"expected {ch!r}, found {found!r} in: {self.text}")
+        self.i += 1
+
+    def match_punct(self, ch: str) -> bool:
+        tok = self.peek()
+        if tok is not None and tok.text == ch:
+            self.i += 1
+            return True
+        return False
+
+    def at_clause_boundary(self) -> bool:
+        return self.keyword(self.peek()) in _CLAUSE_STARTS or self.at_end()
+
+    # ── query level ──────────────────────────────────────────────
+    def parse(self) -> ParsedQuery:
+        if not self.tokens:
+            raise TaskQueryError("empty query")
+        parts: List[List[_Clause]] = []
+        union_all: List[bool] = []
+        while True:
+            parts.append(self.parse_clauses())
+            if not self.match_keyword("UNION"):
+                break
+            union_all.append(self.match_keyword("ALL"))
+        if not self.at_end():
+            tok = self.peek()
+            raise TaskQueryError(
+                f"unexpected trailing input {tok.text!r} in: {self.text}"
+            )
+        return ParsedQuery(parts, union_all)
+
+    def parse_clauses(self) -> List[_Clause]:
+        clauses: List[_Clause] = []
+        while not self.at_end():
+            tok = self.peek()
+            kw = self.keyword(tok)
+            if kw == "UNION":
+                break
+            if kw in TASK_WRITE_CLAUSES:
+                raise TaskQueryError(
+                    f"unsupported clause {kw}: BloodBash queries are read-only ({self.text})"
+                )
+            if kw in TASK_UNSUPPORTED_CLAUSES:
+                raise TaskQueryError(f"unsupported clause {kw} in: {self.text}")
+            if kw == "OPTIONAL":
+                self.i += 1
+                self.expect_keyword("MATCH")
+                clauses.append(self.parse_match(optional=True))
+            elif kw == "MATCH":
+                self.i += 1
+                clauses.append(self.parse_match(optional=False))
+            elif kw == "WHERE":
+                self.i += 1
+                clauses.append(_Clause("where", expr=self.parse_expr(), text="WHERE"))
+            elif kw == "WITH":
+                self.i += 1
+                clauses.append(self.parse_projection("with"))
+            elif kw == "RETURN":
+                self.i += 1
+                clauses.append(self.parse_projection("return"))
+            elif kw == "UNWIND":
+                self.i += 1
+                clauses.append(self.parse_unwind())
+            elif kw == "ORDER":
+                self.i += 1
+                self.expect_keyword("BY")
+                clauses.append(_Clause("order", order=self.parse_order_items(), text="ORDER BY"))
+            elif kw == "LIMIT":
+                self.i += 1
+                tok = self.advance()
+                if tok.kind != "num":
+                    raise TaskQueryError(f"LIMIT needs a number, found {tok.text!r}")
+                clauses.append(_Clause("limit", limit=int(tok.value), text="LIMIT"))
+            elif kw == "SKIP":
+                raise TaskQueryError(f"unsupported clause SKIP in: {self.text}")
+            else:
+                raise TaskQueryError(
+                    f"unsupported clause {tok.text!r} in: {self.text}"
+                )
+        return clauses
+
+    def parse_match(self, optional: bool) -> _Clause:
+        path_var = None
+        tok = self.peek()
+        nxt = self.peek(1)
+        if (
+            tok is not None and tok.kind == "name"
+            and nxt is not None and nxt.text == "="
+        ):
+            path_var = tok.text
+            self.i += 2
+        patterns = [self.parse_chain()]
+        while self.match_punct(","):
+            patterns.append(self.parse_chain())
+        return _Clause(
+            "match", optional=optional, patterns=patterns, path_var=path_var, text="MATCH"
+        )
+
+    def parse_chain(self) -> List[Any]:
+        chain: List[Any] = [self.parse_node()]
+        while True:
+            tok = self.peek()
+            if tok is None:
+                break
+            if tok.text == "<":
+                self.i += 1
+                self.expect_punct("-")
+                rel = self.parse_rel(inbound=True)
+                self.expect_punct("-")
+                chain.append(rel)
+                chain.append(self.parse_node())
+            elif tok.text == "-":
+                self.i += 1
+                rel = self.parse_rel(inbound=False)
+                self.expect_punct("-")
+                outbound = self.match_punct(">")
+                rel.direction = "out" if outbound else "both"
+                chain.append(rel)
+                chain.append(self.parse_node())
+            else:
+                break
+        return chain
+
+    def parse_node(self) -> _NodePat:
+        self.expect_punct("(")
+        var = None
+        label = None
+        props: Dict[str, Any] = {}
+        tok = self.peek()
+        if tok is not None and tok.kind == "name":
+            var = tok.text
+            self.i += 1
+        if self.match_punct(":"):
+            label = self.advance().text
+        if self.match_punct("{"):
+            props = self.parse_map_body()
+        inline_where = None
+        if self.match_keyword("WHERE"):
+            inline_where = self.parse_expr()
+        self.expect_punct(")")
+        pat = _NodePat(var, label, props)
+        pat.inline_where = inline_where
+        return pat
+
+    def parse_rel(self, inbound: bool) -> _RelPat:
+        var = None
+        types: List[str] = []
+        min_hops, max_hops = 1, 1
+        if self.match_punct("["):
+            tok = self.peek()
+            nxt = self.peek(1)
+            if (
+                tok is not None and tok.kind == "name"
+                and nxt is not None and nxt.text in (":", "*", "]", "|")
+            ):
+                var = tok.text
+                self.i += 1
+            if self.match_punct(":"):
+                types.append(self.advance().text)
+                while self.match_punct("|"):
+                    self.match_punct(":")
+                    types.append(self.advance().text)
+            if self.match_punct("*"):
+                min_hops, max_hops = self.parse_hop_range()
+            self.expect_punct("]")
+        return _RelPat(var, types, min_hops, max_hops, "in" if inbound else "out")
+
+    def parse_hop_range(self) -> Tuple[int, int]:
+        low = None
+        high = None
+        tok = self.peek()
+        if tok is not None and tok.kind == "num":
+            low = int(tok.value)
+            self.i += 1
+        if self.peek() is not None and self.peek().text == "..":
+            self.i += 1
+            tok = self.peek()
+            if tok is not None and tok.kind == "num":
+                high = int(tok.value)
+                self.i += 1
+        if low is None and high is None:
+            return 1, TASK_MAX_HOPS
+        if low is None:
+            return 1, high
+        if high is None:
+            return low, TASK_MAX_HOPS
+        return low, high
+
+    def parse_map_body(self) -> Dict[str, Any]:
+        props: Dict[str, Any] = {}
+        if self.match_punct("}"):
+            return props
+        while True:
+            key = self.advance().text
+            self.expect_punct(":")
+            props[key.lower()] = self.parse_expr()
+            if self.match_punct(","):
+                continue
+            self.expect_punct("}")
+            return props
+
+    def parse_projection(self, kind: str) -> _Clause:
+        distinct = self.match_keyword("DISTINCT")
+        items = [self.parse_return_item()]
+        while self.match_punct(","):
+            items.append(self.parse_return_item())
+        where = None
+        order = None
+        limit = None
+        while True:
+            kw = self.keyword(self.peek())
+            if kw == "WHERE":
+                self.i += 1
+                where = self.parse_expr()
+            elif kw == "ORDER":
+                self.i += 1
+                self.expect_keyword("BY")
+                order = self.parse_order_items()
+            elif kw == "LIMIT":
+                self.i += 1
+                tok = self.advance()
+                limit = int(tok.value)
+            else:
+                break
+        if order and any(_contains_aggregate(e) for e, _d in order):
+            # ORDER BY count(...) refers to the projection alias of the same
+            # expression in Neo4j; sort by the projected column instead.
+            def _norm(text: str) -> str:
+                return re.sub(r"[\s()]+", "", str(text)).lower()
+
+            alias_by_text = {
+                _norm(item.text): item.name() for item in items if item.alias
+            }
+            rewritten = []
+            for expr, descending in order:
+                key = _norm(_expr_text(expr))
+                if key in alias_by_text:
+                    rewritten.append((("var", alias_by_text[key]), descending))
+                else:
+                    rewritten.append((expr, descending))
+            order = rewritten
+        return _Clause(
+            kind, items=items, distinct=distinct, where=where, order=order,
+            limit=limit, text=kind.upper(),
+        )
+
+    def parse_return_item(self) -> _ReturnItem:
+        start = self.i
+        expr = self.parse_expr()
+        text = " ".join(t.text for t in self.tokens[start:self.i]).strip()
+        alias = None
+        if self.match_keyword("AS"):
+            alias = self.advance().text
+        return _ReturnItem(expr, alias, text)
+
+    def parse_order_items(self) -> List[Tuple[Any, bool]]:
+        out: List[Tuple[Any, bool]] = []
+        while True:
+            expr = self.parse_expr()
+            if self.match_keyword("AS"):
+                self.advance()  # ORDER BY alias labels are cosmetic in Neo4j
+            descending = False
+            if self.match_keyword("DESC", "DESCENDING"):
+                descending = True
+            else:
+                self.match_keyword("ASC", "ASCENDING")
+            out.append((expr, descending))
+            if not self.match_punct(","):
+                return out
+
+    def parse_unwind(self) -> _Clause:
+        expr = self.parse_expr()
+        self.expect_keyword("AS")
+        alias = self.advance().text
+        return _Clause("unwind", unwind_expr=expr, unwind_alias=alias, text="UNWIND")
+
+    # ── expressions ──────────────────────────────────────────────
+    def parse_expr(self):
+        return self.parse_or()
+
+    def parse_or(self):
+        left = self.parse_and()
+        while self.match_keyword("OR"):
+            left = ("or", left, self.parse_and())
+        return left
+
+    def parse_and(self):
+        left = self.parse_not()
+        while self.match_keyword("AND"):
+            left = ("and", left, self.parse_not())
+        return left
+
+    def parse_not(self):
+        if self.match_keyword("NOT"):
+            return ("not", self.parse_not())
+        return self.parse_comparison()
+
+    def parse_comparison(self):
+        left = self.parse_additive()
+        tok = self.peek()
+        kw = self.keyword(tok)
+        if tok is not None and tok.text in ("=", "<>", "<", "<=", ">=", ">", "=~"):
+            self.i += 1
+            return ("cmp", tok.text, left, self.parse_additive())
+        if kw in ("CONTAINS", "IN"):
+            self.i += 1
+            return ("cmp", kw, left, self.parse_additive())
+        if kw == "STARTS":
+            self.i += 1
+            self.expect_keyword("WITH")
+            return ("cmp", "STARTS WITH", left, self.parse_additive())
+        if kw == "ENDS":
+            self.i += 1
+            self.expect_keyword("WITH")
+            return ("cmp", "ENDS WITH", left, self.parse_additive())
+        if kw == "IS":
+            self.i += 1
+            negate = self.match_keyword("NOT")
+            self.expect_keyword("NULL")
+            return ("isnull", left, negate)
+        return left
+
+    def parse_additive(self):
+        left = self.parse_multiplicative()
+        while True:
+            tok = self.peek()
+            if tok is None or tok.text not in ("+", "-"):
+                return left
+            self.i += 1
+            left = ("arith", tok.text, left, self.parse_multiplicative())
+
+    def parse_multiplicative(self):
+        left = self.parse_unary()
+        while True:
+            tok = self.peek()
+            if tok is None or tok.text not in ("*", "/", "%"):
+                return left
+            self.i += 1
+            left = ("arith", tok.text, left, self.parse_unary())
+
+    def parse_unary(self):
+        if self.peek() is not None and self.peek().text == "-":
+            self.i += 1
+            return ("neg", self.parse_unary())
+        if self.peek() is not None and self.peek().text == "+":
+            self.i += 1
+            return self.parse_unary()
+        return self.parse_primary()
+
+    def parse_primary(self):
+        tok = self.advance()
+        if tok.kind == "str":
+            return ("lit", tok.value)
+        if tok.kind == "num":
+            return ("lit", tok.value)
+        if tok.kind == "param":
+            return ("param", tok.value)
+        if tok.text == "(":
+            expr = self.parse_expr()
+            self.expect_punct(")")
+            return expr
+        if tok.text == "[":
+            items = []
+            if not self.match_punct("]"):
+                items.append(self.parse_expr())
+                while self.match_punct(","):
+                    items.append(self.parse_expr())
+                self.expect_punct("]")
+            return ("list", items)
+        if tok.text == "{":
+            body = self.parse_map_body()
+            return ("map", body)
+        if tok.kind != "name":
+            raise TaskQueryError(f"unexpected token {tok.text!r} in: {self.text}")
+        name = tok.text
+        upper = name.upper()
+        if upper == "TRUE":
+            return ("lit", True)
+        if upper == "FALSE":
+            return ("lit", False)
+        if upper == "NULL":
+            return ("lit", None)
+        if upper in ("ANY", "ALL", "NONE", "SINGLE") and self.peek() is not None and self.peek().text == "(":
+            self.i += 1
+            var = self.advance().text
+            self.expect_keyword("IN")
+            coll = self.parse_expr()
+            predicate = None
+            if self.match_keyword("WHERE"):
+                predicate = self.parse_expr()
+            self.expect_punct(")")
+            return ("quant", upper, var, coll, predicate)
+        if upper == "EXISTS" and self.peek() is not None and self.peek().text == "(":
+            save = self.i
+            self.i += 1
+            if self.peek() is not None and self.peek().text == "(":
+                chain = self.parse_chain()
+                self.expect_punct(")")
+                return ("exists_pattern", chain)
+            self.i = save
+        if self.peek() is not None and self.peek().text == "(":
+            self.i += 1
+            args = []
+            distinct = self.match_keyword("DISTINCT")
+            if self.peek() is not None and self.peek().text == "*":
+                self.i += 1
+                args.append(("star",))
+                self.expect_punct(")")
+            elif self.match_punct(")"):
+                pass
+            else:
+                args.append(self.parse_expr())
+                while self.match_punct(","):
+                    args.append(self.parse_expr())
+                self.expect_punct(")")
+            return self.parse_postfix(("func", name, args, distinct))
+        node = ("var", name)
+        return self.parse_postfix(node)
+
+    def parse_postfix(self, node):
+        while True:
+            nxt = self.peek()
+            if nxt is not None and nxt.text == ".":
+                self.i += 1
+                prop = self.advance()
+                node = ("prop", node, prop.text)
+            elif nxt is not None and nxt.text == "[":
+                self.i += 1
+                index = self.parse_expr()
+                self.expect_punct("]")
+                node = ("index", node, index)
+            else:
+                return node
+
+
+def parse_cypher(text: str) -> ParsedQuery:
+    """Parse a task query. Raises ``TaskQueryError`` for unsupported constructs."""
+    return _QueryParser(text).parse()
+
+
+# ── evaluation ───────────────────────────────────────────────────
+def _prop_value(P, ref, prop: str):
+    if not isinstance(ref, _NodeRef):
+        return None
+    props = (P.nodes.get(ref.oid) or {}).get("props") or {}
+    if prop in props:
+        return props[prop]
+    return props.get(prop.lower())
+
+
+def _is_node_value(value) -> bool:
+    return isinstance(value, _NodeRef)
+
+
+def _render(P, value):
+    """For display: nodes become their name, relationships their type."""
+    if isinstance(value, _NodeRef):
+        return (P.nodes.get(value.oid) or {}).get("name") or value.oid
+    if isinstance(value, _RelRef):
+        return value.rel_type
+    if isinstance(value, _DateTime):
+        return value.iso()
+    if isinstance(value, list):
+        return [_render(P, v) for v in value]
+    return value
+
+
+def _truthy(value) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value != ""
+    if isinstance(value, list):
+        return len(value) > 0
+    return True
+
+
+def _compare(op: str, left, right) -> bool:
+    if op == "=":
+        return left == right
+    if op == "<>":
+        return left != right
+    if op in ("<", "<=", ">", ">="):
+        if left is None or right is None:
+            return False
+        try:
+            if op == "<":
+                return left < right
+            if op == "<=":
+                return left <= right
+            if op == ">":
+                return left > right
+            return left >= right
+        except TypeError:
+            return False
+    if op == "=~":
+        if left is None or right is None:
+            return False
+        try:
+            return re.fullmatch(str(right), str(left)) is not None
+        except re.error as exc:
+            raise TaskQueryError(f"bad regular expression {right!r}: {exc}") from exc
+    if op == "CONTAINS":
+        return left is not None and right is not None and str(right) in str(left)
+    if op == "STARTS WITH":
+        return left is not None and right is not None and str(left).startswith(str(right))
+    if op == "ENDS WITH":
+        return left is not None and right is not None and str(left).endswith(str(right))
+    if op == "IN":
+        if not isinstance(right, list):
+            return False
+        return left in right
+    raise TaskQueryError(f"unsupported comparison operator {op}")
+
+
+def _eval_expr(P, expr, row: Dict[str, Any]):
+    kind = expr[0]
+    if kind == "lit":
+        return expr[1]
+    if kind == "param":
+        raise TaskQueryError(f"query parameters are not supported: ${expr[1]}")
+    if kind == "var":
+        return row.get(expr[1])
+    if kind == "prop":
+        base = _eval_expr(P, expr[1], row)
+        return _prop_value(P, base, expr[2])
+    if kind == "index":
+        base = _eval_expr(P, expr[1], row)
+        idx = _eval_expr(P, expr[2], row)
+        if isinstance(base, list) and isinstance(idx, int):
+            return base[idx] if -len(base) <= idx < len(base) else None
+        return None
+    if kind == "list":
+        return [_eval_expr(P, e, row) for e in expr[1]]
+    if kind == "map":
+        return {k: _eval_expr(P, v, row) for k, v in expr[1].items()}
+    if kind == "and":
+        return _truthy(_eval_expr(P, expr[1], row)) and _truthy(_eval_expr(P, expr[2], row))
+    if kind == "or":
+        return _truthy(_eval_expr(P, expr[1], row)) or _truthy(_eval_expr(P, expr[2], row))
+    if kind == "not":
+        return not _truthy(_eval_expr(P, expr[1], row))
+    if kind == "neg":
+        value = _eval_expr(P, expr[1], row)
+        return -value if isinstance(value, (int, float)) else value
+    if kind == "isnull":
+        is_null = _eval_expr(P, expr[1], row) is None
+        return (not is_null) if expr[2] else is_null
+    if kind == "cmp":
+        return _compare(expr[1], _eval_expr(P, expr[2], row), _eval_expr(P, expr[3], row))
+    if kind == "arith":
+        return _arith(expr[1], _eval_expr(P, expr[2], row), _eval_expr(P, expr[3], row))
+    if kind == "quant":
+        name, var, coll_expr, predicate = expr[1], expr[2], expr[3], expr[4]
+        coll = _eval_expr(P, coll_expr, row)
+        if not isinstance(coll, list):
+            coll = [coll] if coll is not None else []
+        results = []
+        for element in coll:
+            local = dict(row)
+            local[var] = element
+            results.append(_truthy(_eval_expr(P, predicate, local)) if predicate else bool(element))
+        if name == "ANY":
+            return any(results)
+        if name == "ALL":
+            return all(results)
+        if name == "NONE":
+            return not any(results)
+        return sum(1 for r in results if r) == 1
+    if kind == "exists_pattern":
+        return bool(_match_chain(P, expr[1], row))
+    if kind == "func":
+        return _call_function(P, expr[1], expr[2], expr[3], row)
+    raise TaskQueryError(f"unsupported expression {kind}")
+
+
+def _arith(op: str, left, right):
+    if op == "+":
+        if isinstance(left, list) and isinstance(right, list):
+            return left + right
+        if isinstance(left, list):
+            return left + [right]
+        if isinstance(right, list):
+            return [left] + right
+        if left is None or right is None:
+            return None
+        if isinstance(left, str) or isinstance(right, str):
+            return f"{left}{right}"
+        return left + right
+    if left is None or right is None:
+        return None
+    if op == "-":
+        return left - right
+    if op == "*":
+        return left * right
+    if op == "/":
+        return left / right if right else None
+    if op == "%":
+        return left % right if right else None
+    raise TaskQueryError(f"unsupported arithmetic operator {op}")
+
+
+def _call_function(P, name: str, args, distinct: bool, row):
+    key = name.lower()
+    if key in TASK_AGGREGATES:
+        raise TaskQueryError(f"aggregate {name} used outside a projection")
+    values = [_eval_expr(P, a, row) for a in args]
+    if key == "labels":
+        ref = values[0] if values else None
+        if not isinstance(ref, _NodeRef):
+            return []
+        return list((P.nodes.get(ref.oid) or {}).get("labels") or [])
+    if key == "type":
+        ref = values[0] if values else None
+        return ref.rel_type if isinstance(ref, _RelRef) else None
+    if key == "head":
+        seq = values[0] if values else None
+        if isinstance(seq, list):
+            return seq[0] if seq else None
+        return None
+    if key == "last":
+        seq = values[0] if values else None
+        return seq[-1] if isinstance(seq, list) and seq else None
+    if key in ("size", "length"):
+        seq = values[0] if values else None
+        return len(seq) if isinstance(seq, (list, str)) else None
+    if key == "keys":
+        ref = values[0] if values else None
+        if isinstance(ref, _NodeRef):
+            return sorted(((P.nodes.get(ref.oid) or {}).get("props") or {}).keys())
+        return []
+    if key == "properties":
+        ref = values[0] if values else None
+        if isinstance(ref, _NodeRef):
+            return dict((P.nodes.get(ref.oid) or {}).get("props") or {})
+        return {}
+    if key == "toupper":
+        return str(values[0]).upper() if values and values[0] is not None else None
+    if key == "tolower":
+        return str(values[0]).lower() if values and values[0] is not None else None
+    if key == "tointeger":
+        if values and values[0] is not None:
+            try:
+                return int(float(values[0]))
+            except (TypeError, ValueError):
+                return None
+        return None
+    if key == "tofloat":
+        try:
+            return float(values[0]) if values and values[0] is not None else None
+        except (TypeError, ValueError):
+            return None
+    if key == "tostring":
+        if not values or values[0] is None:
+            return None
+        value = values[0]
+        if isinstance(value, _DateTime):
+            return value.iso()
+        return str(_render(P, value))
+    if key == "coalesce":
+        for value in values:
+            if value is not None:
+                return value
+        return None
+    if key == "datetime":
+        spec = values[0] if values else None
+        epoch = None
+        if isinstance(spec, dict):
+            epoch = spec.get("epochSeconds", spec.get("epochseconds"))
+        elif isinstance(spec, (int, float)):
+            epoch = spec
+        return _DateTime(epoch)
+    if key == "timestamp":
+        return int(time.time() * 1000)
+    if key == "exists":
+        return values[0] is not None if values else False
+    if key == "nodes":
+        return values[0] if values else []
+    if key == "relationships":
+        return []
+    if key == "range":
+        if len(values) >= 2:
+            start, end = int(values[0]), int(values[1])
+            return list(range(start, end + 1))
+        return []
+    raise TaskQueryError(f"unsupported function {name} in: {_current_query_text()}")
+
+
+_CURRENT_QUERY = {"text": ""}
+
+
+def _current_query_text() -> str:
+    return _CURRENT_QUERY["text"]
+
+
+# ── pattern matching ─────────────────────────────────────────────
+def _node_matches(P, pat: _NodePat, ref, row) -> bool:
+    if pat.inline_where is not None:
+        local = dict(row)
+        if pat.var:
+            local[pat.var] = ref
+        if not _truthy(_eval_expr(P, pat.inline_where, local)):
+            return False
+    data = P.nodes.get(ref.oid) or {}
+    if pat.label:
+        labels = [str(l).lower() for l in (data.get("labels") or [])]
+        if pat.label.lower() not in labels:
+            return False
+    props = data.get("props") or {}
+    for key, expr in (pat.props or {}).items():
+        expected = _eval_expr(P, expr, row) if isinstance(expr, tuple) else expr
+        actual = props.get(key.lower())
+        if isinstance(expected, bool):
+            if bool(actual) != expected:
+                return False
+        elif actual != expected:
+            return False
+    return True
+
+
+def _edge_candidates(P, cur: _NodeRef, rel: _RelPat):
+    if rel.direction == "out":
+        edges = P.out_edges(cur.oid, keys=True, data=True)
+        pairs = [((v), data) for _u, v, _k, data in edges]
+    elif rel.direction == "in":
+        edges = P.in_edges(cur.oid, keys=True, data=True)
+        pairs = [((u), data) for u, _v, _k, data in edges]
+    else:
+        edges = list(P.out_edges(cur.oid, keys=True, data=True))
+        edges += [(_v, _u, k, d) for _u, _v, k, d in P.in_edges(cur.oid, keys=True, data=True)]
+        pairs = [((other), data) for _a, other, _k, data in edges]
+    for other, data in pairs:
+        rel_type = str((data or {}).get("rel_type") or (data or {}).get("label") or "")
+        if rel.types and rel_type not in rel.types and rel_type.upper() not in {t.upper() for t in rel.types}:
+            continue
+        yield _NodeRef(other), _RelRef(rel_type)
+
+
+def _expand(P, start: _NodeRef, rel: _RelPat):
+    """Yield ``(endpoint, relationship)`` pairs within the hop range."""
+    wanted = {t.upper() for t in rel.types}
+    min_hops = max(0, rel.min_hops)
+    max_hops = max(min_hops, rel.max_hops)
+    if min_hops == 0:
+        yield start, _RelRef(rel.types[0] if rel.types else "")
+    if max_hops == 0:
+        return
+    frontier = [(start, None)]
+    seen_depth = {start.oid: 0}
+    for depth in range(1, max_hops + 1):
+        nxt = []
+        for node, _ in frontier:
+            for endpoint, relref in _edge_candidates(P, node, rel):
+                if wanted and relref.rel_type.upper() not in wanted:
+                    continue
+                if depth >= min_hops:
+                    yield endpoint, relref
+                if seen_depth.get(endpoint.oid, 10 ** 9) <= depth:
+                    continue
+                seen_depth[endpoint.oid] = depth
+                nxt.append((endpoint, relref))
+        frontier = nxt
+        if not frontier:
+            return
+
+
+def _match_chain(P, chain, base_row) -> List[Dict[str, Any]]:
+    results: List[Dict[str, Any]] = []
+
+    def rec(pos: int, bindings: Dict[str, Any], cur: Optional[_NodeRef]):
+        if pos >= len(chain):
+            results.append(dict(bindings))
+            return
+        pat = chain[pos]
+        if pos == 0:
+            bound = bindings.get(pat.var) if pat.var else None
+            if isinstance(bound, _NodeRef):
+                if _node_matches(P, pat, bound, bindings):
+                    rec(1, bindings, bound)
+                return
+            for oid in P.nodes:
+                ref = _NodeRef(oid)
+                if not _node_matches(P, pat, ref, bindings):
+                    continue
+                local = dict(bindings)
+                if pat.var:
+                    local[pat.var] = ref
+                rec(1, local, ref)
+            return
+        rel = chain[pos]
+        nxt = chain[pos + 1]
+        for endpoint, relref in _expand(P, cur, rel):
+            if not _node_matches(P, nxt, endpoint, bindings):
+                continue
+            local = dict(bindings)
+            if rel.var:
+                local[rel.var] = relref
+            if nxt.var:
+                if nxt.var in local and local[nxt.var] != endpoint:
+                    continue
+                local[nxt.var] = endpoint
+            rec(pos + 2, local, endpoint)
+
+    rec(0, dict(base_row), None)
+    return results
+
+
+# ── clause execution ────────────────────────────────────────────
+def _rows_from_chain(P, chain, rows) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for row in rows:
+        out.extend(_match_chain(P, chain, row))
+    return out
+
+
+def _apply_match(P, clause: _Clause, rows) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for row in rows:
+        produced: List[Dict[str, Any]] = [dict(row)]
+        for chain in clause.patterns:
+            produced = _rows_from_chain(P, chain, produced)
+            if not produced:
+                break
+        if clause.path_var:
+            for item in produced:
+                item[clause.path_var] = []
+        if produced:
+            out.extend(produced)
+        elif clause.optional:
+            out.append(dict(row))
+    return out
+
+
+def _apply_where(P, expr, rows) -> List[Dict[str, Any]]:
+    return [row for row in rows if _truthy(_eval_expr(P, expr, row))]
+
+
+def _is_aggregate(expr) -> bool:
+    if expr[0] == "func" and expr[1].lower() in TASK_AGGREGATES:
+        return True
+    return False
+
+
+def _aggregate(P, expr, rows) -> Any:
+    name = expr[1].lower()
+    distinct = expr[3]
+    star = bool(expr[2]) and expr[2][0] == ("star",)
+    if star:
+        return len(rows)
+    values = []
+    for row in rows:
+        value = _eval_expr(P, expr[2][0], row)
+        if value is None:
+            continue
+        values.append(value)
+    if distinct:
+        deduped = []
+        for value in values:
+            if value not in deduped:
+                deduped.append(value)
+        values = deduped
+    if name == "count":
+        return len(values)
+    if name == "collect":
+        return values
+    if name == "sum":
+        return sum(values) if values else 0
+    if name == "avg":
+        return (sum(values) / len(values)) if values else None
+    if name == "min":
+        return min(values) if values else None
+    if name == "max":
+        return max(values) if values else None
+    raise TaskQueryError(f"unsupported aggregate {expr[1]}")
+
+
+def _expr_text(expr) -> str:
+    """Best-effort source-shaped text for an expression, used for alias matching."""
+    kind = expr[0]
+    if kind in ("lit",):
+        return repr(expr[1])
+    if kind == "var":
+        return expr[1]
+    if kind == "prop":
+        return f"{_expr_text(expr[1])}.{expr[2]}"
+    if kind == "func":
+        inner = ", ".join(_expr_text(a) for a in expr[2])
+        prefix = "DISTINCT " if expr[3] else ""
+        return f"{expr[1]}({prefix}{inner})"
+    if kind == "cmp":
+        return f"{_expr_text(expr[2])} {expr[1]} {_expr_text(expr[3])}"
+    return kind
+
+
+def _contains_aggregate(expr) -> bool:
+    if _is_aggregate(expr):
+        return True
+    if not isinstance(expr, tuple):
+        return False
+    for part in expr[1:]:
+        if isinstance(part, tuple) and _contains_aggregate(part):
+            return True
+        if isinstance(part, list) and any(
+            isinstance(x, tuple) and _contains_aggregate(x) for x in part
+        ):
+            return True
+    return False
+
+
+def _iter_aggregate_exprs(expr):
+    if _is_aggregate(expr):
+        yield expr
+        return
+    if not isinstance(expr, tuple):
+        return
+    for part in expr[1:]:
+        if isinstance(part, tuple):
+            yield from _iter_aggregate_exprs(part)
+
+
+def _materialize_aggregates(P, expr, rows):
+    """Replace aggregate sub-expressions with literals computed over ``rows``.
+
+    ``head(collect(x))`` is common in task lists, so aggregates must work
+    anywhere inside a projection expression, not only at the top level.
+    """
+    if _is_aggregate(expr):
+        return ("lit", _aggregate(P, expr, rows))
+    kind = expr[0]
+    if kind == "func":
+        return ("func", expr[1], [_materialize_aggregates(P, a, rows) for a in expr[2]], expr[3])
+    if kind in ("cmp",):
+        return ("cmp", expr[1], _materialize_aggregates(P, expr[2], rows), _materialize_aggregates(P, expr[3], rows))
+    if kind in ("and", "or"):
+        return (kind, _materialize_aggregates(P, expr[1], rows), _materialize_aggregates(P, expr[2], rows))
+    if kind == "arith":
+        return ("arith", expr[1], _materialize_aggregates(P, expr[2], rows), _materialize_aggregates(P, expr[3], rows))
+    if kind == "not":
+        return ("not", _materialize_aggregates(P, expr[1], rows))
+    if kind == "isnull":
+        return ("isnull", _materialize_aggregates(P, expr[1], rows), expr[2])
+    if kind == "list":
+        return ("list", [_materialize_aggregates(P, e, rows) for e in expr[1]])
+    return expr
+
+
+def _project(P, clause: _Clause, rows) -> Tuple[List[str], List[Dict[str, Any]]]:
+    items: List[_ReturnItem] = list(clause.items or [])
+    columns = [item.name() for item in items]
+    aggregated = any(_contains_aggregate(item.expr) for item in items)
+    out: List[Dict[str, Any]] = []
+    if aggregated:
+        group_items = [item for item in items if not _contains_aggregate(item.expr)]
+        groups: Dict[tuple, List[Dict[str, Any]]] = {}
+        for row in rows:
+            key = tuple(
+                _render(P, _eval_expr(P, item.expr, row)) for item in group_items
+            )
+            groups.setdefault(key, []).append(row)
+        for key, group_rows in groups.items():
+            combined = dict(group_rows[0])
+            for item, value in zip(group_items, key):
+                combined[item.name()] = value
+            for item in items:
+                if _is_aggregate(item.expr):
+                    combined[item.name()] = _aggregate(P, item.expr, group_rows)
+                elif _contains_aggregate(item.expr):
+                    materialized = _materialize_aggregates(P, item.expr, group_rows)
+                    combined[item.name()] = _eval_expr(P, materialized, combined)
+            out.append(combined)
+    else:
+        for row in rows:
+            combined = dict(row)
+            for item in items:
+                combined[item.name()] = _eval_expr(P, item.expr, row)
+            out.append(combined)
+    if clause.distinct:
+        seen = set()
+        deduped = []
+        for row in out:
+            key = tuple(repr(row.get(col)) for col in columns)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(row)
+        out = deduped
+    return columns, out
+
+
+def _sort_rows(P, rows, order) -> List[Dict[str, Any]]:
+    for expr, descending in reversed(list(order or [])):
+        def key(row, expr=expr):
+            value = _eval_expr(P, expr, row)
+            if isinstance(value, _NodeRef):
+                return (0, str((P.nodes.get(value.oid) or {}).get("name") or ""))
+            if value is None:
+                return (2, "")
+            if isinstance(value, (int, float)):
+                return (1, value)
+            return (0, str(value))
+
+        rows = sorted(rows, key=key, reverse=descending)
+    return rows
+
+
+def _apply_unwind(P, clause: _Clause, rows) -> List[Dict[str, Any]]:
+    out = []
+    for row in rows:
+        value = _eval_expr(P, clause.unwind_expr, row)
+        if not isinstance(value, list):
+            if value is None:
+                continue
+            value = [value]
+        for element in value:
+            local = dict(row)
+            local[clause.unwind_alias] = element
+            out.append(local)
+    return out
+
+
+def _run_part(P, clauses: List[_Clause], seed_rows) -> Tuple[List[str], List[Dict[str, Any]]]:
+    rows = list(seed_rows)
+    columns: List[str] = []
+    for clause in clauses:
+        if clause.kind == "match":
+            rows = _apply_match(P, clause, rows)
+        elif clause.kind == "where":
+            rows = _apply_where(P, clause.expr, rows)
+        elif clause.kind == "with":
+            cols, rows = _project(P, clause, rows)
+            if clause.where is not None:
+                rows = _apply_where(P, clause.where, rows)
+            if clause.order:
+                rows = _sort_rows(P, rows, clause.order)
+            if clause.limit is not None:
+                rows = rows[: clause.limit]
+            rows = [
+                {k: v for k, v in row.items() if k in set(cols)}
+                for row in rows
+            ]
+            columns = cols
+        elif clause.kind == "unwind":
+            rows = _apply_unwind(P, clause, rows)
+        elif clause.kind == "return":
+            columns, rows = _project(P, clause, rows)
+            if clause.order:
+                rows = _sort_rows(P, rows, clause.order)
+            if clause.limit is not None:
+                rows = rows[: clause.limit]
+        elif clause.kind == "order":
+            rows = _sort_rows(P, rows, clause.order)
+        elif clause.kind == "limit":
+            rows = rows[: clause.limit]
+        else:
+            raise TaskQueryError(f"unsupported clause {clause.kind}")
+    return columns, rows
+
+
+def execute_task_query(query: str, projection) -> TaskResult:
+    """Run one task query against the projection and return its rows."""
+    text = (query or "").strip()
+    _CURRENT_QUERY["text"] = text
+    if not text:
+        raise TaskQueryError("empty query")
+    if projection is None:
+        raise TaskQueryError("no graph available for query")
+    parsed = parse_cypher(text)
+    columns: List[str] = []
+    all_rows: List[List[Any]] = []
+    for index, part in enumerate(parsed.parts):
+        cols, rows = _run_part(projection, part, [{}])
+        if not columns:
+            columns = cols
+        elif cols != columns:
+            raise TaskQueryError("UNION parts must return the same columns")
+        part_rows = [
+            [_render(projection, row.get(col)) for col in columns] for row in rows
+        ]
+        if index > 0 and not parsed.union_all[index - 1]:
+            seen = {tuple(repr(c) for c in r) for r in all_rows}
+            part_rows = [r for r in part_rows if tuple(repr(c) for c in r) not in seen]
+        all_rows.extend(part_rows)
+    return TaskResult(title="", columns=columns, rows=all_rows, query=text)
 
 
 def format_path(G, path):
