@@ -24,6 +24,7 @@ REQUIRED = (
     "test_task_projection.py",
     "test_task_projection_edges.py",
     "test_task_file_parser.py",
+    "test_task_result_writers.py",
     "test_version_consistency.py",
     "test_ci_pytest_suite.py",
 )
