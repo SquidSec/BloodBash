@@ -1,0 +1,4 @@
+{
+  "azure.tasks": "SampleAzurehoundData",
+  "*": "testData/synthetic-corp-lab"
+}
