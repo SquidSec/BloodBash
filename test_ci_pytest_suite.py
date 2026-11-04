@@ -31,6 +31,7 @@ REQUIRED = (
     "test_task_parity.py",
     "test_release_smoke.py",
     "test_console_encoding.py",
+    "test_release_workflow.py",
     "test_version_consistency.py",
     "test_ci_pytest_suite.py",
 )
