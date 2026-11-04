@@ -424,6 +424,23 @@ per-line status, then exits `0` when the list is clean or `2` when any line
 cannot run. A broken line is reported and skipped; the remaining tasks stay
 valid.
 
+Task output follows the same layout as `--csv-pack`:
+
+```text
+reports/
+  index.csv        # title, format, row count, status, files, query
+  index.html       # same, with links to each report
+  Domains.csv
+  Domains.html
+  pack.zip         # only when the list contains ZIP-TASKS
+```
+
+Filenames come from the task's third field, with the format's extension added
+when it is missing. Directory traversal and shell-unsafe characters are
+stripped, and spreadsheet formula injection is neutralized the same way the CSV
+pack already does it. A task that fails to parse or run is recorded in the index
+with its error and the rest of the list still executes.
+
 PlumHound task lists are GPL-3.0. BloodBash reads the file you point it at and
 ships none of them.
 

@@ -3367,6 +3367,10 @@ class TaskListError(ValueError):
     """Raised when a task list cannot be read at all (missing file, IO error)."""
 
 
+class TaskQueryError(ValueError):
+    """Raised when a task query cannot be parsed or executed."""
+
+
 @dataclass
 class TaskSpec:
     """One parsed task line."""
@@ -3509,6 +3513,266 @@ def validate_task_list_cli(paths: Sequence[str], prog: Optional[str] = None) -> 
     console.print(f"[green]Task lists valid[/green] ({len(paths)} file(s))")
     console.print(f"[dim]Run with: {prog} DIR --tasks FILE --tasks-out DIR[/dim]")
     return 0
+
+
+def _task_safe_filename(name: str, fallback: str = "report") -> str:
+    """Basename only, no traversal, no characters that break a zip entry."""
+    raw = (name or "").strip().replace("\\", "/")
+    base = os.path.basename(raw) or fallback
+    base = re.sub(r"[^A-Za-z0-9._@-]+", "_", base).strip("._") or fallback
+    return base
+
+
+def _task_columns_from_rows(rows: Sequence[Sequence[Any]]) -> List[str]:
+    width = max((len(r) for r in rows), default=0)
+    return [f"col{i + 1}" for i in range(width)]
+
+
+class TaskResult:
+    """Rows and columns produced by one task, plus its run status."""
+
+    __slots__ = ("title", "columns", "rows", "query", "status", "error", "duration")
+
+    def __init__(
+        self,
+        title: str,
+        columns: Sequence[str],
+        rows: Sequence[Sequence[Any]],
+        query: str = "",
+        status: str = "ok",
+        error: Optional[str] = None,
+        duration: float = 0.0,
+    ):
+        self.title = title
+        self.columns = list(columns or [])
+        self.rows = [list(r) for r in (rows or [])]
+        self.query = query
+        self.status = status
+        self.error = error
+        self.duration = duration
+
+    @property
+    def row_count(self) -> int:
+        return len(self.rows)
+
+    def __repr__(self) -> str:
+        return f"TaskResult(title={self.title!r}, rows={self.row_count}, status={self.status!r})"
+
+
+def write_task_csv(result: TaskResult, export_dir: str, filename: str) -> str:
+    """One CSV per task, header always written."""
+    path = os.path.join(os.path.abspath(export_dir), _task_safe_filename(filename, "report.csv"))
+    columns = result.columns or _task_columns_from_rows(result.rows)
+    return write_csv_file(path, columns, result.rows)
+
+
+def write_task_html(result: TaskResult, export_dir: str, filename: str) -> str:
+    """One HTML page per task, with the query shown for traceability."""
+    path = os.path.join(os.path.abspath(export_dir), _task_safe_filename(filename, "report.html"))
+    columns = result.columns or _task_columns_from_rows(result.rows)
+    body = (
+        f"<p class='meta'>{result.row_count} row(s)</p>"
+        f"<div class='query'><code>{escape(result.query)}</code></div>"
+        + _html_table(columns, result.rows)
+    )
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(render_html_page(result.title or "Task Report", body))
+    return path
+
+
+def write_task_stdout(result: TaskResult) -> None:
+    """Print one task result to the console."""
+    console.rule(f"[bold cyan]{rich_escape(result.title or 'Task')}[/bold cyan]")
+    if not result.rows:
+        console.print("[dim]no rows[/dim]")
+        return
+    columns = result.columns or _task_columns_from_rows(result.rows)
+    table = Table(show_header=True, header_style="bold cyan", expand=False)
+    for col in columns:
+        table.add_column(str(col), overflow="fold")
+    for row in result.rows:
+        table.add_row(*(rich_escape(str(c)) if c is not None else "" for c in row))
+    console.print(table)
+
+
+def write_task_result(result: TaskResult, spec: TaskSpec, export_dir: str) -> List[str]:
+    """Write one task's output in the format its spec asked for."""
+    if result.status != "ok":
+        return []
+    stem = spec.effective_outfile() or _task_safe_filename(spec.title or "report")
+    stem = _task_safe_filename(stem, "report")
+    fmt = spec.fmt
+    written: List[str] = []
+    if fmt == "STDOUT":
+        write_task_stdout(result)
+        return []
+    if fmt == "CSV":
+        base = stem if stem.lower().endswith(".csv") else stem + ".csv"
+        written.append(write_task_csv(result, export_dir, base))
+    elif fmt == "HTML":
+        base = stem if stem.lower().endswith(".html") else stem + ".html"
+        written.append(write_task_html(result, export_dir, base))
+    elif fmt == "HTMLCSV":
+        base = stem[:-5] if stem.lower().endswith(".html") else stem
+        written.append(write_task_html(result, export_dir, base + ".html"))
+        written.append(write_task_csv(result, export_dir, base + ".csv"))
+    return written
+
+
+def write_task_index(results: Sequence[Tuple[TaskResult, TaskSpec, Sequence[str]]], export_dir: str) -> str:
+    """``index.csv`` + ``index.html`` listing every task and its row count."""
+    export_dir = os.path.abspath(export_dir)
+    os.makedirs(export_dir, exist_ok=True)
+    headers = ["Title", "Format", "Rows", "Status", "Files", "Query"]
+    rows = []
+    for result, spec, files in results:
+        rows.append([
+            spec.title or result.title,
+            spec.fmt,
+            result.row_count,
+            result.status,
+            "; ".join(os.path.basename(p) for p in files),
+            spec.query,
+        ])
+    csv_path = write_csv_file(os.path.join(export_dir, "index.csv"), headers, rows)
+
+    cards = []
+    for row in rows:
+        title, fmt, count, status, files, query = row
+        if files:
+            links = ", ".join(
+                f'<a href="{escape(name)}">{escape(name)}</a>' for name in files.split("; ")
+            )
+        else:
+            links = escape(status)
+        cards.append(
+            "<tr>"
+            f"<td>{escape(str(title))}</td>"
+            f"<td>{escape(str(fmt))}</td>"
+            f"<td>{escape(str(count))}</td>"
+            f"<td>{links}</td>"
+            "</tr>"
+        )
+    body = (
+        f"<p class='meta'>{len(rows)} task(s)</p>"
+        "<table><thead><tr><th>Title</th><th>Format</th><th>Rows</th>"
+        "<th>Output</th></tr></thead><tbody>"
+        + "".join(cards)
+        + "</tbody></table>"
+    )
+    html_path = os.path.join(export_dir, "index.html")
+    with open(html_path, "w", encoding="utf-8") as f:
+        f.write(render_html_page("Task Report Index", body))
+    return csv_path
+
+
+def zip_task_outputs(source_dir: str, zip_path: str) -> str:
+    """Zip a task output directory, skipping the archive if it lives inside it."""
+    source_dir = os.path.abspath(source_dir)
+    zip_path = os.path.abspath(zip_path)
+    parent = os.path.dirname(zip_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for root, _, files in os.walk(source_dir):
+            for name in files:
+                full = os.path.join(root, name)
+                if os.path.abspath(full) == zip_path:
+                    continue
+                zf.write(full, arcname=os.path.relpath(full, source_dir))
+    console.print(f"[green]Exported task zip:[/green] {zip_path}")
+    return zip_path
+
+
+def default_task_executor(G, owned=None, domain_filter=None):
+    """Return ``execute(query, projection)`` for the task runner.
+
+    The query engine arrives in a later change; until then the executor raises
+    a clear error per task instead of failing the whole run.
+    """
+    def _execute(query, projection=None):
+        raise TaskQueryError("query execution is not available in this build")
+    return _execute
+
+
+def run_task_specs(
+    specs: Sequence[TaskSpec],
+    G,
+    export_dir: str,
+    execute=None,
+    owned=None,
+    domain_filter=None,
+) -> List[str]:
+    """Execute every parsed task and write its output.
+
+    ``execute(query, projection)`` returns a ``TaskResult``; it is injected so
+    the writers can be tested independently. Task failures are reported and the
+    run continues, matching PlumHound's per-task error handling. ``REPORT-INDEX``
+    writes the index at its position in the list; when the list has no sentinel
+    an index is written at the end.
+    """
+    if execute is None:
+        execute = default_task_executor(G, owned=owned, domain_filter=domain_filter)
+    export_dir = os.path.abspath(export_dir)
+    os.makedirs(export_dir, exist_ok=True)
+    written: List[str] = []
+    results: List[Tuple[TaskResult, TaskSpec, Sequence[str]]] = []
+    has_index_sentinel = any(
+        s.ok and s.is_sentinel and s.query.strip().upper() == "REPORT-INDEX" for s in specs
+    )
+    console.print(f"[bold]Running {len(specs)} task(s)[/bold] → {export_dir}")
+    for spec in specs:
+        if not spec.ok:
+            console.print(
+                f"[yellow]line {spec.line_no}: skipped "
+                f"({rich_escape(spec.error or 'error')})[/yellow]"
+            )
+            results.append((
+                TaskResult("", [], [], status="error", error=spec.error),
+                spec,
+                [],
+            ))
+            continue
+        if spec.is_sentinel:
+            sentinel = spec.query.strip().upper()
+            if sentinel == "REPORT-INDEX":
+                written.append(write_task_index(results, export_dir))
+            else:
+                archive = _task_safe_filename(
+                    spec.effective_outfile() or "task-reports.zip", "task-reports.zip"
+                )
+                written.append(zip_task_outputs(export_dir, os.path.join(export_dir, archive)))
+            results.append((TaskResult(spec.title, [], [], query=spec.query), spec, []))
+            continue
+        started = time.time()
+        try:
+            result = execute(spec.query, None)
+        except Exception as exc:  # query errors are per task, never fatal
+            console.print(
+                f"[yellow]{rich_escape(spec.title or 'task')}: "
+                f"{rich_escape(str(exc))}[/yellow]"
+            )
+            results.append((
+                TaskResult(
+                    spec.title, [], [], query=spec.query, status="error", error=str(exc)
+                ),
+                spec,
+                [],
+            ))
+            continue
+        result.title = spec.title or result.title
+        result.query = spec.query
+        result.duration = time.time() - started
+        files = write_task_result(result, spec, export_dir)
+        written.extend(files)
+        results.append((result, spec, files))
+        console.print(
+            f"  [green]{rich_escape(spec.title or 'task')}[/green]: {result.row_count} row(s)"
+        )
+    if not has_index_sentinel:
+        written.append(write_task_index(results, export_dir))
+    return written
 
 
 def format_path(G, path):
