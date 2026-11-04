@@ -1,0 +1,6 @@
+# BloodBash example task list for AzureHound / Entra collections (MIT).
+["Azure Users", "HTMLCSV", "AzureUsers", "MATCH (u:AZUser) RETURN u.name AS Name, u.displayname AS DisplayName, u.accountenabled AS Enabled, u.userprincipalname AS UPN"]
+["Azure Groups", "HTMLCSV", "AzureGroups", "MATCH (g:AZGroup) RETURN g.name AS Name, g.displayname AS DisplayName"]
+["Global Administrator Assignments", "HTMLCSV", "GlobalAdmins", "MATCH (p)-[:HasRole]->(r:AZRole) WHERE toUpper(r.name) CONTAINS 'GLOBAL ADMINISTRATOR' RETURN p.name AS Principal, head(labels(p)) AS Type, r.name AS Role"]
+["Azure Owns Edges", "CSV", "AzureOwns", "MATCH (a:AZUser)-[:AZOwns]->(b) RETURN a.name AS Principal, b.name AS Target, head(labels(b)) AS TargetType"]
+["Report Index", "HTML", "index", "REPORT-INDEX"]
