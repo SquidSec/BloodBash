@@ -4102,22 +4102,33 @@ class _QueryParser:
 
     def parse_match(self, optional: bool) -> _Clause:
         path_var = None
-        tok = self.peek()
-        nxt = self.peek(1)
-        if (
-            tok is not None and tok.kind == "name"
-            and nxt is not None and nxt.text == "="
-        ):
-            path_var = tok.text
-            self.i += 2
-        patterns = [self.parse_chain()]
-        while self.match_punct(","):
+        patterns: List[Any] = []
+        while True:
+            tok = self.peek()
+            nxt = self.peek(1)
+            if (
+                tok is not None and tok.kind == "name"
+                and nxt is not None and nxt.text == "="
+            ):
+                # ``p = pattern`` binds a path variable; tasks project endpoints,
+                # so the binding is recorded and the pattern matched normally.
+                if path_var is None:
+                    path_var = tok.text
+                self.i += 2
             patterns.append(self.parse_chain())
+            if not self.match_punct(","):
+                break
         return _Clause(
             "match", optional=optional, patterns=patterns, path_var=path_var, text="MATCH"
         )
 
     def parse_chain(self) -> List[Any]:
+        tok = self.peek()
+        if tok is not None and tok.kind == "name" and tok.text.upper() in (
+            "SHORTESTPATH", "ALLSHORTESTPATHS"
+        ):
+            expr = self.parse_primary()
+            return [expr]
         chain: List[Any] = [self.parse_node()]
         while True:
             tok = self.peek()
@@ -4401,6 +4412,11 @@ class _QueryParser:
             return ("lit", False)
         if upper == "NULL":
             return ("lit", None)
+        if upper in ("SHORTESTPATH", "ALLSHORTESTPATHS") and self.peek() is not None and self.peek().text == "(":
+            self.i += 1
+            chain = self.parse_chain()
+            self.expect_punct(")")
+            return ("pathfn", upper, chain)
         if upper in ("ANY", "ALL", "NONE", "SINGLE") and self.peek() is not None and self.peek().text == "(":
             self.i += 1
             var = self.advance().text
@@ -4594,6 +4610,8 @@ def _eval_expr(P, expr, row: Dict[str, Any]):
         return sum(1 for r in results if r) == 1
     if kind == "exists_pattern":
         return bool(_match_chain(P, expr[1], row))
+    if kind == "pathfn":
+        raise TaskQueryError("shortestPath() is only valid as a MATCH path")
     if kind == "func":
         return _call_function(P, expr[1], expr[2], expr[3], row)
     raise TaskQueryError(f"unsupported expression {kind}")
@@ -4789,8 +4807,83 @@ def _expand(P, start: _NodeRef, rel: _RelPat):
             return
 
 
+def _path_fn_rows(P, name: str, inner_chain, base_row) -> List[Dict[str, Any]]:
+    """Rows for ``shortestPath`` / ``allShortestPaths`` over one pattern.
+
+    Each reachable endpoint pair is emitted once. ``shortestPath`` keeps only
+    the endpoints at the minimum hop count; ``allShortestPaths`` keeps every
+    endpoint reachable within the same bound. Tasks project endpoint variables,
+    so the path itself is not needed.
+    """
+    if len(inner_chain) != 3:
+        raise TaskQueryError(
+            f"{name}() needs a single relationship pattern in: {_current_query_text()}"
+        )
+    start_pat, rel, end_pat = inner_chain
+    if not isinstance(start_pat, _NodePat) or not isinstance(end_pat, _NodePat):
+        raise TaskQueryError(
+            f"{name}() needs node patterns on both ends in: {_current_query_text()}"
+        )
+    wanted = {t.upper() for t in rel.types}
+    max_hops = max(1, min(rel.max_hops or TASK_MAX_HOPS, TASK_MAX_HOPS))
+    out: List[Dict[str, Any]] = []
+
+    def endpoints(start_ref):
+        """Hop distance for every endpoint reachable from ``start_ref``."""
+        distances = {}
+        frontier = [start_ref]
+        seen = {start_ref.oid}
+        for depth in range(1, max_hops + 1):
+            nxt = []
+            for node in frontier:
+                for endpoint, relref in _edge_candidates(P, node, rel):
+                    if wanted and relref.rel_type.upper() not in wanted:
+                        continue
+                    if endpoint.oid in seen:
+                        continue
+                    seen.add(endpoint.oid)
+                    distances.setdefault(depth, []).append(endpoint)
+                    nxt.append(endpoint)
+            frontier = nxt
+            if not frontier:
+                break
+        return distances
+
+    bound_start = base_row.get(start_pat.var) if start_pat.var else None
+    bound_end = base_row.get(end_pat.var) if end_pat.var else None
+    candidate_starts = (
+        [bound_start] if isinstance(bound_start, _NodeRef) else [
+            _NodeRef(oid) for oid in P.nodes
+        ]
+    )
+    for start_ref in candidate_starts:
+        if not _node_matches(P, start_pat, start_ref, base_row):
+            continue
+        distances = endpoints(start_ref)
+        if not distances:
+            continue
+        # Neo4j expands shortestPath over every (start, end) pair, so with both
+        # endpoints unbound the projected result is plain reachability within
+        # the hop bound. Task lists only project endpoints, never the path.
+        for level in sorted(distances):
+            for endpoint in distances[level]:
+                if isinstance(bound_end, _NodeRef) and endpoint != bound_end:
+                    continue
+                if not _node_matches(P, end_pat, endpoint, base_row):
+                    continue
+                row = dict(base_row)
+                if start_pat.var:
+                    row[start_pat.var] = start_ref
+                if end_pat.var:
+                    row[end_pat.var] = endpoint
+                out.append(row)
+    return out
+
+
 def _match_chain(P, chain, base_row) -> List[Dict[str, Any]]:
     results: List[Dict[str, Any]] = []
+    if len(chain) == 1 and isinstance(chain[0], tuple) and chain[0][0] == "pathfn":
+        return _path_fn_rows(P, chain[0][1], chain[0][2], base_row)
 
     def rec(pos: int, bindings: Dict[str, Any], cur: Optional[_NodeRef]):
         if pos >= len(chain):
