@@ -3107,6 +3107,15 @@ PROJECTION_UNKNOWN_LABEL = "Unknown"
 # cannot be handed back for a different graph.
 _PROJECTION_CACHE: Dict[Tuple[int, Tuple[str, ...]], Tuple[Any, Any]] = {}
 
+# BloodHound relationship names that the collector does not emit directly.
+PROJECTION_EDGE_ALIASES = {
+    "adminTo": "AdminTo",
+    "localadmin": "AdminTo",
+    "trusteddomain": "TrustedBy",
+}
+
+PROJECTION_DERIVED_EDGES = ("DCSync", "AllowedToDelegate")
+
 
 def projection_label(raw) -> str:
     """Neo4j label for a BloodBash ``type`` string (``Unknown`` when unmapped)."""
@@ -3156,13 +3165,11 @@ def project_node_props(G, oid, data, high_value_ids=None, owned_names=()) -> dic
         if dom:
             out["domain"] = dom
 
-    is_hv = bool(high_value_ids and oid in high_value_ids)
-    out["highvalue"] = is_hv
+    out["highvalue"] = bool(high_value_ids and oid in high_value_ids)
 
-    owned_set = {n.upper() for n in owned_names}
     name_u = str(out.get("name") or "").upper()
-    out["owned"] = bool(owned_set) and (
-        name_u in owned_set or str(oid).upper() in owned_set
+    out["owned"] = bool(owned_names) and (
+        name_u in owned_names or str(oid).upper() in owned_names
     )
 
     typ = str(data.get("type") or "").lower()
@@ -3171,11 +3178,118 @@ def project_node_props(G, oid, data, high_value_ids=None, owned_names=()) -> dic
     return out
 
 
+def _projection_trust_attrs(label: str, attrs: Optional[dict] = None) -> Dict[str, Any]:
+    """Split ``TrustedDomain:<direction>:<type>`` into BloodHound edge props."""
+    parts = str(label).split(":")
+    direction = parts[1] if len(parts) > 1 else "Unknown"
+    ttype = parts[2] if len(parts) > 2 else ""
+    src = attrs or {}
+    sid_filtering = src.get("sid_filtering", src.get("sidfiltering"))
+    return {
+        "trustdirection": direction,
+        "trusttype": ttype,
+        "transitive": str(direction).lower() == "bidirectional",
+        "sidfiltering": sid_filtering,
+    }
+
+
+def _projection_delegation_targets(G, props: dict) -> List[str]:
+    """Node ids referenced by msDS-AllowedToDelegateTo style properties."""
+    raw = _prop_raw_ci(
+        props,
+        ["msds-allowedtodelegateto", "allowedtodelegateto", "allowedtodelegate"],
+    )
+    if raw is None:
+        return []
+    entries = raw if isinstance(raw, list) else [raw]
+    targets = []
+    for entry in entries:
+        if entry is None:
+            continue
+        text = str(entry).strip()
+        if not text:
+            continue
+        service = text.split("/", 1)[-1] if "/" in text else text
+        candidates = {text.upper(), service.upper(), service.split(".", 1)[0].upper()}
+        for oid, d in G.nodes(data=True):
+            name_u = str(d.get("name") or "").upper()
+            sam_u = str((d.get("props") or {}).get("samaccountname") or "").upper()
+            short_u = name_u.split("@")[0].split(".", 1)[0]
+            if candidates & {name_u, sam_u, short_u}:
+                targets.append(oid)
+                break
+    return list(dict.fromkeys(targets))
+
+
+def project_relationship(G, u, v, label, attrs) -> Tuple[str, Dict[str, Any], List[Tuple[str, Dict[str, Any]]]]:
+    """Return ``(canonical_label, canonical_attrs, extra_aliases)`` for one edge.
+
+    Azure ``Owns`` is renamed to ``AZOwns`` because the Entra queries address it
+    that way and Azure nodes never appear in AD queries. Every other alias is
+    additive: the collector's relationship name is kept so the analysis
+    detectors keep working, and the BloodHound name is added alongside it.
+    ``DCSync`` needs two separate rights on the same target, so it is derived
+    after the whole edge set is known rather than per edge.
+    """
+    attrs = dict(attrs or {})
+    label = label or ""
+    label_l = str(label).lower()
+    src = G.nodes.get(u) or {}
+    dst = G.nodes.get(v) or {}
+
+    if label_l == "owns" and src.get("is_azure") and dst.get("is_azure"):
+        return "AZOwns", attrs, []
+
+    aliases: List[Tuple[str, Dict[str, Any]]] = []
+    if label_l == "localadmin":
+        aliases.append(("AdminTo", {}))
+    elif label_l.startswith("trusteddomain"):
+        aliases.append(("TrustedBy", _projection_trust_attrs(label, attrs)))
+    return label, attrs, aliases
+
+
+def _projection_dcsync_edges(G) -> List[Tuple[str, str, Dict[str, Any]]]:
+    """Principals holding both GetChanges and GetChangesAll on the same domain."""
+    held: Dict[Tuple[str, str], set] = defaultdict(set)
+    for u, v, data in G.edges(data=True):
+        label_l = str((data or {}).get("label") or "").lower()
+        if label_l not in ("getchanges", "getchangesall"):
+            continue
+        dst = G.nodes.get(v) or {}
+        if str(dst.get("type") or "").lower() == "domain":
+            held[(u, v)].add(label_l)
+    return [
+        (u, v, {"source": "GetChanges+GetChangesAll"})
+        for (u, v), rights in held.items()
+        if len(rights) == 2
+    ]
+
+
+def _projection_delegation_edges(G) -> List[Tuple[str, str, Dict[str, Any]]]:
+    """``AllowedToDelegate`` edges from msDS-AllowedToDelegateTo properties."""
+    existing = {
+        (u, v)
+        for u, v, data in G.edges(data=True)
+        if str((data or {}).get("label") or "").lower() in ("allowedtodelegate", "allowedtoact")
+    }
+    out = []
+    for oid, data in G.nodes(data=True):
+        for target in _projection_delegation_targets(G, data.get("props") or {}):
+            if target == oid or (oid, target) in existing:
+                continue
+            out.append((oid, target, {}))
+    return out
+
+
 def build_bloodhound_projection(G, owned=None, domain_filter=None):
     """Return a read-only Neo4j-shaped view of ``G`` (labels + props + edges).
 
     Cached per ``(graph, owned)`` so repeated task runs do not re-derive flags.
-    Edges carry ``label``, ``rel_type`` and lowercased edge attributes.
+    Every edge carries ``label`` and ``rel_type``. Relationship names that
+    BloodHound uses but the collector does not emit are synthesized:
+    ``AdminTo`` (from ``LocalAdmin``), ``TrustedBy`` (from ``TrustedDomain:*``),
+    ``DCSync`` (both replication rights), ``AllowedToDelegate`` (from
+    delegation properties) and ``AZOwns`` (Azure principals only).
     """
     if G is None:
         return nx.MultiDiGraph()
@@ -3202,15 +3316,15 @@ def build_bloodhound_projection(G, owned=None, domain_filter=None):
         )
     for u, v, key, data in G.edges(keys=True, data=True):
         attrs = {k: val for k, val in (data or {}).items() if k != "label"}
-        rel = data.get("label") if isinstance(data, dict) else None
-        P.add_edge(
-            u,
-            v,
-            key=key,
-            label=rel or "",
-            rel_type=rel or "",
-            **attrs,
-        )
+        label = (data or {}).get("label") or ""
+        canonical, merged, aliases = project_relationship(G, u, v, label, attrs)
+        P.add_edge(u, v, key=key, label=canonical, rel_type=canonical, **merged)
+        for alias, alias_attrs in aliases:
+            P.add_edge(u, v, label=alias, rel_type=alias, **alias_attrs)
+    for u, v, attrs in _projection_dcsync_edges(G):
+        P.add_edge(u, v, label="DCSync", rel_type="DCSync", **attrs)
+    for u, v, attrs in _projection_delegation_edges(G):
+        P.add_edge(u, v, label="AllowedToDelegate", rel_type="AllowedToDelegate", **attrs)
     _PROJECTION_CACHE[cache_key] = (G, P)
     return P
 

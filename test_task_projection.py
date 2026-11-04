@@ -178,7 +178,8 @@ class TestProjectionOnRealCorpora(unittest.TestCase):
         self.assertEqual(P.number_of_nodes(), G.number_of_nodes())
         unknown = [d["name"] for _, d in P.nodes(data=True) if d["labels"][0] == "Unknown"]
         self.assertLessEqual(len(unknown), 0, msg=f"unmapped types: {unknown[:5]}")
-        self.assertEqual(P.number_of_edges(), G.number_of_edges())
+        # Aliases add edges; nothing is dropped.
+        self.assertGreaterEqual(P.number_of_edges(), G.number_of_edges())
         for _, _, e in P.edges(data=True):
             self.assertIn("label", e)
 
