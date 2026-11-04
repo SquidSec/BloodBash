@@ -49,7 +49,7 @@ jobs:
             test_task_projection.py test_task_projection_edges.py \
             test_task_file_parser.py test_task_result_writers.py \
             test_task_query_evaluator.py test_task_path_functions.py \
-            test_task_cli.py test_task_parity.py \
+            test_task_cli.py test_task_parity.py test_release_smoke.py \
             test_version_consistency.py \
             test_ci_pytest_suite.py -q
 
@@ -123,6 +123,34 @@ jobs:
             throw "Windows binary not found in dist/"
           }
           & "dist/${{ matrix.artifact_name }}" --help | Select-Object -First 5
+
+      - name: "Smoke: binary runs a task list (Linux)"
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          BIN="./dist/${{ matrix.pyinstaller_name }}"
+          "$BIN" --tasks-validate tasks/core.tasks
+          OUT="$(mktemp -d)"
+          "$BIN" SampleSharphoundADData --tasks tasks/core.tasks --tasks-out "$OUT" --no-cache
+          test -f "$OUT/Domains.csv"
+          test -f "$OUT/index.csv"
+          test -s "$OUT/index.csv"
+
+      - name: "Smoke: binary runs a task list (Windows)"
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $bin = "dist/${{ matrix.artifact_name }}"
+          & $bin --tasks-validate tasks/core.tasks
+          if ($LASTEXITCODE -ne 0) { throw "task validation failed" }
+          $out = Join-Path $env:RUNNER_TEMP "bb-tasks"
+          & $bin SampleSharphoundADData --tasks tasks/core.tasks --tasks-out $out --no-cache
+          if ($LASTEXITCODE -ne 0) { throw "task run failed" }
+          foreach ($f in @("Domains.csv", "index.csv")) {
+            $p = Join-Path $out $f
+            if (-not (Test-Path $p)) { throw "missing $f" }
+            if ((Get-Item $p).Length -eq 0) { throw "empty $f" }
+          }
 
       - name: Upload build artifact
         id: upload
@@ -217,6 +245,17 @@ jobs:
             "**BloodBash** is an open source project created and managed by **[SquidSec](https://squidoffense.com/)**." \
             "" \
             "Standalone binaries (no Python install required)." \
+            "" \
+            "**New in this line:** PlumHound-style task lists. Run your own" \
+            "\`.tasks\` files without Neo4j:" \
+            "" \
+            '```bash' \
+            "./bloodbash-linux-x64 /path/to/sharphound --tasks ./my-list.tasks --tasks-out ./reports" \
+            "./bloodbash-linux-x64 --tasks-validate ./my-list.tasks" \
+            "./bloodbash-linux-x64 --tasks-list" \
+            '```' \
+            "" \
+            "See the README for the supported query subset and output layout." \
             "" \
             "| Platform | File |" \
             "|----------|------|" \

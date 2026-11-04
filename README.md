@@ -25,12 +25,12 @@
 |--|--|
 | **Organization** | [SquidSec](https://squidoffense.com/) |
 | **Website** | [https://squidoffense.com/](https://squidoffense.com/) |
-| **App version** | **v1.5.0** |
+| **App version** | **v1.6.0** |
 | **Latest binary** | [![GitHub release](https://img.shields.io/github/v/release/DotNetRussell/BloodBash)](https://github.com/DotNetRussell/BloodBash/releases/latest) |
 | **License** | [MIT](LICENSE) |
 | **Runtime (source)** | Python 3.9+ |
 
-Merges to `main` automatically build **Linux** and **Windows** binaries and publish a GitHub Release (tag `v1.5.0-build.N`).
+Merges to `main` automatically build **Linux** and **Windows** binaries and publish a GitHub Release (tag `v1.6.0-build.N`).
 
 ---
 
@@ -104,6 +104,9 @@ bloodbash ./sharpout --from-user alice --from-user-export
 bloodbash /path/to/json --all --fast
 # inventory ladders still opt-in:
 bloodbash /path/to/json --all --inventory
+
+# 4) Your own PlumHound-style task list (no Neo4j)
+bloodbash /path/to/json --tasks ./my-list.tasks --tasks-out ./task-reports
 ```
 
 From a source checkout, `python3 BloodBash.py` is equivalent to `bloodbash`.
@@ -651,6 +654,29 @@ Run `bloodbash --help` for start-here + cheat sheet, or `--help-advanced` for fu
 
 Ingest understands modern collector output: group `Members`, `AllowedToAct` (RBCD), Sessions / LocalGroups, domain `Trusts[]`, SID history, CE property name aliases, and safe zip extraction (Zip Slip blocked). DCSync requires **GetChanges + GetChangesAll**. ADCS labels follow SpecterOps ESC1-ESC8 (+ ESC9/ESC13 candidates when flags exist). Domain controller computer objects stay high-value targets. Workstation `highvalue` flags on local admin groups do not flood the HV set.
 
+## Task lists (v1.6.0)
+
+BloodBash reads PlumHound-style `.tasks` files and runs them without Neo4j or a
+BloodHound install. The parser, projection and query evaluator are covered in
+the `PlumHound task lists` section of *What it finds* and in
+[docs/cookbook.md](docs/cookbook.md).
+
+| Piece | Behaviour |
+|-------|-----------|
+| Input | four-field list literal per line; `#`/`//` comments; `HTLMCSV` typo accepted |
+| Query subset | `MATCH`/`OPTIONAL MATCH`/`WHERE`/`WITH`/`RETURN`/`ORDER BY`/`LIMIT`/`UNWIND`/`UNION`, variable-length patterns, aggregates, `shortestPath` within a 10-hop cap |
+| Output | one CSV or HTML per task, `index.csv` + `index.html`, optional zip |
+| Failures | per task, recorded in the index; `--tasks-strict` exits `2` |
+| Shipped lists | `tasks/core.tasks`, `tasks/azure.tasks` (MIT) |
+
+```bash
+bloodbash ./sharpout --tasks ./my-list.tasks --tasks-out ./task-reports
+bloodbash --tasks-validate ./my-list.tasks
+bloodbash --tasks-list
+```
+
+Write clauses are rejected: BloodBash analyses a collection and never edits it.
+
 ## Metasploit module
 
 Wraps the SquidSec BloodBash CLI (v1.4+) and reports findings into the Metasploit DB.
@@ -760,7 +786,7 @@ pyinstaller --onefile --console --name bloodbash-linux-x64 BloodBash.py
 # -> dist/bloodbash-linux-x64
 ```
 
-CI (on every push to `main`) runs tests, builds Linux + Windows one-file binaries with PyInstaller, and publishes a Release with stable asset names for the `/releases/latest/download/...` links above. Tags look like `v1.5.0-build.N`.
+CI (on every push to `main`) runs tests, builds Linux + Windows one-file binaries with PyInstaller, and publishes a Release with stable asset names for the `/releases/latest/download/...` links above. Tags look like `v1.6.0-build.N`.
 
 ## License & attribution
 
