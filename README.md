@@ -725,6 +725,20 @@ python3 tools/run_scenario_battery.py --keep --work-dir /tmp/bb-engagements
 CI (PR + main) runs unit/integration tests **and** `run_scenario_battery.py --count 20 --seed 42`
 (20 engagement chains). Branch protection requires the **test** status check.
 
+Task-list parity (regression guard for the shipped task lists):
+
+```bash
+# Rewrite the baseline after an intended output change
+python3 tools/task_parity.py --corpus testData/synthetic-corp-lab --write
+
+# CI check: fails when row counts, columns or sample rows drift
+python3 tools/task_parity.py --corpus testData/synthetic-corp-lab --check
+```
+
+`tasks/parity_manifest.json` maps each fixture to the corpus it should run
+against, so the Azure list is checked against `SampleAzurehoundData` rather than
+returning zero rows from an AD-only collection.
+
 Accuracy helpers (no customer data):
 
 ```bash

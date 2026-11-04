@@ -1,0 +1,703 @@
+{
+  "fixtures": [
+    {
+      "file": "azure.tasks",
+      "tasks": [
+        {
+          "title": "Azure Users",
+          "format": "HTMLCSV",
+          "line": 2,
+          "status": "ok",
+          "columns": [
+            "Name",
+            "DisplayName",
+            "Enabled",
+            "UPN"
+          ],
+          "rows": 230,
+          "sample": [
+            [
+              "097ef6c2-ApplicationAdministrator",
+              "097ef6c2-ApplicationAdministrator",
+              "True",
+              "097ef6c2-ApplicationAdministrator@phantomcorp.onmicrosoft.com"
+            ],
+            [
+              "097ef6c2-ApplicationDeveloper",
+              "097ef6c2-ApplicationDeveloper",
+              "True",
+              "097ef6c2-ApplicationDeveloper@phantomcorp.onmicrosoft.com"
+            ],
+            [
+              "097ef6c2-AttackPayloadAuthor",
+              "097ef6c2-AttackPayloadAuthor",
+              "True",
+              "097ef6c2-AttackPayloadAuthor@phantomcorp.onmicrosoft.com"
+            ],
+            [
+              "097ef6c2-AttackSimulationAdministrator",
+              "097ef6c2-AttackSimulationAdministrator",
+              "True",
+              "097ef6c2-AttackSimulationAdministrator@phantomcorp.onmicrosoft.com"
+            ],
+            [
+              "097ef6c2-AttributeAssignmentAdministrator",
+              "097ef6c2-AttributeAssignmentAdministrator",
+              "True",
+              "097ef6c2-AttributeAssignmentAdministrator@phantomcorp.onmicrosoft.com"
+            ]
+          ]
+        },
+        {
+          "title": "Azure Groups",
+          "format": "HTMLCSV",
+          "line": 3,
+          "status": "ok",
+          "columns": [
+            "Name",
+            "DisplayName"
+          ],
+          "rows": 48,
+          "sample": [
+            [
+              "Simulation",
+              "Simulation"
+            ],
+            [
+              "Detection",
+              "Detection"
+            ],
+            [
+              "Azure ATP phantom Users",
+              "Azure ATP phantom Users"
+            ],
+            [
+              "Azure ATP phantom Viewers",
+              "Azure ATP phantom Viewers"
+            ],
+            [
+              "Azure ATP phantom Administrators",
+              "Azure ATP phantom Administrators"
+            ]
+          ]
+        },
+        {
+          "title": "Global Administrator Assignments",
+          "format": "HTMLCSV",
+          "line": 4,
+          "status": "ok",
+          "columns": [
+            "Principal",
+            "Type",
+            "Role"
+          ],
+          "rows": 29,
+          "sample": [
+            [
+              "ThisGroupHasGARoleAlwaysActive",
+              "AZGroup",
+              "Global Administrator"
+            ],
+            [
+              "097ef6c2-GlobalAdministrator",
+              "AZUser",
+              "Global Administrator"
+            ],
+            [
+              "John Jacob",
+              "AZUser",
+              "Global Administrator"
+            ],
+            [
+              "asadmin",
+              "AZUser",
+              "Global Administrator"
+            ],
+            [
+              "Carlo Martinez",
+              "AZUser",
+              "Global Administrator"
+            ]
+          ]
+        },
+        {
+          "title": "Azure Owns Edges",
+          "format": "CSV",
+          "line": 5,
+          "status": "ok",
+          "columns": [
+            "Principal",
+            "Target",
+            "TargetType"
+          ],
+          "rows": 7,
+          "sample": [
+            [
+              "John Jacob",
+              "AzureHoundEnterprise",
+              "AZServicePrincipal"
+            ],
+            [
+              "John Jacob",
+              "Microsoft Graph",
+              "AZServicePrincipal"
+            ],
+            [
+              "David Johnson",
+              "MyCoolAzureApp",
+              "AZServicePrincipal"
+            ],
+            [
+              "Matt Harris",
+              "SD ECDN",
+              "AZServicePrincipal"
+            ],
+            [
+              "rhadmin@phantomcorp.onmicrosoft.com",
+              "Windows Defender",
+              "AZServicePrincipal"
+            ]
+          ]
+        },
+        {
+          "title": "Report Index",
+          "format": "HTML",
+          "line": 6,
+          "status": "ok",
+          "sentinel": "REPORT-INDEX"
+        }
+      ],
+      "corpus": "SampleAzurehoundData",
+      "nodes": 15790,
+      "edges": 4961
+    },
+    {
+      "file": "core.tasks",
+      "tasks": [
+        {
+          "title": "Domains",
+          "format": "HTMLCSV",
+          "line": 3,
+          "status": "ok",
+          "columns": [
+            "Domain",
+            "FunctionalLevel",
+            "DNS",
+            "DN",
+            "SID"
+          ],
+          "rows": 1,
+          "sample": [
+            [
+              "CORPLAB.LOCAL",
+              "2016",
+              "CORPLAB.LOCAL",
+              "DC=corplab,DC=local",
+              "S-1-5-21-1111111111-2222222222-3333333333"
+            ]
+          ]
+        },
+        {
+          "title": "Domain Trusts",
+          "format": "HTMLCSV",
+          "line": 4,
+          "status": "ok",
+          "columns": [
+            "Domain1",
+            "Domain2",
+            "TrustType",
+            "SidFiltering"
+          ],
+          "rows": 0,
+          "sample": []
+        },
+        {
+          "title": "Domain Controllers",
+          "format": "HTMLCSV",
+          "line": 5,
+          "status": "ok",
+          "columns": [
+            "Hostname",
+            "OS",
+            "LAPS",
+            "Enabled",
+            "DN"
+          ],
+          "rows": 1,
+          "sample": [
+            [
+              "DC01.CORPLAB.LOCAL",
+              "Windows Server 2019",
+              "True",
+              "True",
+              "CN=DC01,DC=corplab,DC=local"
+            ]
+          ]
+        },
+        {
+          "title": "Domain Admins (Direct)",
+          "format": "HTML",
+          "line": 6,
+          "status": "ok",
+          "columns": [
+            "Name",
+            "DisplayName",
+            "Type",
+            "Enabled",
+            "PWDNeverExpire"
+          ],
+          "rows": 2,
+          "sample": [
+            [
+              "CAROL.ADMIN@CORPLAB.LOCAL",
+              "carol.admin",
+              "User",
+              "True",
+              "False"
+            ],
+            [
+              "SVC_SQL@CORPLAB.LOCAL",
+              "svc_sql",
+              "User",
+              "True",
+              "False"
+            ]
+          ]
+        },
+        {
+          "title": "Enterprise Admins (Direct)",
+          "format": "HTML",
+          "line": 7,
+          "status": "ok",
+          "columns": [
+            "Name",
+            "DisplayName",
+            "Type",
+            "Enabled"
+          ],
+          "rows": 0,
+          "sample": []
+        },
+        {
+          "title": "Domain Users",
+          "format": "HTMLCSV",
+          "line": 8,
+          "status": "ok",
+          "columns": [
+            "Name",
+            "DisplayName",
+            "Enabled",
+            "Description",
+            "AdminCount",
+            "HasSPN",
+            "PWDNeverExpires"
+          ],
+          "rows": 10,
+          "sample": [
+            [
+              "ALICE.LOW@CORPLAB.LOCAL",
+              "alice.low",
+              "True",
+              "standard user",
+              "False",
+              "False",
+              "False"
+            ],
+            [
+              "CAROL.ADMIN@CORPLAB.LOCAL",
+              "carol.admin",
+              "True",
+              "",
+              "True",
+              "False",
+              "False"
+            ],
+            [
+              "DAVE.HELP@CORPLAB.LOCAL",
+              "dave.help",
+              "True",
+              "",
+              "False",
+              "False",
+              "False"
+            ],
+            [
+              "MSOL_SYNC@CORPLAB.LOCAL",
+              "MSOL_SYNC",
+              "True",
+              "Azure AD Connect",
+              "False",
+              "False",
+              "False"
+            ],
+            [
+              "SVC_SQL@CORPLAB.LOCAL",
+              "svc_sql",
+              "True",
+              "SQL service",
+              "False",
+              "True",
+              "False"
+            ]
+          ]
+        },
+        {
+          "title": "Domain Computers",
+          "format": "HTMLCSV",
+          "line": 9,
+          "status": "ok",
+          "columns": [
+            "Name",
+            "Domain",
+            "Enabled",
+            "LAPS",
+            "HighValue",
+            "OS"
+          ],
+          "rows": 45,
+          "sample": [
+            [
+              "DC01.CORPLAB.LOCAL",
+              "CORPLAB.LOCAL",
+              "True",
+              "True",
+              "True",
+              "Windows Server 2019"
+            ],
+            [
+              "HOST00.CORPLAB.LOCAL",
+              "CORPLAB.LOCAL",
+              "True",
+              "True",
+              "False",
+              "Windows 10"
+            ],
+            [
+              "HOST01.CORPLAB.LOCAL",
+              "CORPLAB.LOCAL",
+              "True",
+              "False",
+              "False",
+              "Windows 10"
+            ],
+            [
+              "HOST02.CORPLAB.LOCAL",
+              "CORPLAB.LOCAL",
+              "True",
+              "False",
+              "False",
+              "Windows 10"
+            ],
+            [
+              "HOST03.CORPLAB.LOCAL",
+              "CORPLAB.LOCAL",
+              "True",
+              "True",
+              "False",
+              "Windows 10"
+            ]
+          ]
+        },
+        {
+          "title": "Kerberoastable Users",
+          "format": "HTML",
+          "line": 10,
+          "status": "ok",
+          "columns": [
+            "Username",
+            "DisplayName",
+            "Enabled",
+            "AdminCount",
+            "SPNs"
+          ],
+          "rows": 1,
+          "sample": [
+            [
+              "SVC_SQL@CORPLAB.LOCAL",
+              "svc_sql",
+              "True",
+              "False",
+              "['MSSQLSvc/sql.corplab.local:1433']"
+            ]
+          ]
+        },
+        {
+          "title": "AS-REP Roastable Users",
+          "format": "HTML",
+          "line": 11,
+          "status": "ok",
+          "columns": [
+            "Username",
+            "Enabled",
+            "AdminCount",
+            "LastLogon"
+          ],
+          "rows": 1,
+          "sample": [
+            [
+              "BOB.ASREP@CORPLAB.LOCAL",
+              "True",
+              "False",
+              "1700000000"
+            ]
+          ]
+        },
+        {
+          "title": "Admin Groups",
+          "format": "HTMLCSV",
+          "line": 12,
+          "status": "ok",
+          "columns": [
+            "Name",
+            "HighValue",
+            "Description",
+            "AdminCount"
+          ],
+          "rows": 4,
+          "sample": [
+            [
+              "DOMAIN ADMINS@CORPLAB.LOCAL",
+              "True",
+              "",
+              "True"
+            ],
+            [
+              "ENTERPRISE ADMINS@CORPLAB.LOCAL",
+              "True",
+              "",
+              "True"
+            ],
+            [
+              "Administrators@CORPLAB.LOCAL",
+              "True",
+              "None",
+              "None"
+            ],
+            [
+              "SYSTEM ADMINISTRATORS@CORPLAB.LOCAL",
+              "False",
+              "",
+              "False"
+            ]
+          ]
+        },
+        {
+          "title": "High Value Group Membership",
+          "format": "HTMLCSV",
+          "line": 13,
+          "status": "ok",
+          "columns": [
+            "User",
+            "Enabled",
+            "Group"
+          ],
+          "rows": 2,
+          "sample": [
+            [
+              "CAROL.ADMIN@CORPLAB.LOCAL",
+              "True",
+              "DOMAIN ADMINS@CORPLAB.LOCAL"
+            ],
+            [
+              "SVC_SQL@CORPLAB.LOCAL",
+              "True",
+              "DOMAIN ADMINS@CORPLAB.LOCAL"
+            ]
+          ]
+        },
+        {
+          "title": "DCSync Principals",
+          "format": "HTMLCSV",
+          "line": 14,
+          "status": "ok",
+          "columns": [
+            "Domain",
+            "Principal",
+            "Type"
+          ],
+          "rows": 3,
+          "sample": [
+            [
+              "CORPLAB.LOCAL",
+              "CAROL.ADMIN@CORPLAB.LOCAL",
+              "User"
+            ],
+            [
+              "CORPLAB.LOCAL",
+              "Administrators@CORPLAB.LOCAL",
+              "Group"
+            ],
+            [
+              "CORPLAB.LOCAL",
+              "MSOL_SYNC@CORPLAB.LOCAL",
+              "User"
+            ]
+          ]
+        },
+        {
+          "title": "Unconstrained Delegation",
+          "format": "HTML",
+          "line": 15,
+          "status": "ok",
+          "columns": [
+            "Computer",
+            "OS",
+            "Type"
+          ],
+          "rows": 1,
+          "sample": [
+            [
+              "DC01.CORPLAB.LOCAL",
+              "Windows Server 2019",
+              "Computer"
+            ]
+          ]
+        },
+        {
+          "title": "Local Admins (Users)",
+          "format": "HTMLCSV",
+          "line": 16,
+          "status": "ok",
+          "columns": [
+            "Principal",
+            "PrincipalType",
+            "Computer"
+          ],
+          "rows": 1,
+          "sample": [
+            [
+              "DAVE.HELP@CORPLAB.LOCAL",
+              "User",
+              "WS01.CORPLAB.LOCAL"
+            ]
+          ]
+        },
+        {
+          "title": "Sessions",
+          "format": "HTMLCSV",
+          "line": 17,
+          "status": "ok",
+          "columns": [
+            "Computer",
+            "Username"
+          ],
+          "rows": 2,
+          "sample": [
+            [
+              "DC01.CORPLAB.LOCAL",
+              "CAROL.ADMIN@CORPLAB.LOCAL"
+            ],
+            [
+              "WS01.CORPLAB.LOCAL",
+              "ALICE.LOW@CORPLAB.LOCAL"
+            ]
+          ]
+        },
+        {
+          "title": "Computers Without LAPS",
+          "format": "HTMLCSV",
+          "line": 18,
+          "status": "ok",
+          "columns": [
+            "Computer",
+            "OS",
+            "Enabled"
+          ],
+          "rows": 28,
+          "sample": [
+            [
+              "HOST01.CORPLAB.LOCAL",
+              "Windows 10",
+              "True"
+            ],
+            [
+              "HOST02.CORPLAB.LOCAL",
+              "Windows 10",
+              "True"
+            ],
+            [
+              "HOST04.CORPLAB.LOCAL",
+              "Windows 10",
+              "True"
+            ],
+            [
+              "HOST05.CORPLAB.LOCAL",
+              "Windows 10",
+              "True"
+            ],
+            [
+              "HOST07.CORPLAB.LOCAL",
+              "Windows 10",
+              "True"
+            ]
+          ]
+        },
+        {
+          "title": "Over-Privileged Everyone Edges",
+          "format": "HTMLCSV",
+          "line": 19,
+          "status": "ok",
+          "columns": [
+            "Subject",
+            "Relationship",
+            "Target",
+            "Enabled"
+          ],
+          "rows": 1,
+          "sample": [
+            [
+              "Everyone@CORPLAB.LOCAL",
+              "GenericWrite",
+              "MRIOS@CORPLAB.LOCAL",
+              "True"
+            ]
+          ]
+        },
+        {
+          "title": "Top Admins by AdminTo Count",
+          "format": "CSV",
+          "line": 20,
+          "status": "ok",
+          "columns": [
+            "Principal",
+            "HostCount"
+          ],
+          "rows": 1,
+          "sample": [
+            [
+              "DAVE.HELP@CORPLAB.LOCAL",
+              "1"
+            ]
+          ]
+        },
+        {
+          "title": "Kerberoast Path to Domain Admins",
+          "format": "HTML",
+          "line": 21,
+          "status": "ok",
+          "columns": [
+            "User",
+            "Group"
+          ],
+          "rows": 1,
+          "sample": [
+            [
+              "SVC_SQL@CORPLAB.LOCAL",
+              "DOMAIN ADMINS@CORPLAB.LOCAL"
+            ]
+          ]
+        },
+        {
+          "title": "Report Index",
+          "format": "HTML",
+          "line": 22,
+          "status": "ok",
+          "sentinel": "REPORT-INDEX"
+        }
+      ],
+      "corpus": "synthetic-corp-lab",
+      "nodes": 79,
+      "edges": 580
+    }
+  ]
+}
