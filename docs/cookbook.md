@@ -57,6 +57,29 @@ python3 BloodBash.py DIR --inventory --busiest-paths short --path-break \
 python3 BloodBash.py DIR --csv-pack ./ph-reports --export-zip ph-reports.zip
 ```
 
+## PlumHound task lists
+
+```bash
+# Validate without running
+python3 BloodBash.py --tasks-validate ./my-list.tasks
+
+# Run a list
+python3 BloodBash.py DIR --tasks ./my-list.tasks --tasks-out ./task-reports
+python3 BloodBash.py DIR --tasks a.tasks b.tasks --tasks-out ./task-reports
+python3 BloodBash.py DIR --tasks ./my-list.tasks --tasks-format CSV
+python3 BloodBash.py DIR --tasks ./my-list.tasks --tasks-strict
+
+# Shipped examples (MIT)
+python3 BloodBash.py --tasks-list
+python3 BloodBash.py DIR --tasks tasks/core.tasks --tasks-out ./task-reports
+
+# Tasks alongside a full run
+python3 BloodBash.py DIR --all --fast --tasks ./my-list.tasks
+```
+
+Output is one CSV or HTML per task plus `index.html` / `index.csv`. A failing
+task is recorded in the index and the rest of the list still runs.
+
 ## Profiles
 
 ```bash

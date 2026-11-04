@@ -417,6 +417,24 @@ that appears in some task lists is accepted.
 # Parse and list every task without running anything
 bloodbash --tasks-validate ./my-list.tasks
 bloodbash --tasks-validate tasks/default.tasks tasks/hunt.tasks
+
+# Run one or more lists into a directory
+bloodbash ./sharpout --tasks ./my-list.tasks
+bloodbash ./sharpout --tasks ./my-list.tasks --tasks-out ./task-reports
+bloodbash ./sharpout --tasks a.tasks b.tasks --tasks-out ./task-reports
+bloodbash ./sharpout --tasks ./my-list.tasks --tasks-out ./task-reports --export-zip tasks.zip
+
+# Force one output format for every task
+bloodbash ./sharpout --tasks ./my-list.tasks --tasks-format CSV
+
+# Fail the run on any task error (default: report and continue)
+bloodbash ./sharpout --tasks ./my-list.tasks --tasks-strict
+
+# Run tasks alongside a normal analysis pass
+bloodbash ./sharpout --all --fast --tasks ./my-list.tasks
+
+# See the example lists shipped with BloodBash
+bloodbash --tasks-list
 ```
 
 The validator prints one row per task with its resolved output filename and a
@@ -462,7 +480,11 @@ collection, and `CALL`/`LOAD CSV` are rejected because there is no procedure
 surface.
 
 PlumHound task lists are GPL-3.0. BloodBash reads the file you point it at and
-ships none of them.
+ships none of them. The two lists under `tasks/` (`core.tasks`, `azure.tasks`)
+are MIT, written for BloodBash, and use the same format as a starting point.
+
+The same options are available in the Metasploit module as `TASKS`, `TASKS_OUT`,
+`TASKS_FORMAT` and `TASKS_STRICT`.
 
 ### Azure / Entra
 
@@ -518,6 +540,12 @@ bloodbash ./sharpout --profile adcs-heavy --path-break --busiest-paths short \
 | `--writable-all` | Show imported writes that already exist as SharpHound edges (default: new only) |
 | `--report-pack DIR` | Multi-page HTML suite + `index.html` + per-section CSVs |
 | `--csv-pack DIR` | **PlumHound-style multi-CSV pack** (inventory + overpriv + AdminTo reports + `index.csv`) |
+| `--tasks FILE…` | **Run PlumHound-style `.tasks` list(s)** into `--tasks-out`; repeatable |
+| `--tasks-out DIR` | Output directory for task reports (default `task-reports/`) |
+| `--tasks-format FMT` | Override every task's output format (`CSV`, `HTML`, `HTMLCSV`, `STDOUT`, `ZIP`) |
+| `--tasks-strict` | Exit `2` when any task fails; default is report and continue |
+| `--tasks-validate FILE…` | Parse and list tasks without running; exit `0` clean, `2` on errors |
+| `--tasks-list` | List the example task lists shipped in `tasks/` |
 | `--export-zip [FILE]` | Zip a `--report-pack` or `--csv-pack` directory into one deliverable |
 | `--profile FILE\|name` | YAML analysis profile (`quick`, `quick-wins`, `adcs-heavy`, `hygiene`, or path) |
 | `--log-file [FILE]` | Append-friendly run log (default `bloodbash.log`) |
