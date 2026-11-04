@@ -3064,6 +3064,162 @@ def get_high_value_targets(G, domain_filter=None, include_all_highvalue=False):
         if any(k in name for k in keywords) or is_ca_type:
             targets.append((n, d['name'], d['type']))
     return sorted(targets, key=lambda x: x[1])
+
+
+# ────────────────────────────────────────────────
+# BloodHound-shaped projection (task-list compatibility)
+# ────────────────────────────────────────────────
+# Task lists address nodes by Neo4j label. BloodBash stores a single ``type``
+# string, so the projection maps that string onto the collector's label.
+PROJECTION_LABELS = {
+    # SharpHound AD
+    "user": "User",
+    "computer": "Computer",
+    "group": "Group",
+    "domain": "Domain",
+    "ou": "OU",
+    "gpo": "GPO",
+    "container": "Container",
+    "base": "Base",
+    "certificate template": "CertificateTemplate",
+    "enterprise ca": "EnterpriseCA",
+    "root ca": "RootCA",
+    "aia ca": "AIACA",
+    "ntauth store": "NTAuthStore",
+    # AzureHound
+    "azure user": "AZUser",
+    "azure group": "AZGroup",
+    "azure application": "AZApp",
+    "azure service principal": "AZServicePrincipal",
+    "azure role": "AZRole",
+    "azure device": "AZDevice",
+    "azure tenant": "AZTenant",
+    "azure subscription": "AZSubscription",
+    "azure resource group": "AZResourceGroup",
+    "azure management group": "AZManagementGroup",
+    "azure vm": "AZVM",
+    "azure key vault": "AZKeyVault",
+}
+
+PROJECTION_UNKNOWN_LABEL = "Unknown"
+
+# id(G) alone can be reused after GC; store the source graph so a stale entry
+# cannot be handed back for a different graph.
+_PROJECTION_CACHE: Dict[Tuple[int, Tuple[str, ...]], Tuple[Any, Any]] = {}
+
+
+def projection_label(raw) -> str:
+    """Neo4j label for a BloodBash ``type`` string (``Unknown`` when unmapped)."""
+    if raw is None:
+        return PROJECTION_UNKNOWN_LABEL
+    key = str(raw).strip().lower()
+    if not key:
+        return PROJECTION_UNKNOWN_LABEL
+    label = PROJECTION_LABELS.get(key)
+    if label:
+        return label
+    # Accept raw collector meta.type values ("certTemplates") as well.
+    normalized = _normalize_object_type(raw)
+    if normalized:
+        return PROJECTION_LABELS.get(str(normalized).strip().lower(), PROJECTION_UNKNOWN_LABEL)
+    return PROJECTION_UNKNOWN_LABEL
+
+
+def _normalize_owned_principals(owned) -> Tuple[str, ...]:
+    """Accept ``--owned`` style CSV, a sequence, or None; return sorted upper names."""
+    if not owned:
+        return ()
+    if isinstance(owned, str):
+        parts = [p.strip() for p in owned.split(",")]
+    else:
+        parts = [str(p).strip() for p in owned]
+    return tuple(sorted({p.upper() for p in parts if p}))
+
+
+def project_node_props(G, oid, data, high_value_ids=None, owned_names=()) -> dict:
+    """Lowercased BloodHound-style property bag for one node.
+
+    ``objectid`` is materialized from the node key because SharpHound does not
+    duplicate it inside ``Properties``. Derived flags stay in the projection so
+    the analysis graph is never mutated.
+    """
+    props = data.get("props") or {}
+    out: Dict[str, Any] = {}
+    for key, value in props.items():
+        if isinstance(key, str):
+            out[key.lower()] = value
+    out["objectid"] = oid
+    if "name" not in out:
+        out["name"] = data.get("name") or oid
+    if "domain" not in out:
+        dom = _primary_domain(data)
+        if dom:
+            out["domain"] = dom
+
+    is_hv = bool(high_value_ids and oid in high_value_ids)
+    out["highvalue"] = is_hv
+
+    owned_set = {n.upper() for n in owned_names}
+    name_u = str(out.get("name") or "").upper()
+    out["owned"] = bool(owned_set) and (
+        name_u in owned_set or str(oid).upper() in owned_set
+    )
+
+    typ = str(data.get("type") or "").lower()
+    if typ == "user":
+        out["hasspn"] = _user_has_spn(props)
+    return out
+
+
+def build_bloodhound_projection(G, owned=None, domain_filter=None):
+    """Return a read-only Neo4j-shaped view of ``G`` (labels + props + edges).
+
+    Cached per ``(graph, owned)`` so repeated task runs do not re-derive flags.
+    Edges carry ``label``, ``rel_type`` and lowercased edge attributes.
+    """
+    if G is None:
+        return nx.MultiDiGraph()
+    owned_names = _normalize_owned_principals(owned)
+    cache_key = (id(G), owned_names)
+    cached = _PROJECTION_CACHE.get(cache_key)
+    if cached is not None and cached[0] is G:
+        return cached[1]
+
+    high_value_ids = {
+        oid for oid, _name, _typ in get_high_value_targets(G, domain_filter)
+    }
+    P = nx.MultiDiGraph()
+    P.graph["projection_of"] = id(G)
+    for oid, data in G.nodes(data=True):
+        props = project_node_props(G, oid, data, high_value_ids, owned_names)
+        P.add_node(
+            oid,
+            name=data.get("name") or oid,
+            type=data.get("type"),
+            labels=[projection_label(data.get("type"))],
+            props=props,
+            is_azure=bool(data.get("is_azure")),
+        )
+    for u, v, key, data in G.edges(keys=True, data=True):
+        attrs = {k: val for k, val in (data or {}).items() if k != "label"}
+        rel = data.get("label") if isinstance(data, dict) else None
+        P.add_edge(
+            u,
+            v,
+            key=key,
+            label=rel or "",
+            rel_type=rel or "",
+            **attrs,
+        )
+    _PROJECTION_CACHE[cache_key] = (G, P)
+    return P
+
+
+def clear_projection_cache() -> None:
+    """Drop cached projections (tests and long-lived watch runs)."""
+    _PROJECTION_CACHE.clear()
+
+
 def format_path(G, path):
     if not path or len(path) < 1:
         return "[dim]Invalid path[/dim]"
