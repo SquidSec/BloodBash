@@ -32,8 +32,8 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
-          pip install pytest
+          python -m pip install -r requirements-dev.txt
+          python -m pip install pytest
 
       - name: Run unit + integration tests
         run: |
@@ -50,7 +50,7 @@ jobs:
             test_task_file_parser.py test_task_result_writers.py \
             test_task_query_evaluator.py test_task_path_functions.py \
             test_task_cli.py test_task_parity.py test_release_smoke.py \
-            test_console_encoding.py \
+            test_console_encoding.py test_release_workflow.py \
             test_version_consistency.py \
             test_ci_pytest_suite.py -q
 
@@ -83,16 +83,26 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Show interpreter
+        # Self-hosted runners disagree about which Python is first on PATH
+        # (one Windows runner resolved C:\Python314 while setup-python had
+        # installed 3.11). Record what the build actually uses.
+        run: |
+          python -c "import sys; print(sys.executable); print(sys.version)"
+
       - name: Install build dependencies
+        # Use the interpreter setup-python selected, via ``python -m``, so a
+        # stray PATH entry cannot install into the wrong environment.
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install -r requirements-build.txt
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-build.txt
+          python -m PyInstaller --version
 
       - name: Build binary (Linux)
         if: runner.os == 'Linux'
         run: |
-          pyinstaller \
+          python -m PyInstaller \
             --onefile \
             --console \
             --clean \
@@ -107,7 +117,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          pyinstaller `
+          python -m PyInstaller `
             --onefile `
             --console `
             --clean `
