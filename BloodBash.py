@@ -41,6 +41,116 @@ __org_tagline__ = "Open source security tooling by SquidSec"
 __org_url__ = "https://squidoffense.com/"
 __project_url__ = "https://github.com/DotNetRussell/BloodBash"
 
+# Windows consoles still default to a legacy code page (cp1252) inside CI and
+# on many customer hosts. Printing a check mark there raised UnicodeEncodeError
+# and aborted the run before any analysis happened, so output is normalized to
+# ASCII when the active encoding cannot represent it.
+GLYPH_REPLACEMENTS = {
+    "\u2713": "[+]",   # check mark
+    "\u2717": "[-]",   # ballot X
+    "\u2500": "-",     # box drawing horizontal
+    "\u2502": "|",     # box drawing vertical
+    "\u2026": "...",   # horizontal ellipsis
+    "\u2014": "-",     # em dash
+    "\u2013": "-",     # en dash
+    "\u00b7": "-",     # middle dot
+    "\u2192": "->",    # right arrow
+}
+
+# Characters the loader and summary lines print.
+OUTPUT_GLYPHS = "".join(GLYPH_REPLACEMENTS)
+
+
+def encoding_supports_glyphs(encoding: Optional[str]) -> bool:
+    """True when ``encoding`` can represent every glyph BloodBash prints."""
+    if not encoding:
+        return False
+    try:
+        OUTPUT_GLYPHS.encode(encoding)
+    except (UnicodeEncodeError, LookupError):
+        return False
+    return True
+
+
+def ascii_safe_text(text: str) -> str:
+    """Replace known glyphs, then drop anything else outside ASCII."""
+    if isinstance(text, str):
+        for glyph, replacement in GLYPH_REPLACEMENTS.items():
+            if glyph in text:
+                text = text.replace(glyph, replacement)
+        try:
+            text.encode("ascii")
+            return text
+        except UnicodeEncodeError:
+            return text.encode("ascii", "ignore").decode("ascii")
+    return text
+
+
+def reconfigure_stream_encoding(stream) -> bool:
+    """Switch a stream to UTF-8 when its code page cannot print our glyphs."""
+    encoding = getattr(stream, "encoding", None)
+    if encoding_supports_glyphs(encoding):
+        return False
+    reconfigure = getattr(stream, "reconfigure", None)
+    if not callable(reconfigure):
+        return False
+    try:
+        reconfigure(encoding="utf-8", errors="replace")
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+class GlyphSafeStream:
+    """Stream proxy that transliterates glyphs the real stream cannot encode.
+
+    A legacy Windows console raises ``UnicodeEncodeError`` for the check mark
+    the loader prints. Swapping the console's file for this proxy keeps Rich's
+    layout intact and never lets character-set trouble abort a run.
+    """
+
+    def __init__(self, stream):
+        self._stream = stream
+
+    @property
+    def encoding(self):
+        return "utf-8"
+
+    def write(self, text):
+        try:
+            return self._stream.write(text)
+        except UnicodeEncodeError:
+            return self._stream.write(ascii_safe_text(text))
+
+    def flush(self):
+        flush = getattr(self._stream, "flush", None)
+        if callable(flush):
+            return flush()
+
+    def isatty(self):
+        isatty = getattr(self._stream, "isatty", None)
+        return bool(isatty()) if callable(isatty) else False
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+
+def ensure_console_encoding(target_console=None) -> None:
+    """Best-effort UTF-8 setup for stdout/stderr on legacy consoles."""
+    for stream in (sys.stdout, sys.stderr):
+        if stream is not None:
+            reconfigure_stream_encoding(stream)
+    target = target_console
+    if target is None:
+        return
+    stream = getattr(target, "file", None)
+    if stream is None or isinstance(stream, GlyphSafeStream):
+        return
+    if encoding_supports_glyphs(getattr(stream, "encoding", None)):
+        return
+    target.file = GlyphSafeStream(stream)
+
+
 console = Console()
 
 
@@ -66,10 +176,29 @@ def _install_markup_guard(target_console: Console) -> None:
                 return original_print(*escaped, **kwargs)
             except MarkupError:
                 return original_print(*escaped, markup=False, **kwargs)
+        except UnicodeEncodeError:
+            # A legacy console cannot render a glyph. Re-emit as plain ASCII
+            # with markup off rather than letting the run die. If the stream
+            # buffer is still poisoned, write straight to it and move on.
+            plain = [
+                ascii_safe_text(a) if isinstance(a, str) else a
+                for a in args
+            ]
+            try:
+                return original_print(*plain, markup=False, **kwargs)
+            except UnicodeEncodeError:
+                stream = getattr(target_console, "file", None)
+                if stream is not None:
+                    try:
+                        stream.write(ascii_safe_text(" ".join(str(a) for a in plain)) + "\n")
+                    except (OSError, ValueError):
+                        pass
+                return None
 
     target_console.print = _safe_print  # type: ignore[method-assign]
 
 
+ensure_console_encoding(console)
 _install_markup_guard(console)
 
 # ────────────────────────────────────────────────
