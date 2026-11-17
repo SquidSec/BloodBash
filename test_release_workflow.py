@@ -126,6 +126,25 @@ class TestReleaseSmokeStillWired(unittest.TestCase):
         self.assertEqual(doc["jobs"]["build"]["needs"], "test")
         self.assertEqual(doc["jobs"]["release"]["needs"], "build")
 
+    def test_release_notes_file_exists_for_current_version(self):
+        """The release body comes from a versioned file, so it must exist.
+
+        Notes used to be hardcoded in the workflow, which republished the same
+        "new in this line" text on every build after the feature shipped.
+        """
+        text = (ROOT / "BloodBash.py").read_text(encoding="utf-8")
+        match = re.search(r'^__version__\s*=\s*["\']([^"\']+)', text, re.MULTILINE)
+        self.assertIsNotNone(match, msg="__version__ not found")
+        version = match.group(1)
+        notes = ROOT / "docs" / "release-notes" / f"{version}.md"
+        self.assertTrue(notes.is_file(), msg=f"missing release notes: {notes}")
+        self.assertGreater(len(notes.read_text(encoding="utf-8").strip()), 0)
+
+    def test_release_workflow_reads_versioned_notes(self):
+        text = RELEASE.read_text(encoding="utf-8")
+        self.assertIn("docs/release-notes/${BASE_VERSION}.md", text)
+        self.assertNotIn("New in this line", text)
+
 
 if __name__ == "__main__":
     unittest.main()
