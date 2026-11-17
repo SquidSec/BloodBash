@@ -563,12 +563,17 @@
             "PrincipalType",
             "Computer"
           ],
-          "rows": 1,
+          "rows": 2,
           "sample": [
             [
               "DAVE.HELP@CORPLAB.LOCAL",
               "User",
               "WS01.CORPLAB.LOCAL"
+            ],
+            [
+              "DOMAIN ADMINS@CORPLAB.LOCAL",
+              "Group",
+              "DC01.CORPLAB.LOCAL"
             ]
           ]
         },
@@ -662,8 +667,12 @@
             "Principal",
             "HostCount"
           ],
-          "rows": 1,
+          "rows": 2,
           "sample": [
+            [
+              "DOMAIN ADMINS@CORPLAB.LOCAL",
+              "1"
+            ],
             [
               "DAVE.HELP@CORPLAB.LOCAL",
               "1"
