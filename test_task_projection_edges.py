@@ -92,6 +92,48 @@ class TestAdminToAlias(unittest.TestCase):
         self.assertNotIn(("HELPDESK@CORP.LOCAL", "WS02.CORP.LOCAL"), _labels(P, "AdminTo"))
 
 
+class TestAdminToAliasWithMultipleRights(unittest.TestCase):
+    """A pair holding several rights must still get its AdminTo alias.
+
+    The alias was added without an explicit key, so NetworkX picked the next
+    integer key. A later edge on the same pair carrying that key overwrote the
+    alias. Real collections hit this constantly: domain admins hold LocalAdmin,
+    Owns and GenericAll on the same domain controller.
+    """
+
+    def _pair(self, extra_rights):
+        G = nx.MultiDiGraph()
+        G.add_node("G1", name="DOMAIN ADMINS@CORP.LOCAL", type="Group", props={"domain": "CORP.LOCAL"}, is_azure=False)
+        G.add_node("C1", name="DC01.CORP.LOCAL", type="Computer", props={"domain": "CORP.LOCAL"}, is_azure=False)
+        G.add_edge("G1", "C1", key=0, label="LocalAdmin")
+        for i, right in enumerate(extra_rights, start=1):
+            G.add_edge("G1", "C1", key=i, label=right)
+        return G
+
+    def test_admin_to_survives_sibling_right(self):
+        P = bb.build_bloodhound_projection(self._pair(["Owns"]))
+        self.assertIn(("DOMAIN ADMINS@CORP.LOCAL", "DC01.CORP.LOCAL"), _labels(P, "AdminTo"))
+
+    def test_admin_to_survives_many_sibling_rights(self):
+        P = bb.build_bloodhound_projection(
+            self._pair(["Owns", "GenericAll", "WriteAccountRestrictions"])
+        )
+        self.assertIn(("DOMAIN ADMINS@CORP.LOCAL", "DC01.CORP.LOCAL"), _labels(P, "AdminTo"))
+        self.assertEqual(len(_labels(P, "AdminTo")), len(_labels(P, "LocalAdmin")))
+
+    def test_group_held_admin_rights_all_alias(self):
+        G = nx.MultiDiGraph()
+        G.add_node("G1", name="DOMAIN ADMINS@CORP.LOCAL", type="Group", props={"domain": "CORP.LOCAL"}, is_azure=False)
+        for n in range(1, 6):
+            oid = f"C{n}"
+            G.add_node(oid, name=f"DC0{n}.CORP.LOCAL", type="Computer", props={"domain": "CORP.LOCAL"}, is_azure=False)
+            G.add_edge("G1", oid, key=0, label="LocalAdmin")
+            G.add_edge("G1", oid, key=1, label="Owns")
+        P = bb.build_bloodhound_projection(G)
+        self.assertEqual(len(_labels(P, "LocalAdmin")), 5)
+        self.assertEqual(len(_labels(P, "AdminTo")), 5)
+
+
 class TestTrustedByAlias(unittest.TestCase):
     def test_trust_edges_become_trustedby(self):
         P = bb.build_bloodhound_projection(_graph())

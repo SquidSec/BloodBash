@@ -3451,7 +3451,9 @@ def build_bloodhound_projection(G, owned=None, domain_filter=None):
         canonical, merged, aliases = project_relationship(G, u, v, label, attrs)
         P.add_edge(u, v, key=key, label=canonical, rel_type=canonical, **merged)
         for alias, alias_attrs in aliases:
-            P.add_edge(u, v, label=alias, rel_type=alias, **alias_attrs)
+            # Key explicitly. A keyless add lets NetworkX pick the next integer,
+            # which a later edge on the same pair can overwrite.
+            P.add_edge(u, v, key=("alias", alias, key), label=alias, rel_type=alias, **alias_attrs)
     for u, v, attrs in _projection_dcsync_edges(G):
         P.add_edge(u, v, label="DCSync", rel_type="DCSync", **attrs)
     for u, v, attrs in _projection_delegation_edges(G):
