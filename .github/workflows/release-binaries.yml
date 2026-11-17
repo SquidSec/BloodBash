@@ -250,48 +250,39 @@ jobs:
           chmod +x release-final/bloodbash-linux-x64
           ls -la release-final/
           REPO="${{ github.repository }}"
-          printf '%s\n' \
-            "## SquidSec BloodBash ${BASE_VERSION} - build ${RUN}" \
-            "" \
-            "**BloodBash** is an open source project created and managed by **[SquidSec](https://squidoffense.com/)**." \
-            "" \
-            "Standalone binaries (no Python install required)." \
-            "" \
-            "**New in this line:** PlumHound-style task lists. Run your own" \
-            "\`.tasks\` files without Neo4j:" \
-            "" \
-            '```bash' \
-            "./bloodbash-linux-x64 /path/to/sharphound --tasks ./my-list.tasks --tasks-out ./reports" \
-            "./bloodbash-linux-x64 --tasks-validate ./my-list.tasks" \
-            "./bloodbash-linux-x64 --tasks-list" \
-            '```' \
-            "" \
-            "See the README for the supported query subset and output layout." \
-            "" \
-            "| Platform | File |" \
-            "|----------|------|" \
-            "| Linux x64 | \`bloodbash-linux-x64\` |" \
-            "| Windows x64 | \`bloodbash-windows-x64.exe\` |" \
-            "" \
-            "**Commit:** \`${SHORT_SHA}\`" \
-            "**Latest downloads (always current):**" \
-            "- Linux: https://github.com/${REPO}/releases/latest/download/bloodbash-linux-x64" \
-            "- Windows: https://github.com/${REPO}/releases/latest/download/bloodbash-windows-x64.exe" \
-            "" \
-            '```bash' \
-            "# Linux" \
-            "chmod +x bloodbash-linux-x64" \
-            "./bloodbash-linux-x64 /path/to/sharphound --all" \
-            '```' \
-            "" \
-            '```powershell' \
-            "# Windows" \
-            ".\bloodbash-windows-x64.exe C:\path\to\sharphound --all" \
-            '```' \
-            "" \
-            "---" \
-            "[SquidSec](https://squidoffense.com/) · [BloodBash on GitHub](https://github.com/${REPO})" \
-            > release-final/release-notes.md
+          # Highlights live in a versioned file so a release cannot republish
+          # stale notes from a previous line. Update it before bumping version.
+          NOTES="docs/release-notes/${BASE_VERSION}.md"
+          if [ ! -f "$NOTES" ]; then
+            echo "::error::Missing release notes: $NOTES"
+            exit 1
+          fi
+          {
+            printf '%s\n' \
+              "## SquidSec BloodBash ${BASE_VERSION} - build ${RUN}" \
+              "" \
+              "**BloodBash** is an open source project created and managed by **[SquidSec](https://squidoffense.com/)**." \
+              "" \
+              "Standalone binaries (no Python install required)." \
+              ""
+            cat "$NOTES"
+            printf '%s\n' \
+              "" \
+              "## Downloads" \
+              "" \
+              "| Platform | File |" \
+              "|----------|------|" \
+              "| Linux x64 | \`bloodbash-linux-x64\` |" \
+              "| Windows x64 | \`bloodbash-windows-x64.exe\` |" \
+              "" \
+              "**Commit:** \`${SHORT_SHA}\`" \
+              "**Latest downloads (always current):**" \
+              "- Linux: https://github.com/${REPO}/releases/latest/download/bloodbash-linux-x64" \
+              "- Windows: https://github.com/${REPO}/releases/latest/download/bloodbash-windows-x64.exe" \
+              "" \
+              "---" \
+              "[SquidSec](https://squidoffense.com/) · [BloodBash on GitHub](https://github.com/${REPO})"
+          } > release-final/release-notes.md
 
       - name: Create GitHub Release
         id: release
