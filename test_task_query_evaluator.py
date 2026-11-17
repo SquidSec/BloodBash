@@ -320,6 +320,52 @@ class TestFunctions(unittest.TestCase):
             _rows("MATCH (u:User) RETURN bogusFunction(u) AS X")
 
 
+class TestNumericLiterals(unittest.TestCase):
+    def test_scientific_notation_literal(self):
+        # PlumHound task lists use window offsets such as 5.184e+6.
+        rows = _rows("MATCH (u:User) RETURN 5.184e+6 AS N")
+        self.assertEqual(rows[0][0], 5184000.0)
+
+    def test_scientific_notation_negative_exponent(self):
+        rows = _rows("MATCH (u:User) RETURN 1.5e-3 AS N")
+        self.assertAlmostEqual(rows[0][0], 0.0015)
+
+    def test_integer_exponent_literal(self):
+        rows = _rows("MATCH (u:User) RETURN 1e6 AS N")
+        self.assertEqual(rows[0][0], 1000000.0)
+
+    def test_epoch_arithmetic_with_exponent(self):
+        rows = _rows(
+            "MATCH (c:Computer) WHERE c.name = 'WS01.CORP.LOCAL' "
+            "RETURN c.name AS N, datetime().epochSeconds - (1 * 5.184e+6) AS W"
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertIsInstance(rows[0][1], (int, float))
+
+
+class TestListGroupingKey(unittest.TestCase):
+    def test_aggregate_groups_by_list_valued_column(self):
+        # labels(t) renders as a list; grouping on it must not raise.
+        rows = _rows(
+            "MATCH (u:User) RETURN labels(u) AS L, count(*) AS C ORDER BY C DESC"
+        )
+        self.assertTrue(rows)
+        self.assertTrue(all(isinstance(r[0], list) for r in rows))
+
+    def test_aggregate_groups_by_multiple_list_columns(self):
+        rows = _rows(
+            "MATCH (u:User)-[r]->(t) RETURN labels(u) AS A, labels(t) AS B, "
+            "count(*) AS C"
+        )
+        self.assertTrue(rows)
+        self.assertTrue(all(isinstance(r[2], int) for r in rows))
+
+    def test_distinct_list_grouping_preserves_value(self):
+        rows = _rows("MATCH (u:User) RETURN DISTINCT labels(u) AS L")
+        self.assertTrue(rows)
+        self.assertTrue(all(isinstance(r[0], list) for r in rows))
+
+
 class TestOrderingAndLimits(unittest.TestCase):
     def test_order_by_ascending(self):
         rows = _rows("MATCH (u:User) RETURN u.name AS n ORDER BY n")
