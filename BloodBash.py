@@ -39,7 +39,7 @@ logger = logging.getLogger("bloodbash")
 __org__ = "SquidSec"
 __org_tagline__ = "Open source security tooling by SquidSec"
 __org_url__ = "https://squidoffense.com/"
-__project_url__ = "https://github.com/DotNetRussell/BloodBash"
+__project_url__ = "https://github.com/SquidSec/BloodBash"
 
 # Windows consoles still default to a legacy code page (cp1252) inside CI and
 # on many customer hosts. Printing a check mark there raised UnicodeEncodeError
@@ -3234,6 +3234,18 @@ PROJECTION_LABELS = {
 
 PROJECTION_UNKNOWN_LABEL = "Unknown"
 
+# Rights that come from a DACL entry. BloodHound sets ``isacl=true`` on the
+# edges it derives from these, and PlumHound filters on it.
+PROJECTION_ACE_RIGHTS = frozenset({
+    "genericall", "genericwrite", "writedacl", "writeowner", "owns",
+    "allextendedrights", "forcechangepassword", "addmember",
+    "addkeycredentiallink", "writeaccountrestrictions", "readgmsapassword",
+    "getchanges", "getchangesall", "getchangesinfilteredset",
+    "allowedtoact", "addallowedtoact", "writegplink", "writepublicinformation",
+    "writespn", "sqladmin", "dcsync", "readlapspassword", "enroll",
+    "autoenroll", "delegate", "trustedtoauth", "addself", "writemembership",
+})
+
 # id(G) alone can be reused after GC; store the source graph so a stale entry
 # cannot be handed back for a different graph.
 _PROJECTION_CACHE: Dict[Tuple[int, Tuple[str, ...]], Tuple[Any, Any]] = {}
@@ -3376,6 +3388,10 @@ def project_relationship(G, u, v, label, attrs) -> Tuple[str, Dict[str, Any], Li
         aliases.append(("AdminTo", {}))
     elif label_l.startswith("trusteddomain"):
         aliases.append(("TrustedBy", _projection_trust_attrs(label, attrs)))
+    if label_l in PROJECTION_ACE_RIGHTS:
+        # BloodHound marks every ACE-derived edge. PlumHound's "Direct
+        # Relationships" tasks filter on it.
+        attrs["isacl"] = True
     return label, attrs, aliases
 
 
@@ -3449,6 +3465,13 @@ def build_bloodhound_projection(G, owned=None, domain_filter=None):
         attrs = {k: val for k, val in (data or {}).items() if k != "label"}
         label = (data or {}).get("label") or ""
         canonical, merged, aliases = project_relationship(G, u, v, label, attrs)
+        if str(label).lower() == "gplink":
+            # The collector writes Links[] on the container, so the analysis
+            # graph runs container -> GPO. BloodHound points GPLink the other
+            # way, from the GPO to the OU, Domain or Site it applies to.
+            P.add_edge(v, u, key=("gplink", key), label=canonical,
+                       rel_type=canonical, **merged)
+            continue
         P.add_edge(u, v, key=key, label=canonical, rel_type=canonical, **merged)
         for alias, alias_attrs in aliases:
             # Key explicitly. A keyless add lets NetworkX pick the next integer,

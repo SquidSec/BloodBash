@@ -2072,7 +2072,7 @@ One place to look up a flag without reading `--help-advanced` output.
 | `--indirect` | Include group-mediated paths |
 | `--deep-paths` | Deeper hops, alternates, stepping stones |
 | `--no-stepping-stones` | Suppress stepping stones |
-| `--golden-path` | One path to DA, plain text |
+| `--golden-path` | One path to DA, rendered as a panel |
 | `--path-from` / `--path-to` | Arbitrary paths |
 | `--busiest-paths [short\|all]` | Rank principals by path count |
 | `--busiest-paths-top N` | Top N (default 5) |
