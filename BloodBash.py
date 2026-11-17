@@ -3935,7 +3935,7 @@ _TOKEN_SPEC = re.compile(
     | (?P<str>'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*")
     | (?P<bname>`[^`]*`)
     | (?P<param>\$[A-Za-z_]\w*)
-    | (?P<num>\d+(?:\.\d+)?)
+    | (?P<num>\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)
     | (?P<name>[A-Za-z_]\w*)
     | (?P<op><>|<=|>=|=~|\.\.|<>|[<>=+\-*/%])
     | (?P<punct>[()\[\]{},:.|])
@@ -3977,7 +3977,10 @@ def _task_tokenize(text: str) -> List[_Token]:
         elif kind == "bname":
             tokens.append(_Token("name", raw, raw[1:-1]))
         elif kind == "num":
-            value = float(raw) if "." in raw else int(raw)
+            if re.search(r"[.eE]", raw):
+                value = float(raw)
+            else:
+                value = int(raw)
             tokens.append(_Token("num", raw, value))
         elif kind == "param":
             tokens.append(_Token("param", raw, raw[1:]))
@@ -4611,6 +4614,10 @@ def parse_cypher(text: str) -> ParsedQuery:
 
 # ── evaluation ───────────────────────────────────────────────────
 def _prop_value(P, ref, prop: str):
+    if isinstance(ref, _DateTime):
+        if prop.lower() == "epochseconds":
+            return ref.epoch_seconds
+        return None
     if isinstance(ref, _RelRef):
         if prop in ref.attrs:
             return ref.attrs[prop]
@@ -4850,6 +4857,8 @@ def _call_function(P, name: str, args, distinct: bool, row):
             epoch = spec.get("epochSeconds", spec.get("epochseconds"))
         elif isinstance(spec, (int, float)):
             epoch = spec
+        elif spec is None:
+            epoch = time.time()
         return _DateTime(epoch)
     if key == "timestamp":
         return int(time.time() * 1000)
@@ -5200,6 +5209,21 @@ def _materialize_aggregates(P, expr, rows):
     return expr
 
 
+def _group_key(values) -> tuple:
+    """Hashable stand-in for a grouping tuple.
+
+    ``labels(x)`` and ``collect(x)`` yield lists, so the grouping key must be
+    built from a stable representation while the row keeps the real values.
+    """
+    key = []
+    for value in values:
+        if isinstance(value, (list, dict)):
+            key.append(repr(value))
+        else:
+            key.append(value)
+    return tuple(key)
+
+
 def _project(P, clause: _Clause, rows) -> Tuple[List[str], List[Dict[str, Any]]]:
     items: List[_ReturnItem] = list(clause.items or [])
     columns = [item.name() for item in items]
@@ -5208,14 +5232,17 @@ def _project(P, clause: _Clause, rows) -> Tuple[List[str], List[Dict[str, Any]]]
     if aggregated:
         group_items = [item for item in items if not _contains_aggregate(item.expr)]
         groups: Dict[tuple, List[Dict[str, Any]]] = {}
+        group_values: Dict[tuple, tuple] = {}
         for row in rows:
-            key = tuple(
+            values = tuple(
                 _render(P, _eval_expr(P, item.expr, row)) for item in group_items
             )
+            key = _group_key(values)
             groups.setdefault(key, []).append(row)
+            group_values.setdefault(key, values)
         for key, group_rows in groups.items():
             combined = dict(group_rows[0])
-            for item, value in zip(group_items, key):
+            for item, value in zip(group_items, group_values[key]):
                 combined[item.name()] = value
             for item in items:
                 if _is_aggregate(item.expr):
