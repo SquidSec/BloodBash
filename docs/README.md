@@ -131,12 +131,4 @@ From a source checkout, `python3 BloodBash.py` is equivalent to `bloodbash`.
 
 ---
 
-## Related repositories
-
-| Repository | What it is |
-|------------|------------|
-| [SquidSec/BloodBash](https://github.com/SquidSec/BloodBash) | This tool |
-| [SquidSec/SquidC5](https://github.com/SquidSec/SquidC5) | SquidSec C5 platform |
-| [SpecterOps/BloodHound](https://github.com/SpecterOps/BloodHound) | Collectors and reference graph schema |
-
 For authorized security testing only.
