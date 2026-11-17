@@ -268,5 +268,103 @@ class TestEdgeAttributeParity(unittest.TestCase):
             self.assertEqual(d["rel_type"], d["label"])
 
 
+class TestGPLinkDirection(unittest.TestCase):
+    """BloodHound points GPLink from the GPO to its linked container.
+
+    The collector writes ``Links[]`` on the container, so the analysis graph
+    stores container -> GPO. The projection has to reverse it.
+    """
+
+    def _graph(self):
+        G = nx.MultiDiGraph()
+        G.add_node("OU1", name="SERVERS@CORP.LOCAL", type="OU", props={}, is_azure=False)
+        G.add_node("D1", name="CORP.LOCAL", type="Domain", props={}, is_azure=False)
+        G.add_node("GPO1", name="BASELINE@CORP.LOCAL", type="GPO", props={}, is_azure=False)
+        G.add_edge("OU1", "GPO1", label="GPLink", is_enforced=True)
+        G.add_edge("D1", "GPO1", label="GPLink", is_enforced=False)
+        return G
+
+    def test_gplink_points_from_gpo_to_container(self):
+        P = bb.build_bloodhound_projection(self._graph())
+        rows = _labels(P, "GPLink")
+        self.assertIn(("BASELINE@CORP.LOCAL", "SERVERS@CORP.LOCAL"), rows)
+        self.assertIn(("BASELINE@CORP.LOCAL", "CORP.LOCAL"), rows)
+
+    def test_gplink_is_not_left_pointing_at_the_gpo(self):
+        P = bb.build_bloodhound_projection(self._graph())
+        rows = _labels(P, "GPLink")
+        self.assertNotIn(("SERVERS@CORP.LOCAL", "BASELINE@CORP.LOCAL"), rows)
+
+    def test_gplink_keeps_the_enforced_flag(self):
+        P = bb.build_bloodhound_projection(self._graph())
+        edge = next(d for _u, _v, _k, d in P.edges(keys=True, data=True) if d.get("rel_type") == "GPLink")
+        self.assertIn("is_enforced", edge)
+
+    def test_analysis_graph_direction_is_unchanged(self):
+        G = self._graph()
+        bb.build_bloodhound_projection(G)
+        self.assertTrue(G.has_edge("OU1", "GPO1"), msg="projection must not mutate the source graph")
+
+
+class TestIsAclFlag(unittest.TestCase):
+    """BloodHound sets isacl=true on every ACE-derived edge.
+
+    PlumHound's ``Direct Relationships`` tasks filter on it, so an unset flag
+    silently empties the report.
+    """
+
+    ACE_RIGHTS = (
+        "GenericAll", "GenericWrite", "WriteDacl", "WriteOwner", "Owns",
+        "AllExtendedRights", "ForceChangePassword", "AddMember",
+        "AddKeyCredentialLink", "WriteAccountRestrictions",
+        "ReadGMSAPassword", "GetChanges", "GetChangesAll",
+    )
+
+    def _graph(self):
+        G = nx.MultiDiGraph()
+        G.add_node("A", name="ATTACKER@CORP.LOCAL", type="User", props={}, is_azure=False)
+        G.add_node("D1", name="CORP.LOCAL", type="Domain", props={}, is_azure=False)
+        G.add_node("U1", name="VICTIM@CORP.LOCAL", type="User", props={}, is_azure=False)
+        G.add_edge("A", "D1", label="GenericAll")
+        G.add_edge("A", "U1", label="ForceChangePassword")
+        return G
+
+    def test_ace_edges_are_marked_isacl(self):
+        P = bb.build_bloodhound_projection(self._graph())
+        for _u, _v, _k, d in P.edges(keys=True, data=True):
+            if d.get("rel_type") in self.ACE_RIGHTS:
+                self.assertTrue(d.get("isacl"), msg=d.get("rel_type"))
+
+    def test_non_ace_edges_are_not_marked_isacl(self):
+        G = nx.MultiDiGraph()
+        G.add_node("U1", name="ALICE@CORP.LOCAL", type="User", props={}, is_azure=False)
+        G.add_node("G1", name="GROUP@CORP.LOCAL", type="Group", props={}, is_azure=False)
+        G.add_node("C1", name="WS01.CORP.LOCAL", type="Computer", props={}, is_azure=False)
+        G.add_edge("U1", "G1", label="MemberOf")
+        G.add_edge("U1", "C1", label="HasSession")
+        G.add_edge("G1", "C1", label="LocalAdmin")
+        P = bb.build_bloodhound_projection(G)
+        for _u, _v, _k, d in P.edges(keys=True, data=True):
+            self.assertFalse(d.get("isacl"), msg=d.get("rel_type"))
+
+    def test_isacl_holds_for_every_ace_right(self):
+        G = nx.MultiDiGraph()
+        G.add_node("A", name="A@C", type="User", props={}, is_azure=False)
+        for i, right in enumerate(self.ACE_RIGHTS):
+            oid = f"T{i}"
+            G.add_node(oid, name=f"T{i}@C", type="User", props={}, is_azure=False)
+            G.add_edge("A", oid, label=right)
+        P = bb.build_bloodhound_projection(G)
+        for _u, _v, _k, d in P.edges(keys=True, data=True):
+            self.assertTrue(d.get("isacl"), msg=d.get("rel_type"))
+
+    def test_query_filtering_on_isacl_finds_ace_edges(self):
+        P = bb.build_bloodhound_projection(self._graph())
+        rows = bb.execute_task_query(
+            "MATCH (a)-[r]->(b) WHERE r.isacl=true RETURN count(*) AS C", P
+        ).rows
+        self.assertEqual(rows[0][0], 2)
+
+
 if __name__ == "__main__":
     unittest.main()

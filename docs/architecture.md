@@ -135,26 +135,16 @@ These are known differences from a real BloodHound Neo4j import. They are docume
 
 | Area | BloodBash today | BloodHound |
 |------|-----------------|------------|
-| Edge `isacl` | Not set on ACE edges | `true` on every ACE-derived edge |
-| `Contains` | Not emitted from `ChildObjects` | Parent OU -> child object |
-| `GPLink` direction | Container -> GPO | GPO -> OU/Domain/Site |
+| `Contains` | Emitted from `ContainedBy` | Parent OU -> child object |
+| `GPLink` direction | GPO -> container (matches) | GPO -> OU/Domain/Site |
+| Edge `isacl` | `true` on every ACE-derived edge | `true` on every ACE-derived edge |
+| `CN=Computers` label | `Container` (CE behavior) | `Container` in CE, `OU` in legacy |
 | `IsInherited` | Dropped | Preserved as `isinherited` |
 | `lastlogontimestamp` sentinel | Raw collector value (may be `-11644473600`) | Normalized to `-1` |
 
-Impact on real PlumHound lists, measured against a 2,154-user / 3,010-computer collection:
+Legacy BloodHound labeled the default `CN=Computers` container as `:OU`. Queries that filter `(o:OU)-[:Contains]->` therefore match it there and not here. Relabeling containers as OUs would report 576 OUs instead of the 235 that exist, so the CE label is kept.
 
-| Cause | Empty tasks |
-|-------|-------------|
-| `isacl` missing | 17 |
-| `Contains` missing | 10 |
-| `Owned *` without `--owned` | 20 (expected) |
-| Password age window beyond data | 8 (expected) |
-| `userpassword` not collected | 4 (expected) |
-| `-1` sentinel mismatch | 4 |
-| `GPLink` direction | 2 |
-| Label predicate unsupported | 2 |
-
-358 of 360 queries in PlumHound's shipped task files execute.
+Remaining differences are limited to the `IsInherited` attribute and the timestamp sentinel. `Owned *` tasks need `--owned`, and `userpassword` tasks need `--CollectAllProperties` at collection time; those are inputs, not gaps.
 
 ---
 

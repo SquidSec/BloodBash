@@ -9,13 +9,13 @@
 <p align="center">
   <strong>A SquidSec Open Source Project</strong><br>
   <a href="https://squidoffense.com/">SquidOffense.com</a> ·
-  <a href="https://github.com/DotNetRussell/BloodBash">GitHub</a>
+  <a href="https://github.com/SquidSec/BloodBash">GitHub</a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/DotNetRussell/BloodBash/actions/workflows/run-tests.yml"><img src="https://github.com/DotNetRussell/BloodBash/actions/workflows/run-tests.yml/badge.svg" alt="Run Unit Tests"></a>
-  <a href="https://github.com/DotNetRussell/BloodBash/actions/workflows/release-binaries.yml"><img src="https://github.com/DotNetRussell/BloodBash/actions/workflows/release-binaries.yml/badge.svg" alt="Build and Release Binaries"></a>
-  <a href="https://github.com/DotNetRussell/BloodBash/releases/latest"><img src="https://img.shields.io/github/v/release/DotNetRussell/BloodBash?label=latest%20build" alt="Latest release"></a>
+  <a href="https://github.com/SquidSec/BloodBash/actions/workflows/run-tests.yml"><img src="https://github.com/SquidSec/BloodBash/actions/workflows/run-tests.yml/badge.svg" alt="Run Unit Tests"></a>
+  <a href="https://github.com/SquidSec/BloodBash/actions/workflows/release-binaries.yml"><img src="https://github.com/SquidSec/BloodBash/actions/workflows/release-binaries.yml/badge.svg" alt="Build and Release Binaries"></a>
+  <a href="https://github.com/SquidSec/BloodBash/releases/latest"><img src="https://img.shields.io/github/v/release/SquidSec/BloodBash?label=latest%20build" alt="Latest release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
 </p>
 
@@ -26,7 +26,7 @@
 | **Organization** | [SquidSec](https://squidoffense.com/) |
 | **Website** | [https://squidoffense.com/](https://squidoffense.com/) |
 | **App version** | **v1.6.0** |
-| **Latest binary** | [![GitHub release](https://img.shields.io/github/v/release/DotNetRussell/BloodBash)](https://github.com/DotNetRussell/BloodBash/releases/latest) |
+| **Latest binary** | [![GitHub release](https://img.shields.io/github/v/release/SquidSec/BloodBash)](https://github.com/SquidSec/BloodBash/releases/latest) |
 | **License** | [MIT](LICENSE) |
 | **Runtime (source)** | Python 3.9+ |
 
@@ -39,7 +39,7 @@ Merges to `main` automatically build **Linux** and **Windows** binaries and publ
 BloodBash is built and maintained by **[SquidSec](https://squidoffense.com/)** for the security community - red teamers, pentesters, and defenders who need fast offline AD/Entra analysis without standing up BloodHound infrastructure.
 
 - **Website:** [https://squidoffense.com/](https://squidoffense.com/)
-- **Project:** [https://github.com/DotNetRussell/BloodBash](https://github.com/DotNetRussell/BloodBash)
+- **Project:** [https://github.com/SquidSec/BloodBash](https://github.com/SquidSec/BloodBash)
 
 ---
 
@@ -49,23 +49,23 @@ Standalone **SquidSec** BloodBash executables - no Python, pip, or venv needed:
 
 | Platform | Latest download |
 |----------|-----------------|
-| **Linux x64** | [bloodbash-linux-x64](https://github.com/DotNetRussell/BloodBash/releases/latest/download/bloodbash-linux-x64) |
-| **Windows x64** | [bloodbash-windows-x64.exe](https://github.com/DotNetRussell/BloodBash/releases/latest/download/bloodbash-windows-x64.exe) |
+| **Linux x64** | [bloodbash-linux-x64](https://github.com/SquidSec/BloodBash/releases/latest/download/bloodbash-linux-x64) |
+| **Windows x64** | [bloodbash-windows-x64.exe](https://github.com/SquidSec/BloodBash/releases/latest/download/bloodbash-windows-x64.exe) |
 
-- **All releases & version tags:** https://github.com/DotNetRussell/BloodBash/releases  
-- **Latest release page:** https://github.com/DotNetRussell/BloodBash/releases/latest  
+- **All releases & version tags:** https://github.com/SquidSec/BloodBash/releases  
+- **Latest release page:** https://github.com/SquidSec/BloodBash/releases/latest  
 
 ```bash
 # Linux
 curl -sL -o bloodbash \
-  https://github.com/DotNetRussell/BloodBash/releases/latest/download/bloodbash-linux-x64
+  https://github.com/SquidSec/BloodBash/releases/latest/download/bloodbash-linux-x64
 chmod +x bloodbash
 ./bloodbash /path/to/json --all
 ```
 
 ```powershell
 # Windows (PowerShell)
-Invoke-WebRequest -Uri "https://github.com/DotNetRussell/BloodBash/releases/latest/download/bloodbash-windows-x64.exe" `
+Invoke-WebRequest -Uri "https://github.com/SquidSec/BloodBash/releases/latest/download/bloodbash-windows-x64.exe" `
   -OutFile bloodbash.exe
 .\bloodbash.exe C:\path\to\json --all
 ```
@@ -73,13 +73,13 @@ Invoke-WebRequest -Uri "https://github.com/DotNetRussell/BloodBash/releases/late
 ## Install (Python / source)
 
 ```bash
-pipx install git+https://github.com/DotNetRussell/BloodBash
+pipx install git+https://github.com/SquidSec/BloodBash
 ```
 
 Or from a clone:
 
 ```bash
-git clone https://github.com/DotNetRussell/BloodBash.git
+git clone https://github.com/SquidSec/BloodBash.git
 cd BloodBash
 python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
