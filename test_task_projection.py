@@ -76,7 +76,7 @@ class TestProjectionLabels(unittest.TestCase):
             "GPO": "GPO",
             "OU": "OU",
             "Container": "Container",
-            "Certificate Template": "CertificateTemplate",
+            "Certificate Template": "CertTemplate",
             "Enterprise CA": "EnterpriseCA",
             "Root CA": "RootCA",
             "AIA CA": "AIACA",
@@ -88,7 +88,7 @@ class TestProjectionLabels(unittest.TestCase):
     def test_project_uses_bloodhound_names_for_every_alias_source(self):
         # Raw SharpHound meta.type values, which are what the collector writes.
         expected = {
-            "certtemplates": "CertificateTemplate",
+            "certtemplates": "CertTemplate",
             "enterprisecas": "EnterpriseCA",
             "ntauthstores": "NTAuthStore",
         }
@@ -97,7 +97,7 @@ class TestProjectionLabels(unittest.TestCase):
 
     def test_collector_meta_aliases_resolve_through_type_map(self):
         for raw, label in (
-            ("certTemplates", "CertificateTemplate"),
+            ("certTemplates", "CertTemplate"),
             ("enterpriseCAs", "EnterpriseCA"),
         ):
             normalized = bb._normalize_object_type(raw)

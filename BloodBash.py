@@ -3212,7 +3212,7 @@ PROJECTION_LABELS = {
     "gpo": "GPO",
     "container": "Container",
     "base": "Base",
-    "certificate template": "CertificateTemplate",
+    "certificate template": "CertTemplate",
     "enterprise ca": "EnterpriseCA",
     "root ca": "RootCA",
     "aia ca": "AIACA",
@@ -3453,11 +3453,15 @@ def build_bloodhound_projection(G, owned=None, domain_filter=None):
     P.graph["projection_of"] = id(G)
     for oid, data in G.nodes(data=True):
         props = project_node_props(G, oid, data, high_value_ids, owned_names)
+        base = projection_label(data.get("type"))
+        # BloodHound labels every AD object :Base alongside its concrete kind.
+        # Entra nodes carry only their AZ* label.
+        labels = [base] if data.get("is_azure") else [base, "Base"]
         P.add_node(
             oid,
             name=data.get("name") or oid,
             type=data.get("type"),
-            labels=[projection_label(data.get("type"))],
+            labels=labels,
             props=props,
             is_azure=bool(data.get("is_azure")),
         )

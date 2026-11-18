@@ -132,8 +132,9 @@ class TestIntrospectionFunctions(unittest.TestCase):
         self.assertTrue(all(r == ["User"] for r in rows))
 
     def test_labels_on_a_group(self):
+        # BloodHound labels every AD object :Base alongside its concrete kind.
         rows = _rows("MATCH (g:Group) RETURN labels(g) AS L")
-        self.assertTrue(all(r[0] == ["Group"] for r in rows))
+        self.assertTrue(all(r[0] == ["Group", "Base"] for r in rows))
 
     def test_type_of_synthesized_edge(self):
         rows = _rows("MATCH (a)-[r:AdminTo]->(b) RETURN type(r) AS T")
