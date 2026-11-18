@@ -280,9 +280,10 @@ class TestAggregation(unittest.TestCase):
 class TestFunctions(unittest.TestCase):
     def test_labels(self):
         rows = _rows("MATCH (u:User) RETURN labels(u) AS L")
-        self.assertEqual(rows[0], [["User"]])
+        self.assertEqual(rows[0], [["User", "Base"]])
 
     def test_head_labels(self):
+        # head() takes the concrete kind; :Base is appended after it.
         rows = _rows("MATCH (n:Group) RETURN head(labels(n)) AS Type")
         self.assertEqual(rows[0], ["Group"])
 

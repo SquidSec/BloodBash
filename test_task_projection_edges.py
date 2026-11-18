@@ -366,5 +366,45 @@ class TestIsAclFlag(unittest.TestCase):
         self.assertEqual(rows[0][0], 2)
 
 
+class TestBloodHoundSchemaNames(unittest.TestCase):
+    """Label names PlumHound queries depend on.
+
+    BloodHound labels every AD object ``:Base`` alongside its concrete kind,
+    calls certificate templates ``CertTemplate``, and calls computer local
+    groups ``ADLocalGroup``. Task lists select on those names.
+    """
+
+    def test_ad_nodes_carry_base_label(self):
+        G = nx.MultiDiGraph()
+        G.add_node("U1", name="ALICE@CORP.LOCAL", type="User", props={}, is_azure=False)
+        G.add_node("C1", name="WS01.CORP.LOCAL", type="Computer", props={}, is_azure=False)
+        P = bb.build_bloodhound_projection(G)
+        for oid in ("U1", "C1"):
+            self.assertIn("Base", P.nodes[oid]["labels"])
+
+    def test_base_is_appended_after_the_concrete_kind(self):
+        G = nx.MultiDiGraph()
+        G.add_node("G1", name="G@CORP.LOCAL", type="Group", props={}, is_azure=False)
+        P = bb.build_bloodhound_projection(G)
+        self.assertEqual(P.nodes["G1"]["labels"], ["Group", "Base"])
+
+    def test_azure_nodes_do_not_get_base(self):
+        G = nx.MultiDiGraph()
+        G.add_node("A1", name="bob@contoso", type="Azure User", props={}, is_azure=True)
+        P = bb.build_bloodhound_projection(G)
+        self.assertNotIn("Base", P.nodes["A1"]["labels"])
+
+    def test_certificate_templates_use_ce_label(self):
+        self.assertEqual(bb.projection_label("Certificate Template"), "CertTemplate")
+        self.assertEqual(bb.projection_label("certtemplates"), "CertTemplate")
+
+    def test_labels_returns_concrete_kind_and_base(self):
+        G = nx.MultiDiGraph()
+        G.add_node("T1", name="ESC1", type="Certificate Template", props={}, is_azure=False)
+        P = bb.build_bloodhound_projection(G)
+        rows = bb.execute_task_query("MATCH (t:CertTemplate) RETURN labels(t) AS L", P).rows
+        self.assertEqual(rows[0][0], ["CertTemplate", "Base"])
+
+
 if __name__ == "__main__":
     unittest.main()
